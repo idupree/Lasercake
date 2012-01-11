@@ -308,6 +308,26 @@ namespace std {
   };
 }
 
+// It would likely be possible for this to be a RandomAccessIterator and/or generic over vector3<ScalarType>,
+// but those, sadly, would make this code significantly more complicated.  And we don't need them now.
+// This code is also simple enough that the template arguments could plausibly be value arguments instead,
+// if we wanted that tradeoff.
+template<cardinal_direction_index Direction, level_of_tile_realization_needed Realization = FULL_REALIZATION>
+class directional_tile_location_iterator : boost::iterator_facade<
+    directional_tile_location_iterator<Direction, Realization>, const tile_location, boost::bidirectional_traversal_tag> {
+public:
+  directional_tile_location_iterator(tile_location const& l) : l(l) {}
+
+  //operations for the eyes of iterator_facade
+  tile_location const& dereference()const {return l;}
+  bool equal(directional_tile_location_iterator const& other)const {return l == other.l;}
+  void increment() {l.get_neighbor(cardinal_directions[Direction], Realization);}
+  void decrement() {l.get_neighbor(-cardinal_directions[Direction], Realization);;}
+
+private:
+  tile_location l;
+};
+
 
 typedef uint64_t object_identifier;
 const object_identifier NO_OBJECT = 0;
