@@ -525,10 +525,15 @@ struct objects_map {
 };
 
 
-
-struct tile_compare_xyz { bool operator()(tile_location const& i, tile_location const& j)const; };
-struct tile_compare_yzx { bool operator()(tile_location const& i, tile_location const& j)const; };
-struct tile_compare_zxy { bool operator()(tile_location const& i, tile_location const& j)const; };
+struct tile_compare_xyz { bool operator()(tile_location const& i, tile_location const& j)const {
+  return dimension_ordering<cdiridx_xplus, cdiridx_yplus, cdiridx_zplus>()(i.coords(), j.coords());
+} };
+struct tile_compare_yzx { bool operator()(tile_location const& i, tile_location const& j)const {
+  return dimension_ordering<cdiridx_yplus, cdiridx_zplus, cdiridx_xplus>()(i.coords(), j.coords());
+} };
+struct tile_compare_zxy { bool operator()(tile_location const& i, tile_location const& j)const {
+  return dimension_ordering<cdiridx_zplus, cdiridx_xplus, cdiridx_yplus>()(i.coords(), j.coords());
+} };
 
 // We could easily keep lists of boundary tiles in all three dimensions
 // (Just uncomment the six commented lines below.)

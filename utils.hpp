@@ -288,6 +288,41 @@ private:
 };
 
 
+template<
+  cardinal_direction_index Direction0, //primary
+  cardinal_direction_index Direction1,
+  cardinal_direction_index Direction2
+>
+struct dimension_ordering {
+  static const int dimension0 = which_dimension_is_cardinal_direction_index(Direction0);
+  static const int dimension1 = which_dimension_is_cardinal_direction_index(Direction1);
+  static const int dimension2 = which_dimension_is_cardinal_direction_index(Direction2);
+  static const bool positive0 = is_a_positive_directional_cardinal_direction_index(Direction0);
+  static const bool positive1 = is_a_positive_directional_cardinal_direction_index(Direction1);
+  static const bool positive2 = is_a_positive_directional_cardinal_direction_index(Direction2);
+  static_assert(dimension0 != dimension1 && dimension0 != dimension2 && dimension1 != dimension2,
+                "The three directions must each be in a different dimension");
+
+  template<typename ScalarType>
+  static bool less_than_compare(vector3<ScalarType> const& a, vector3<ScalarType> const& b) {
+    return
+    (( (positive0?a:b)[dimension0] < (positive0?b:a)[dimension0] )
+    || (( (positive0?a:b)[dimension0] == (positive0?b:a)[dimension0] )
+       && (( (positive1?a:b)[dimension1] < (positive1?b:a)[dimension1] )
+          || (( (positive1?a:b)[dimension1] == (positive1?b:a)[dimension1] )
+             && (( (positive2?a:b)[dimension2] < (positive2?b:a)[dimension2] )
+                )))))
+    ;
+  }
+
+  // for using dimension_ordering as std::set/std::map's comparison type
+  template<typename ScalarType>
+  bool operator()(vector3<ScalarType> const& a, vector3<ScalarType> const& b)const {
+    return less_than_compare(a, b);
+  }
+};
+
+
 class bounds_checked_int {
 public:
   bounds_checked_int():value(0){}

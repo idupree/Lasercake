@@ -102,19 +102,3 @@ bool literally_random_access_removable_tiles_by_height::any_below(tile_coordinat
   return (!data.empty()) && (data.begin()->first < height);
 }
 
-bool tile_compare_xyz::operator()(tile_location const& i, tile_location const& j)const {
-  vector3<tile_coordinate> c1 = i.coords();
-  vector3<tile_coordinate> c2 = j.coords();
-  return (c1.x < c2.x) || ((c1.x == c2.x) && ((c1.y < c2.y) || ((c1.y == c2.y) && (c1.z < c2.z))));
-}
-bool tile_compare_yzx::operator()(tile_location const& i, tile_location const& j)const {
-  vector3<tile_coordinate> c1 = i.coords();
-  vector3<tile_coordinate> c2 = j.coords();
-  return (c1.y < c2.y) || ((c1.y == c2.y) && ((c1.z < c2.z) || ((c1.z == c2.z) && (c1.x < c2.x))));
-}
-bool tile_compare_zxy::operator()(tile_location const& i, tile_location const& j)const {
-  vector3<tile_coordinate> c1 = i.coords();
-  vector3<tile_coordinate> c2 = j.coords();
-  return (c1.z < c2.z) || ((c1.z == c2.z) && ((c1.x < c2.x) || ((c1.x == c2.x) && (c1.y < c2.y))));
-}
-
