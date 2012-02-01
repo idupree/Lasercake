@@ -220,25 +220,27 @@ struct tile_compare_yzx { bool operator()(tile_location const& i, tile_location 
 struct tile_compare_zxy { bool operator()(tile_location const& i, tile_location const& j)const; };
 
 inline std::array<tile_location, num_cardinal_directions> get_all_neighbors(tile_location const& loc, level_of_tile_realization_needed realineeded = FULL_REALIZATION) {
-  return std::array<tile_location, num_cardinal_directions>({{
+  std::array<tile_location, num_cardinal_directions> result = {{
     loc.get_neighbor<0>(realineeded),
     loc.get_neighbor<1>(realineeded),
     loc.get_neighbor<2>(realineeded),
     loc.get_neighbor<3>(realineeded),
     loc.get_neighbor<4>(realineeded),
     loc.get_neighbor<5>(realineeded)
-  }});
+  }};
+  return result;
 }
 
 inline std::array<tile_location, num_cardinal_directions> get_perpendicular_neighbors(tile_location const& loc, cardinal_direction dir, level_of_tile_realization_needed realineeded = FULL_REALIZATION) {
-  return std::array<tile_location, num_cardinal_directions>({{
+  std::array<tile_location, num_cardinal_directions> result = {{
     cardinal_directions_are_perpendicular(dir, 0) ? loc.get_neighbor<0>(realineeded) : trivial_invalid_location(),
     cardinal_directions_are_perpendicular(dir, 1) ? loc.get_neighbor<1>(realineeded) : trivial_invalid_location(),
     cardinal_directions_are_perpendicular(dir, 2) ? loc.get_neighbor<2>(realineeded) : trivial_invalid_location(),
     cardinal_directions_are_perpendicular(dir, 3) ? loc.get_neighbor<3>(realineeded) : trivial_invalid_location(),
     cardinal_directions_are_perpendicular(dir, 4) ? loc.get_neighbor<4>(realineeded) : trivial_invalid_location(),
     cardinal_directions_are_perpendicular(dir, 5) ? loc.get_neighbor<5>(realineeded) : trivial_invalid_location(),
-  }});
+  }};
+  return result;
 }
 
 /*

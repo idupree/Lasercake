@@ -312,7 +312,8 @@ inline bool cardinal_directions_are_perpendicular(cardinal_direction d1, cardina
 
 template<typename ValueType> class value_for_each_cardinal_direction {
 public:
-  explicit value_for_each_cardinal_direction(ValueType const& iv/*initial_value*/) : data({{iv,iv,iv,iv,iv,iv}}) { static_assert(num_cardinal_directions == 6, "fix {{iv,iv,...}} to have the right number"); }
+  //WORKS_IN_GCC46 explicit value_for_each_cardinal_direction(ValueType const& iv/*initial_value*/) : data({{iv,iv,iv,iv,iv,iv}}) { static_assert(num_cardinal_directions == 6, "fix {{iv,iv,...}} to have the right number"); }
+  explicit value_for_each_cardinal_direction(ValueType const& iv/*initial_value*/) { foreach (ValueType& d , data) { d = iv; } }
   template<cardinal_direction Dir> ValueType      & get()      { return data[Dir]; }
   template<cardinal_direction Dir> ValueType const& get()const { return data[Dir]; }
   ValueType      & operator[](cardinal_direction const& dir)      { return data[dir]; }
