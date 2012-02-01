@@ -42,6 +42,48 @@
 #endif
 #endif
 
+// Feature detection would be less stupid but mean a more complicated build system.
+// Probably TODO.
+#if defined(__GNUC__) && !defined(__clang__)
+#define GCC_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
+#endif
+#if GCC_VERSION && GCC_VERSION < 40600
+#define EMULATE_RANGE_BASED_FOR  1
+#define noexcept
+//#define EMULATE_NULLPTR  1
+// http://stackoverflow.com/questions/2419800/can-nullptr-be-emulated-in-gcc
+#define nullptr __null
+#endif
+
+#if EMULATE_RANGE_BASED_FOR
+  #include <boost/foreach.hpp>
+  #define foreach BOOST_FOREACH
+#else
+  #define foreach(x,y) for(x : y)
+#endif
+
+#if EMULATE_NULLPTR
+  #undef nullptr
+
+  // From the official C++0x proposal
+  // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2007/n2431.pdf
+
+  const    // this is a const object...
+  class {
+  public:
+    template<class T>    // convertible to any type
+    operator T*() const  // of null non-member
+    { return 0; }        // pointer...
+
+    template<class C, class T> // or any type of null
+    operator T C::*() const    // member pointer...
+    { return 0; }
+  private:
+    void operator&() const; // whose address can't be taken
+  } nullptr = {}; // and whose name is nullptr
+#endif
+
+
 // It's not polite for library functions to assert() because the library's users
 // misused a correct library; use these for that case.
 inline ATTRIBUTE_NORETURN void caller_error(const char* error) {
