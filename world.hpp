@@ -389,7 +389,7 @@ public:
   inline void update() {
     laser_sfxes.clear();
     update_fluids();
-    for (auto& obj : autonomously_active_objects_) obj.second->update(*this, obj.first);
+    foreach (auto& obj , autonomously_active_objects_) obj.second->update(*this, obj.first);
     update_moving_objects();
   }
   

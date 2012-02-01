@@ -31,7 +31,7 @@ void collect_collisions_if_object_personal_space_is_at(
 ) {
   unordered_set<object_or_tile_identifier> potential_collisions;
   w.collect_things_exposed_to_collision_intersecting(potential_collisions, new_shape.bounds());
-  for (auto const& pc : potential_collisions){
+  foreach (auto const& pc , potential_collisions){
     if (const auto tlocp = pc.get_tile_location()) {
       if (tile_shape(tlocp->coords()).intersects(new_shape)) {
         results.insert(pc);
@@ -113,7 +113,8 @@ void update_moving_objects_impl(
   // This entire function is kludgy and horrifically un-optimized.
   
   // Accelerate everything due to gravity.
-  for (pair<const object_identifier, shared_ptr<mobile_object>>& p : moving_objects) {
+  typedef pair<const object_identifier, shared_ptr<mobile_object>> p_type;
+  foreach (p_type& p , moving_objects) {
     p.second->velocity += gravity_acceleration;
     
     // Check any tile it happens to be in for whether there's water there.
@@ -129,7 +130,7 @@ void update_moving_objects_impl(
   world_collision_detector sweep_box_cd;
   
   unordered_set<object_identifier> objects_with_some_overlap;
-  for (auto const& p : moving_objects) {
+  foreach (auto const& p , moving_objects) {
     if (shape const* old_personal_space_shape = find_as_pointer(personal_space_shapes, p.first)) {
       shape dst_personal_space_shape(*old_personal_space_shape);
       dst_personal_space_shape.translate(p.second->velocity / velocity_scale_factor);
@@ -144,7 +145,7 @@ void update_moving_objects_impl(
       w.collect_things_exposed_to_collision_intersecting(this_overlaps, sweep_bounds);
       
       bool this_is_overlapping = false;
-      for (object_or_tile_identifier const& foo : this_overlaps) {
+      foreach (object_or_tile_identifier const& foo , this_overlaps) {
         if (object_identifier const* bar = foo.get_object_identifier()) {
           if (*bar != p.first) {
             objects_with_some_overlap.insert(*bar);
@@ -208,7 +209,7 @@ void update_moving_objects_impl(
   
   stepping_times times;
   
-  for (object_identifier id : objects_with_some_overlap) {
+  foreach (object_identifier id , objects_with_some_overlap) {
     shared_ptr<mobile_object> objp = moving_objects[id];
     trajinfo[id] = object_trajectory_info(objp->velocity / velocity_scale_factor);
     times.queue_next_step(id, trajinfo[id]);
@@ -231,7 +232,7 @@ void update_moving_objects_impl(
     // This collision code is kludgy because of the way it handles one collision at a time.
     // TODO properly consider multiple collisions in the same step.
     bool this_step_needs_adjusting = false;
-    for (object_or_tile_identifier const& them : this_overlaps) {
+    foreach (object_or_tile_identifier const& them , this_overlaps) {
       if (them != id) {
         tile_location const* locp = them.get_tile_location();
         if (locp && is_water(locp->stuff_at().contents())) {
@@ -287,7 +288,7 @@ void update_moving_objects_impl(
         sweep_box_cd.insert(id, sweep_bounds);
         sweep_box_cd.get_objects_overlapping(new_sweep_overlaps, sweep_bounds);
       
-        for (object_or_tile_identifier const& foo : this_overlaps) {
+        foreach (object_or_tile_identifier const& foo , this_overlaps) {
           if (object_identifier const* bar = foo.get_object_identifier()) {
             if (*bar != id) {
               if (objects_with_some_overlap.find(*bar) == objects_with_some_overlap.end()) {
@@ -301,7 +302,7 @@ void update_moving_objects_impl(
     }
   }
   
-  for (auto& p : moving_objects) {
+  foreach (auto& p , moving_objects) {
     if (objects_with_some_overlap.find(p.first) == objects_with_some_overlap.end()) {
       personal_space_shapes[p.first].translate(p.second->velocity / velocity_scale_factor);
       detail_shapes[p.first].translate(p.second->velocity / velocity_scale_factor);
@@ -350,7 +351,7 @@ void world::change_detail_shape(object_identifier id, shape const& new_shape) {
   
   /*unordered_set<object_identifier> potential_collisions;
   collect_things_exposed_to_collision_intersecting(potential_collisions, new_shape.bounds());
-  for (auto const& pc : potential_collisions){
+  foreach (auto const& pc , potential_collisions){
     if (auto oidp = pc.get_object_identifier()) {
       if (auto d_shape = find_as_pointer(mobile_object_detail_shapes, *oidp)) {
         if (d_shape->intersects(new_shape)) {

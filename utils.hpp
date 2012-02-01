@@ -507,7 +507,7 @@ private:
   std::unordered_set<Stuff> stuffs_set;
   void purge_nonexistent_stuffs() {
     size_t next_insert_idx = 0;
-    for (Stuff const& st : stuffs_set) {
+    foreach (Stuff const& st , stuffs_set) {
       stuffs_superset_vector[next_insert_idx] = st;
       ++next_insert_idx;
     }

@@ -108,7 +108,7 @@ struct world_building_func {
       return;
     }
     if (scenario.substr(0,15) == "pressure_tunnel") {
-      for(vector3<tile_coordinate> l : bounds) {
+      foreach(vector3<tile_coordinate> l , bounds) {
         const tile_coordinate tower_lower_coord = wc;
         const tile_coordinate tower_upper_coord = wc+10;
         const tile_coordinate tower_height = 200;
@@ -128,7 +128,7 @@ struct world_building_func {
       const int64_t block_height_shift = 30;
       const int64_t pool_steepness = 1;
       const int64_t pool_top_layers_missing = 1;
-      for(vector3<tile_coordinate> l : bounds) {
+      foreach(vector3<tile_coordinate> l , bounds) {
         const vector3<int64_t> lmwc = vector3<int64_t>(l) - vector3<int64_t>(wc,wc,wc);
         const int64_t base_height = -20LL + (int64_t(l.x / block_width) - int64_t(wc / block_width)) * block_height_shift;
         const int64_t dist_from_block_edge = std::min(

@@ -287,53 +287,53 @@ persistent_water_group_info const& get_water_group_by_grouped_tile(state_t const
 ///////////////////////////////
 // Debugging functions:
 void dump_boundary_stuff(groupable_water_dimensional_boundaries_TODO_name_this_better_t& g) {
-  for (auto const& foo : g.x_boundary_groupable_water_tiles)
+  foreach (auto const& foo , g.x_boundary_groupable_water_tiles)
     std::cerr << "  " << foo.coords() << "\n";
 }
 void dump_group_info(persistent_water_group_info const& g) {
   std::cerr << "Suckable tiles by height:\n";
-  for (auto const& foo : g.suckable_tiles_by_height.as_map()) {
+  foreach (auto const& foo , g.suckable_tiles_by_height.as_map()) {
     std::cerr << "  At height " << foo.first << ":\n";
-    for(auto const& bar : foo.second.as_unordered_set()) {
+    foreach(auto const& bar , foo.second.as_unordered_set()) {
       std::cerr << "    " << bar.coords() << "\n";
     }
   }
   std::cerr << "Pushable tiles by height:\n";
-  for (auto const& foo : g.pushable_tiles_by_height.as_map()) {
+  foreach (auto const& foo , g.pushable_tiles_by_height.as_map()) {
     std::cerr << "  At height " << foo.first << ":\n";
-    for(auto const& bar : foo.second.as_unordered_set()) {
+    foreach(auto const& bar , foo.second.as_unordered_set()) {
       std::cerr << "    " << bar.coords() << "\n";
     }
   }
   std::cerr << "Surface tiles:\n";
-  for (auto const& foo : g.surface_tiles) {
+  foreach (auto const& foo , g.surface_tiles) {
     std::cerr << "  " << foo.coords() << "\n";
   }
   std::cerr << "Width-of-widest-level-so-far caches:\n";
-  for (auto const& foo : g.width_of_widest_level_so_far_caches) {
+  foreach (auto const& foo , g.width_of_widest_level_so_far_caches) {
     std::cerr << "  " << foo.first << ": " << foo.second << "\n";
   }
   std::cerr << "Pressure caches:\n";
-  for (auto const& foo : g.pressure_caches) {
+  foreach (auto const& foo , g.pressure_caches) {
     std::cerr << "  " << foo.first << ": " << foo.second << "\n";
   }
   std::cerr << "Num tiles by height:\n";
-  for (auto const& foo : g.num_tiles_by_height) {
+  foreach (auto const& foo , g.num_tiles_by_height) {
     std::cerr << "  " << foo.first << ": " << foo.second << "\n";
   }
 }
 void dump_all_groups(state_t& state) {
-  for (auto const& p : state.persistent_water_groups) {
+  foreach (auto const& p , state.persistent_water_groups) {
     std::cerr << "\n==GROUP "<< p.first<<"==\n";
     dump_group_info(p.second);
   }
 }
 
 /*void check_pushable_tiles_sanity(state_t& state) {
-  for (auto const& p : state.persistent_water_groups) {
+  foreach (auto const& p , state.persistent_water_groups) {
     auto const& g = p.second;
-    for (auto const& foo : g.pushable_tiles_by_height.as_map()) {
-      for(auto const& bar : foo.second.as_unordered_set()) {
+    foreach (auto const& foo , g.pushable_tiles_by_height.as_map()) {
+      foreach(auto const& bar , foo.second.as_unordered_set()) {
         bool sane = false;
         for(cardinal_direction dir = 0; dir < num_cardinal_directions; ++dir) {
           if(g.surface_tiles.find(bar + dir) != g.surface_tiles.end()) {
@@ -397,19 +397,19 @@ void check_group_surface_tiles_cache_and_layer_size_caches(state_t& state, persi
   
   bool check_succeeded = true;
   
-  for (auto const& s : h.surface_tiles) {
+  foreach (auto const& s , h.surface_tiles) {
     if(g.surface_tiles.find(s) == g.surface_tiles.end()) {
       std::cerr << "Missing surface tile: " << s.coords() << "\n";
       check_succeeded = false;
     }
   }
-  for (auto const& s : g.surface_tiles) {
+  foreach (auto const& s , g.surface_tiles) {
     if(h.surface_tiles.find(s) == h.surface_tiles.end()) {
       std::cerr << "Extra surface tile: " << s.coords() << "\n";
       check_succeeded = false;
     }
   }
-  for (auto const& p : h.num_tiles_by_height) {
+  foreach (auto const& p , h.num_tiles_by_height) {
     auto i = g.num_tiles_by_height.find(p.first);
     if (i == g.num_tiles_by_height.end()) {
       std::cerr << "Missing height listing: " << p.first << "\n";
@@ -422,7 +422,7 @@ void check_group_surface_tiles_cache_and_layer_size_caches(state_t& state, persi
       }
     }
   }
-  for (auto const& p : g.num_tiles_by_height) {
+  foreach (auto const& p , g.num_tiles_by_height) {
     auto i = h.num_tiles_by_height.find(p.first);
     if (i == h.num_tiles_by_height.end()) {
       std::cerr << "Extra height listing: " << p.first << "\n";
@@ -547,7 +547,7 @@ void initialize_water_group_from_tile_if_necessary(state_t& state, tile_location
 void initialize_tile_local_caches_impl(world_collision_detector& things_exposed_to_collision, tile_location const& loc) {
   bool should_be_interior = true;
   std::array<tile_location, num_cardinal_directions> neighbors = get_all_neighbors(loc, CONTENTS_ONLY);
-  for (tile_location const& adj_loc : neighbors) {
+  foreach (tile_location const& adj_loc , neighbors) {
     if (neighboring_tiles_with_these_contents_are_not_interior(adj_loc.stuff_at().contents(), loc.stuff_at().contents())) {
       // Between us and them is a 'different types' interface, so we're not interior:
       should_be_interior = false;
@@ -578,7 +578,7 @@ void persistent_water_group_info::recompute_num_tiles_by_height_from_surface_til
   
   auto const& groupable_water_dimensional_boundaries_TODO_name_this_better = state.groupable_water_dimensional_boundaries_TODO_name_this_better;
   
-  for (tile_location const& surface_loc : surface_tiles) {
+  foreach (tile_location const& surface_loc , surface_tiles) {
     // We're only interested in starting at low-x boundaries
     if (surface_loc.get_neighbor<xminus>(CONTENTS_ONLY).stuff_at().contents() != GROUPABLE_WATER) {
       // If we're *also* the high-x boundary, there's only one water tile in this row
@@ -763,27 +763,27 @@ water_group_identifier merge_water_groups(water_group_identifier id_1, water_gro
   water_group_identifier  remaining_group_id = (group_1_is_smaller ?    id_2 :    id_1);
   water_group_identifier  destroyed_group_id = (group_1_is_smaller ?    id_1 :    id_2);
   
-  for (auto const& s : smaller_group.suckable_tiles_by_height.as_map()) {
-    for (auto const& t : s.second.as_unordered_set()) {
+  foreach (auto const& s , smaller_group.suckable_tiles_by_height.as_map()) {
+    foreach (auto const& t , s.second.as_unordered_set()) {
       larger_group.suckable_tiles_by_height.insert(t);
     }
   }
-  for (auto const& s : smaller_group.pushable_tiles_by_height.as_map()) {
-    for (auto const& t : s.second.as_unordered_set()) {
+  foreach (auto const& s , smaller_group.pushable_tiles_by_height.as_map()) {
+    foreach (auto const& t , s.second.as_unordered_set()) {
 #ifdef ASSERT_EVERYTHING
       assert(t.stuff_at().contents() == AIR);
 #endif
       larger_group.pushable_tiles_by_height.insert(t);
     }
   }
-  for (auto const& p : smaller_group.num_tiles_by_height) {
+  foreach (auto const& p , smaller_group.num_tiles_by_height) {
     // Note: the [] operator default-constructs a zero if there's nothing there
 #ifdef ASSERT_EVERYTHING
     assert(p.second > 0);
 #endif
     larger_group.num_tiles_by_height[p.first] += p.second;
   }
-  for (auto const& l : smaller_group.surface_tiles) {
+  foreach (auto const& l , smaller_group.surface_tiles) {
     assert(larger_group.surface_tiles.insert(l).second);
     auto foo = water_groups_by_surface_tile.find(l);
 #ifdef ASSERT_EVERYTHING
@@ -836,7 +836,7 @@ void replace_substance_impl(
     // TODO prefer: is opposite the direction we moved (can we do that...?)
     // TODO prefer: is where our velocity is leaving
     vector<tile_location> adj_tiles_that_want_to_fill_us_via_pressure;
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
         water_group_identifier group_id = get_water_group_id_by_grouped_tile(state, adj_loc);
         persistent_water_group_info const& group = persistent_water_groups.find(group_id)->second;
@@ -856,7 +856,7 @@ void replace_substance_impl(
       return;
     }
     else {
-      for (tile_location const& adj_loc : neighbors) {
+      foreach (tile_location const& adj_loc , neighbors) {
         if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
           water_group_identifier group_id = get_water_group_id_by_grouped_tile(state, adj_loc);
           persistent_water_group_info& group = persistent_water_groups.find(group_id)->second;
@@ -867,7 +867,7 @@ void replace_substance_impl(
   }
   // Or, if we've become non-air, pressure can no longer push water into us.
   if (old_substance_type == AIR && new_substance_type != AIR) {
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
         water_group_identifier group_id = get_water_group_id_by_grouped_tile(state, adj_loc);
 #ifdef ASSERT_EVERYTHING
@@ -921,7 +921,7 @@ void replace_substance_impl(
     // If we're next to one adjacent group, we will merely join that group.
     // If we're adjacent to more than one adjacent group, then our existence
     // constitutes a merger of those two groups, so we execute that.
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       water_groups_by_location_t::const_iterator iter = water_groups_by_surface_tile.find(adj_loc);
       if (iter != water_groups_by_surface_tile.end()) {
         if (water_group_id == NO_WATER_GROUP) {
@@ -989,7 +989,7 @@ void replace_substance_impl(
   }
   if (!these_tile_contents_are_identical_regarding_interiorness(new_substance_type, old_substance_type)) {
     bool we_are_now_interior = true;
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (neighboring_tiles_with_these_contents_are_not_interior(adj_loc.stuff_at().contents(), new_substance_type)) {
         // Between us and them is a 'different types' interface, so neither us nor them is interior:
         we_are_now_interior = false;
@@ -1011,7 +1011,7 @@ void replace_substance_impl(
         if (!adj_loc.stuff_at().is_interior()) {
           bool they_should_be_interior = true;
           std::array<tile_location, num_cardinal_directions> adj_neighbors = get_all_neighbors(adj_loc);
-          for (tile_location const& adj_adj_loc : adj_neighbors) {
+          foreach (tile_location const& adj_adj_loc , adj_neighbors) {
             if (neighboring_tiles_with_these_contents_are_not_interior(adj_adj_loc.stuff_at().contents(), adj_loc.stuff_at().contents())) {
               they_should_be_interior = false;
               break;
@@ -1062,12 +1062,12 @@ void replace_substance_impl(
     // and we might need to designate neighbors as non-surface tiles,
     // if we've closed their last liberty (to use Go terms)
     bool there_are_any_adjacent_tiles_that_are_not_groupable_water = false;
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
         bool adjacent_tile_has_any_adjacent_tiles_that_are_not_groupable_water = false;
         
         std::array<tile_location, num_cardinal_directions> adj_neighbors = get_all_neighbors(adj_loc);
-        for (tile_location const& adj_adj_loc : adj_neighbors) {
+        foreach (tile_location const& adj_adj_loc , adj_neighbors) {
           if (adj_adj_loc.stuff_at().contents() != GROUPABLE_WATER) {
             adjacent_tile_has_any_adjacent_tiles_that_are_not_groupable_water = true;
             break;
@@ -1094,7 +1094,7 @@ void replace_substance_impl(
     //check_group_surface_tiles_cache_and_layer_size_caches(state, *water_group);
     
     // Our surfaces are now pushable surfaces.
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == AIR) {
         water_group->pushable_tiles_by_height.insert(adj_loc);
       }
@@ -1116,7 +1116,7 @@ void replace_substance_impl(
       assert(water_groups_by_surface_tile.erase(loc));
     
     // We may have exposed other group tiles, which now need to be marked as the group surface.
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
         water_groups_by_location_t::const_iterator existing_marker_iter = water_groups_by_surface_tile.find(adj_loc);
         if (existing_marker_iter != water_groups_by_surface_tile.end()) {
@@ -1151,11 +1151,11 @@ void replace_substance_impl(
     water_group->pressure_caches.erase(water_group->pressure_caches.begin(), water_group->pressure_caches.upper_bound(loc.coords().z));
     
     // Our surfaces are no longer pushable surfaces.
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == AIR) {
         bool can_be_pushable = false;
         std::array<tile_location, num_cardinal_directions> neighbor_neighbors = get_all_neighbors(adj_loc);
-        for (tile_location const& adj_adj_loc : neighbor_neighbors) {
+        foreach (tile_location const& adj_adj_loc , neighbor_neighbors) {
           if (adj_adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
             water_groups_by_location_t::const_iterator foo = water_groups_by_surface_tile.find(adj_adj_loc);
             if (foo != water_groups_by_surface_tile.end() && foo->second == water_group_id) {
@@ -1209,7 +1209,7 @@ void replace_substance_impl(
               const tile_location  bigger_collector = (this_collector_is_bigger ? collector    : iter->second);
               const tile_location smaller_collector = (this_collector_is_bigger ? iter->second : collector   );
               
-              for (tile_location const& loc : collected_locs_by_neighbor[smaller_collector]) {
+              foreach (tile_location const& loc , collected_locs_by_neighbor[smaller_collector]) {
                 collected_locs_by_neighbor[bigger_collector].insert(loc);
                 neighbors_by_collected_loc.find(loc)->second = bigger_collector;
               }
@@ -1228,7 +1228,7 @@ void replace_substance_impl(
     };
     water_splitting_info inf;
     
-    for (tile_location const& adj_loc : neighbors) {
+    foreach (tile_location const& adj_loc , neighbors) {
       if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
         inf.try_collect_loc(adj_loc, adj_loc);
       }
@@ -1250,7 +1250,7 @@ void replace_substance_impl(
           const water_group_identifier new_group_id = make_new_water_group(next_water_group_identifier, persistent_water_groups);
           persistent_water_group_info& new_group = persistent_water_groups.find(new_group_id)->second;
           
-          for (tile_location const& new_grouped_loc : inf.collected_locs_by_neighbor[which_neighbor]) {
+          foreach (tile_location const& new_grouped_loc , inf.collected_locs_by_neighbor[which_neighbor]) {
             auto foo = water_groups_by_surface_tile.find(new_grouped_loc);
 #ifdef ASSERT_EVERYTHING
             assert(foo != water_groups_by_surface_tile.end());
@@ -1264,7 +1264,7 @@ void replace_substance_impl(
             }
           }
           new_group.recompute_num_tiles_by_height_from_surface_tiles(state);
-          for (auto const& p : new_group.num_tiles_by_height) {
+          foreach (auto const& p , new_group.num_tiles_by_height) {
             auto iter = water_group->num_tiles_by_height.find(p.first);
 #ifdef ASSERT_EVERYTHING
             assert(iter != water_group->num_tiles_by_height.end());
@@ -1277,14 +1277,14 @@ void replace_substance_impl(
           water_group->pressure_caches.erase(water_group->pressure_caches.begin(), water_group->pressure_caches.upper_bound(new_group.num_tiles_by_height.rbegin()->first));
           
           unordered_set<tile_location> original_pushable_tiles_removed;
-          for (auto const& ph : water_group->pushable_tiles_by_height.as_map()) {
-            for(auto const& p : ph.second.as_unordered_set()) {
+          foreach (auto const& ph , water_group->pushable_tiles_by_height.as_map()) {
+            foreach(auto const& p , ph.second.as_unordered_set()) {
 #ifdef ASSERT_EVERYTHING
               assert(p.stuff_at().contents() == AIR);
 #endif
               bool is_pushable_for_original_group = false;
               std::array<tile_location, num_cardinal_directions> p_neighbors = get_all_neighbors(p);
-              for (tile_location const& adj_loc : p_neighbors) {
+              foreach (tile_location const& adj_loc , p_neighbors) {
                 if (adj_loc.stuff_at().contents() == GROUPABLE_WATER) {
                   const water_group_identifier pushable_having_group_id = get_water_group_id_by_grouped_tile(state, adj_loc);
                   if (pushable_having_group_id == water_group_id) {
@@ -1302,7 +1302,7 @@ void replace_substance_impl(
               if (!is_pushable_for_original_group) original_pushable_tiles_removed.insert(p);
             }
           }
-          for (auto const& p : original_pushable_tiles_removed) {
+          foreach (auto const& p , original_pushable_tiles_removed) {
             water_group->pushable_tiles_by_height.erase(p);
           }
           //check_group_surface_tiles_cache_and_layer_size_caches(state, new_group);
@@ -1399,7 +1399,7 @@ void update_fluids_impl(state_t& state) {
   
   vector<wanted_move> wanted_moves;
   
-  for (pair<const tile_location, active_fluid_tile_info>& p : active_fluids) {
+  foreach (auto& p , active_fluids) {
     tile_location const& loc = p.first;
     active_fluid_tile_info& fluid = p.second;
     tile const& t = loc.stuff_at();
@@ -1498,7 +1498,7 @@ void update_fluids_impl(state_t& state) {
     
     // blockage_amount_this_frame is just a temporary value that lingers from one frame to the next -
     // we erase it after we use it.
-    for (sub_tile_distance& bb : fluid.blockage_amount_this_frame) bb = 0;
+    foreach (sub_tile_distance& bb , fluid.blockage_amount_this_frame) bb = 0;
     
     // ==============================================================================
     //  Phase 2
@@ -1540,7 +1540,7 @@ void update_fluids_impl(state_t& state) {
   std::unordered_set<tile_location> disturbed_tiles;
   
   
-  for (const wanted_move move : wanted_moves) {
+  foreach (const wanted_move move , wanted_moves) {
     const tile_location dst = move.src.get_neighbor_by_variable(move.dir, FULL_REALIZATION);
     tile const& src_tile = move.src.stuff_at();
     tile const& dst_tile = dst.stuff_at();
@@ -1641,7 +1641,7 @@ void update_fluids_impl(state_t& state) {
   //  Deactive water if needs to be deactivated.
   // ==============================================================================
   
-  for (pair<const tile_location, active_fluid_tile_info>& p : active_fluids) {
+  foreach (auto& p , active_fluids) {
     tile_location const& loc = p.first;
     active_fluid_tile_info& fluid = p.second;
     tile const& t = loc.stuff_at();

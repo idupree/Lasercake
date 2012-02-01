@@ -262,7 +262,7 @@ private:
   
   void zget_objects_overlapping(ztree_node const* tree, unordered_set<ObjectIdentifier>& results, bounding_box const& bbox)const {
     if (tree && tree->here.get_bbox().overlaps(bbox)) {
-      for (const ObjectIdentifier obj : tree->objects_here) {
+      foreach (const ObjectIdentifier obj , tree->objects_here) {
         auto bbox_iter = bboxes_by_object.find(obj);      
 #ifdef ASSERT_EVERYTHING
         assert(bbox_iter != bboxes_by_object.end());
@@ -409,7 +409,7 @@ private:
       frontier.erase(frontier.begin());
       
       if (handler->should_be_considered__dynamic(next->here.bbox)) {
-        for (const ObjectIdentifier obj : next->objects_here) {
+        foreach (const ObjectIdentifier obj , next->objects_here) {
           auto bbox_iter = bboxes_by_object.find(obj);
 #ifdef ASSERT_EVERYTHING
           assert(bbox_iter != bboxes_by_object.end());

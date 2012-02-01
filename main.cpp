@@ -353,12 +353,12 @@ srand(time(NULL));
     ));
     
     // this is a bloody stupid hack, TODO do something different
-    if (drawing_debug_stuff)
-    for (auto const& p : tile_physics_impl::get_state(w.tile_physics()).persistent_water_groups) {
+    if (drawing_debug_stuff) {
+    foreach (auto const& p , tile_physics_impl::get_state(w.tile_physics()).persistent_water_groups) {
       tile_physics_impl::persistent_water_group_info const& g = p.second;
       
-      for (auto const& foo : g.suckable_tiles_by_height.as_map()) {
-        for(tile_location const& bar : foo.second.as_unordered_set()) {
+      foreach (auto const& foo , g.suckable_tiles_by_height.as_map()) {
+        foreach(tile_location const& bar , foo.second.as_unordered_set()) {
           vector3<GLfloat> locv = convert_coordinates_to_GL(view_loc, lower_bound_in_fine_units(bar.coords()));
           gl_collection& coll = gl_collections_by_distance[
             tile_manhattan_distance_to_bounding_box_rounding_down(fine_bounding_box_of_tile(bar.coords()), view_loc)
@@ -366,8 +366,8 @@ srand(time(NULL));
           push_point(coll, vertex(locv.x + 0.5, locv.y + 0.5, locv.z + 0.15), color(0xff00ff77));
         }
       }
-      for (auto const& foo : g.pushable_tiles_by_height.as_map()) {
-        for(tile_location const& bar : foo.second.as_unordered_set()) {
+      foreach (auto const& foo , g.pushable_tiles_by_height.as_map()) {
+        foreach(tile_location const& bar , foo.second.as_unordered_set()) {
           vector3<GLfloat> locv = convert_coordinates_to_GL(view_loc, lower_bound_in_fine_units(bar.coords()));
           gl_collection& coll = gl_collections_by_distance[
             tile_manhattan_distance_to_bounding_box_rounding_down(fine_bounding_box_of_tile(bar.coords()), view_loc)
@@ -375,9 +375,10 @@ srand(time(NULL));
           push_point(coll, vertex(locv.x + 0.5, locv.y + 0.5, locv.z + 0.15), color(0xff770077));
         }
       }
+      }
     }
     
-    for (auto p : w.laser_sfxes) {
+    foreach (auto p , w.laser_sfxes) {
       const vector3<GLfloat> locvf1 = convert_coordinates_to_GL(view_loc, p.first);
       const vector3<GLfloat> locvf2 = convert_coordinates_to_GL(view_loc, p.first + p.second);
       const vector3<GLfloat> dlocvf = locvf2 - locvf1;
@@ -402,7 +403,7 @@ srand(time(NULL));
       }
     }
     
-    for (object_or_tile_identifier const& id : tiles_to_draw) {
+    foreach (object_or_tile_identifier const& id , tiles_to_draw) {
       gl_collection& coll = gl_collections_by_distance[
         tile_manhattan_distance_to_bounding_box_rounding_down(w.get_bounding_box_of_object_or_tile(id), view_loc)
       ];
@@ -410,11 +411,11 @@ srand(time(NULL));
         shared_ptr<mobile_object> objp = boost::dynamic_pointer_cast<mobile_object>(*(w.get_object(*mid)));
         const object_shapes_t::const_iterator blah = w.get_object_personal_space_shapes().find(*mid);
         std::vector<convex_polygon> const& foo = blah->second.get_polygons();
-        for (convex_polygon const& bar : foo) {
+        foreach (convex_polygon const& bar , foo) {
           push_convex_polygon(view_loc, coll, bar.get_vertices(), color(0x77777777));
 
           // TODO so many redundant velocity vectors!!
-          for(auto const& this_vertex : bar.get_vertices()) {
+          foreach(auto const& this_vertex , bar.get_vertices()) {
             const vector3<GLfloat> locv = convert_coordinates_to_GL(view_loc, this_vertex);
             push_line(coll,
                       vertex(locv.x, locv.y, locv.z),
@@ -584,12 +585,12 @@ srand(time(NULL));
     glEnableClientState(GL_COLOR_ARRAY);
 
     std::vector<size_t> gl_collections_by_distance_order;
-    for(auto const& p : gl_collections_by_distance) {
+    foreach(auto const& p , gl_collections_by_distance) {
       gl_collections_by_distance_order.push_back(p.first);
     }
     //sort in descending order
     std::sort(gl_collections_by_distance_order.rbegin(), gl_collections_by_distance_order.rend());
-    for(size_t i : gl_collections_by_distance_order) {
+    foreach(size_t i , gl_collections_by_distance_order) {
       gl_collection const& coll = gl_collections_by_distance[i];
       if(const size_t count = coll.quads.vertices.size()) {
         glVertexPointer(3, GL_FLOAT, 0, &coll.quads.vertices[0]);
