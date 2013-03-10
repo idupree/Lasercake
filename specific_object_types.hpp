@@ -175,6 +175,7 @@ public:
                       object_identifier my_id) override;
 private:
   vector3<tile_coordinate> initial_location_;
+  // TODO: Make sure these things are dumped somewhere when the building is deconstructed.
   cubic_meters waste_rock_inside_;
   cubic_meters metal_inside_;
 };
