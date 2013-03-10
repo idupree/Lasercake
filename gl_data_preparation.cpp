@@ -578,7 +578,9 @@ inline color compute_tile_color(world const& w, tile_location const& loc) {
     } break;
     case RUBBLE: {
       r = 0xff; g = 0xaa; b = 0x55; a = 0xcc;
-      g += get_primitive_int(w.get_minerals(loc.coords()).metal / meters / meters / meters);
+      lint64_t metal = get_primitive_int(w.get_minerals(loc.coords()).metal / meters / meters / meters);
+      g += metal;
+      if (metal == 0) g -= 0x16;
       if (g > 0xff) g = 0xff;
     } break;
     case GROUPABLE_WATER: r = 0x00; g = 0x00; b = 0xff; a = 0x77; break;
