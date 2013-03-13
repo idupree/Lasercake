@@ -1,0 +1,104 @@
+
+/*
+
+S update sequence:
+dSf (1) and time-passed-since-last-S-update (2) -> S (2)
+(present time) -> time-passed-since-last-S-update (2)
+S (2*lots) -> dSf (1)
+  incl. if dSf is too low, just make it be zero
+dSf (11) -> dSt (2)
+dSt (12*lots), S (12*lots) -> dSfcm (11*lots or less)
+  If the dSfs are zero, don't make a dSfcm
+
+ */
+
+
+template <typename ContentsUnits>
+struct changing_value {
+  typedef physical_quantity<lint64_t, ContentsUnits> contents_type;
+  typedef physical_quantity<lint64_t, units_prod<ContentsUnits, dim::second<-1>>> contents_per_second_type;
+  contents_type contents;
+  contents_per_second_type last_rate;
+  time_type last_time_updated;
+  void update(time_type present_time, contents_per_second_type present_rate) {
+    const contents_per_second_type average_rate_of_change_since_last_time = (present_rate + last_rate) / 2;
+    const time_type dur = present_time - last_time_updated;
+    contents += divide(
+        average_rate_of_change_since_last_time * dur.numerator,
+        dur.denominator,
+        rounding_strategy<round_to_nearest_with_ties_rounding_to_even);
+    last_time_updated = present_time;
+    last_rate = present_rate;
+  }
+};
+
+enum gas_attribute {
+  X_VEL = X,
+  Y_VEL = Y,
+  Z_VEL = Z,
+  HEAT_ENERGY,
+  SUBSTANCE_AMOUNT
+};
+constexpr bool is_velocity_attribute(gas_attribute g) { return (g == X_VEL) || (g == Y_VEL) || (g == Z_VEL); }
+constexpr which_dimension_type velocity_attribute_dimension(gas_attribute g) { return g; }
+constexpr gas_attribute velocity_attribute_from_dimension(which_dimension_type g) { return g; }
+
+enum gas_substance_type {
+  NITROGEN_OXYGEN_MIX = 0,
+  SMOKE,
+  NUM_GAS_TYPES
+};
+
+template<gas_attribute> struct gas_attribute_amount_units { static_assert(false); }
+template<> struct gas_attribute_amount_units<X_VEL> { typedef velocity_units_t type; }
+template<> struct gas_attribute_amount_units<Y_VEL> { typedef velocity_units_t type; }
+template<> struct gas_attribute_amount_units<Z_VEL> { typedef velocity_units_t type; }
+template<> struct gas_attribute_amount_units<HEAT_ENERGY> { typedef joules_t type; }
+template<> struct gas_attribute_amount_units<SUBSTANCE_AMOUNT> { typedef amount_of_gas_t type; }
+
+struct tile_gas_info {
+  array<changing_value<velocity_units_t>, 3> velocity;
+  changing_value<joules_t> heat;
+  vector<changing_value<amount_of_gas_t>> substances;
+};
+
+
+template<gas_attribute Attr>
+struct gas_attribute_stuff {
+  typedef typename gas_attribute_amount_units<Attr>::type units_type;
+  typedef physical_quantity<lint64_t, units_type> amount_type;
+  typedef physical_quantity<lint64_t, units_prod<units_type, dim::second<-1>>> amount_per_second_type;
+
+  // result is in "transfer from t0 to t1"
+  amount_per_second_type attribute_exchange_rate(tile_gas_info t0, tile_gas_info t1, which_dimension_type adjacency_dimension) {
+    // assuming that t1 is farther in that dimension
+
+    amount_per_second_type result = 0;
+
+    // simple diffusion:
+    // TODO use a better value than "per 2 seconds"
+    result += (t0.get<Attr>() - t1.get<Attr>()) / (2*seconds);
+
+    // hack? use the average velocity of the two tiles as the velocity across the boundary
+    velocity1d rel_vel = t0.velocity[adjacency_dimension] + t1.velocity[adjacency_dimension];
+    // exchange rate is (velocity * surface area) / tile volume;
+    // that's 1/tile_height for vertical and 1/tile_width for horizontal transfer
+    result += rel_vel * (t0.get<Attr>() - t1.get<Attr>())
+              / ((adjacency_dimension == Z) ? tile_height : tile_width);
+    
+    
+    if (is_velocity_attribute(Attr)) {
+      
+    }
+  }
+};
+
+
+struct gas_physics_state {
+  void do_event(event e) {
+    
+  }
+  
+  unordered_map<tile_location, tile_gas_info> differentiated_tiles;
+  time heap events;
+};
