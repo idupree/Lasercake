@@ -12,23 +12,34 @@ dSt (12*lots), S (12*lots) -> dSfcm (11*lots or less)
 
  */
 
+#include "utils.hpp"
+
 
 template <typename ContentsUnits>
 struct changing_value {
   typedef physical_quantity<lint64_t, ContentsUnits> contents_type;
   typedef physical_quantity<lint64_t, units_prod<ContentsUnits, dim::second<-1>>> contents_per_second_type;
-  contents_type contents;
-  contents_per_second_type last_rate;
+  contents_type contents_at_last_time_updated;
+  value_for_each_cardinal_direction<contents_per_second_type> rate_of_change_contributions_at_last_time_updated;
   time_type last_time_updated;
-  void update(time_type present_time, contents_per_second_type present_rate) {
-    const contents_per_second_type average_rate_of_change_since_last_time = (present_rate + last_rate) / 2;
+  contents_per_second_type rate_of_change()const {
+    contents_per_second_type result = 0;
+    for (contents_per_second_type r : rate_of_change_contributions_at_last_time_updated) {
+      result += r;
+    }
+    return result;
+  }
+  contents_type get_contents_at_time(time_type present_time)const {
     const time_type dur = present_time - last_time_updated;
-    contents += divide(
-        average_rate_of_change_since_last_time * dur.numerator,
+    return contents + divide(
+        rate_of_change() * dur.numerator,
         dur.denominator,
         rounding_strategy<round_to_nearest_with_ties_rounding_to_even);
+  }
+  void update(time_type present_time, cardinal_direction dir, contents_per_second_type present_rate_from_that_direction) {
+    contents_at_last_time_updated = get_contents_at_time(present_time);
+    rate_of_change_contributions_at_last_time_updated[dir] = present_rate_from_that_direction;
     last_time_updated = present_time;
-    last_rate = present_rate;
   }
 };
 
@@ -60,35 +71,85 @@ struct tile_gas_info {
   array<changing_value<velocity_units_t>, 3> velocity;
   changing_value<joules_t> heat;
   vector<changing_value<amount_of_gas_t>> substances;
+
+  pressure get_pressure_at_time(time_type present_time) {
+    // TODO Uhhhhh
+    TODO
+  }
+  mass get_mass_at_time(time_type present_time) {
+    // TODO Uhhhhh
+    TODO
+  }
 };
 
+struct adjacent_gas_tile_pair {
+  tile_gas_info* t0;
+  tile_gas_info* t1;
+  which_dimension_type dimension;
+  time_type present_time;
+};
 
 template<gas_attribute Attr>
 struct gas_attribute_stuff {
   typedef typename gas_attribute_amount_units<Attr>::type units_type;
   typedef physical_quantity<lint64_t, units_type> amount_type;
   typedef physical_quantity<lint64_t, units_prod<units_type, dim::second<-1>>> amount_per_second_type;
+  
+  void update_next_change_time(adjacent_gas_tile_pair p) {
+
+    velocity1d average_velocity = (p.t0->velocity[adjacency_dimension]*m0 + p.t1->velocity[adjacency_dimension]*m1) / total_mass;
+    
+  }
 
   // result is in "transfer from t0 to t1"
-  amount_per_second_type attribute_exchange_rate(tile_gas_info t0, tile_gas_info t1, which_dimension_type adjacency_dimension) {
+  void update_attribute_exchange_rate(adjacent_gas_tile_pair p) {
     // assuming that t1 is farther in that dimension
+    const amount_type a0 = p.t0->get<Attr>().get_contents_at_time(present_time);
+    const amount_type a1 = p.t1->get<Attr>().get_contents_at_time(present_time);
+    const amount_type t0_relative_amount = a0 - a1;
+    const mass m0 = p.t0->get_mass_at_time(present_time);
+    const mass m1 = p.t1->get_mass_at_time(present_time);
+    const mass total_mass = m0 + m1;
+    const velocity1d v0 = p.t0->velocity[adjacency_dimension];
+    const velocity1d v1 = p.t1->velocity[adjacency_dimension];
+    amount_per_second_type t0_to_t1_flow = 0;
 
-    amount_per_second_type result = 0;
+    // !!! NOTE !!!:
+    // The formulas in update_next_change_time and update_attribute_exchange_rate are closely interrelated!
+    // You cannot change one without changing the other (unless you want to break stuff)!
 
     // simple diffusion:
     // TODO use a better value than "per 2 seconds"
-    result += (t0.get<Attr>() - t1.get<Attr>()) / (2*seconds);
+    // t0_to_t1_flow += t0_relative_amount / (2*seconds);
+    // Err... TODO do something that doesn't break equilibrium WRT gravity
 
     // hack? use the average velocity of the two tiles as the velocity across the boundary
-    velocity1d rel_vel = t0.velocity[adjacency_dimension] + t1.velocity[adjacency_dimension];
+    velocity1d average_velocity = (v0*m0 + v1*m1) / total_mass;
     // exchange rate is (velocity * surface area) / tile volume;
     // that's 1/tile_height for vertical and 1/tile_width for horizontal transfer
-    result += rel_vel * (t0.get<Attr>() - t1.get<Attr>())
+    t0_to_t1_flow += average_velocity * ((average_velocity > 0) ? a0 : a1)
               / ((adjacency_dimension == Z) ? tile_height : tile_width);
+
+    
     
     
     if (is_velocity_attribute(Attr)) {
-      
+      // Eww.
+      const pressure rel_pressure = p.t0->get_pressure_at_time(present_time) - p.t1->get_pressure_at_time(present_time);
+      const force net_force_from_pressure = rel_pressure * ((adjacency_dimension == Z) ? (tile_width*tile_width) : (tile_width*tile_height));
+      acceleration net_acceleration = net_force_from_pressure / total_mass;
+      if (adjacency_dimension == Z) net_acceleration -= gravity_acceleration_magnitude;
+
+      t0->get<Attr>().update(present_time, cardinal_direction_of_dimension_and_positiveness(adjacency_dimension, true ),
+                            net_acceleration - t0_to_t1_flow);
+      t1->get<Attr>().update(present_time, cardinal_direction_of_dimension_and_positiveness(adjacency_dimension, false),
+                            net_acceleration + t0_to_t1_flow);
+    }
+    else {
+      t0->get<Attr>().update(present_time, cardinal_direction_of_dimension_and_positiveness(adjacency_dimension, true ),
+                            -t0_to_t1_flow);
+      t1->get<Attr>().update(present_time, cardinal_direction_of_dimension_and_positiveness(adjacency_dimension, false),
+                             t0_to_t1_flow);
     }
   }
 };
