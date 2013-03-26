@@ -76,11 +76,17 @@ float gl_triangle_distance_order(glm::vec3 from, gl_triangle const& triangle) {
        + glm::distance(from, v_to_gv(triangle.vertices[1].v))
        + glm::distance(from, v_to_gv(triangle.vertices[2].v));
 }
-void sort_gl_triangles_by_distance_to(glm::vec3 view_center, gl_triangles& ts) {
+void sort_gl_triangles_near_to_far(glm::vec3 view_center, gl_triangles& ts) {
   std::sort(ts.begin(), ts.end(), [view_center](gl_triangle const& t1, gl_triangle const& t2) {
     return gl_triangle_distance_order(view_center, t1) < gl_triangle_distance_order(view_center, t2);
   });
 }
+void sort_gl_triangles_far_to_near(glm::vec3 view_center, gl_triangles& ts) {
+  std::sort(ts.begin(), ts.end(), [view_center](gl_triangle const& t1, gl_triangle const& t2) {
+    return gl_triangle_distance_order(view_center, t2) < gl_triangle_distance_order(view_center, t1);
+  });
+}
+
 
 
 ///duplicate code
@@ -328,7 +334,7 @@ public:
         push_wireframe_triangle(triangles, 10, triangle);
       }
     }
-    sort_gl_triangles_by_distance_to(
+    sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
       triangles);
     return triangles;
