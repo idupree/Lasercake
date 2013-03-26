@@ -207,15 +207,25 @@ class grand_structure_of_lasercake {
 public:
   grand_structure_of_lasercake() {
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units), 0, 0});
+      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units),
+      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units)/seconds,
+      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units), 0, 0});
+      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units),
+      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units)/seconds,
+      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units), 0, 0});
+      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units),
+      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units)/seconds,
+      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units), 0, 0});
+      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units),
+      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units)/seconds,
+      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units), 0, 0});
+      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units),
+      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units)/seconds,
+      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units)/seconds/seconds});
     regions_.push_back(region{
       {{region_vertex{0}, region_vertex{1}, region_vertex{2}, region_vertex{3}}},
       {{region_idx_type{1}, no_region_idx, no_region_idx, no_region_idx}}});
@@ -362,7 +372,7 @@ private:
 
 
 
-void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame) {
+void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, time_type when) {
   //std::cerr<<"hi.\n";
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -377,7 +387,7 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame) {
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
             0,0,0, 0,0,1);
 
-  gl_triangles data = simulated_world.display(7*pico*seconds, vector3<distance>(viewcenter*distance_units));
+  gl_triangles data = simulated_world.display(when, vector3<distance>(viewcenter*distance_units));
   if(const size_t count = data.size()*3) {
     GLuint triangles_VBO_name;
     glGenBuffersARB(1, &triangles_VBO_name);
@@ -484,11 +494,13 @@ static void mainLoop (std::string /*scenario*/)
   SDL_Event event;
   int done = 0;
   int p_mode = 0;
+  bool moving = false;
 large_fast_noncrypto_rng rng(time(NULL));
 
   
   
 int frame = 0;
+time_type when = 0;
 
   grand_structure_of_lasercake simulated_world;
   
@@ -504,8 +516,9 @@ int frame = 0;
           break;
           
         case SDL_KEYDOWN:
-          /*
           if(event.key.keysym.sym == SDLK_p) ++p_mode;
+          if(event.key.keysym.sym == SDLK_m) moving = !moving;
+          /*
           if(event.key.keysym.sym == SDLK_z) insert_objects ++;
           if(event.key.keysym.sym == SDLK_x) insert_objects += 50;
           if(event.key.keysym.sym == SDLK_c) insert_objects += 2500;
@@ -547,7 +560,7 @@ int frame = 0;
     
     __attribute__((unused)) int before_GL = SDL_GetTicks();
     
-    do_gl(simulated_world, frame);
+    do_gl(simulated_world, frame, when);
     glFinish();	
     SDL_GL_SwapBuffers();
    
@@ -555,9 +568,8 @@ int frame = 0;
     
     //doing stuff code here
     
-    
-    
-	++frame;
+    ++frame;
+    if (moving) when += 1000000000LL*pico*seconds;
     
     
     __attribute__((unused)) int after = SDL_GetTicks();
