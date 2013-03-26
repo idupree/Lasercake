@@ -207,25 +207,25 @@ class grand_structure_of_lasercake {
 public:
   grand_structure_of_lasercake() {
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units),
-      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units)/seconds,
-      vector3<distance>(2*distance_units, 7*distance_units, 11*distance_units)/seconds/seconds});
+      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters),
+      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters)/seconds,
+      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units),
-      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units)/seconds,
-      vector3<distance>(2*distance_units, 70*distance_units, 11*distance_units)/seconds/seconds});
+      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters),
+      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters)/seconds,
+      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units),
-      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units)/seconds,
-      vector3<distance>(15*distance_units, 70*distance_units, 51*distance_units)/seconds/seconds});
+      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters),
+      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters)/seconds,
+      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units),
-      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units)/seconds,
-      vector3<distance>(90*distance_units, 7*distance_units, 51*distance_units)/seconds/seconds});
+      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters),
+      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters)/seconds,
+      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters)/seconds/seconds});
     vertices_.push_back(vertex{0*time_units,
-      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units),
-      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units)/seconds,
-      vector3<distance>(300*distance_units, 200*distance_units, 100*distance_units)/seconds/seconds});
+      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters),
+      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters)/seconds,
+      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters)/seconds/seconds});
     regions_.push_back(region{
       {{region_vertex{0}, region_vertex{1}, region_vertex{2}, region_vertex{3}}},
       {{region_idx_type{1}, no_region_idx, no_region_idx, no_region_idx}}});
@@ -320,7 +320,7 @@ public:
             + v.vertex_acceleration_*relative_timem*relative_timem/identity(units_factor<1, 1000000>())/2
             ;
         vertices[i] = gl_data_format::vertex_with_color(
-          loc.x/distance_units, loc.y/distance_units, loc.z/distance_units,
+          GLfloat(loc.x/distance_units) / 1000000000.0, GLfloat(loc.y/distance_units) / 1000000000.0, GLfloat(loc.z/distance_units) / 1000000000.0,
           gl_data_format::color(0xffff0080));
         //std::cerr << vertices[i] << '\n';
       }
