@@ -91,7 +91,17 @@ struct color {
 static_assert(sizeof(color) == 4*sizeof(header_GLubyte), "OpenGL needs this data layout.");
 inline std::ostream& operator<<(std::ostream& os, color const& c) {
   // TODO does the float precision we output here matter?
-  return os << "rgba(" << std::hex << int(c.r) << int(c.g) << int(c.b) << int(c.a) << std::dec << ')';
+  const char oldfill = os.fill('0');
+  const std::ios::fmtflags oldflags = os.setf(std::ios::hex, std::ios::basefield);
+  os << "rgba(";
+  os.width(2); os << int(c.r);
+  os.width(2); os << int(c.g);
+  os.width(2); os << int(c.b);
+  os.width(2); os << int(c.a);
+  os << ')';
+  os.flags(oldflags);
+  os.fill(oldfill);
+  return os;
 }
 
 struct vertex_with_color {

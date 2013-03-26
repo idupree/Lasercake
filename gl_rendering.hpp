@@ -48,7 +48,7 @@ public:
       abstract_gl_data const& gl_data,
       viewport_dimension viewport_width,
       viewport_dimension viewport_height,
-      LasercakeGLWidget& gl_widget,
+      LasercakeGLWidget* gl_widget,
       // This allows the caller to interrupt the GL rendering,
       // in case it's taking a long time.
       // It's polled between GL calls.

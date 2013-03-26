@@ -54,7 +54,7 @@ void gl_renderer::output_gl_data_to_OpenGL(
     abstract_gl_data const& abstract_gl_data,
     viewport_dimension viewport_width,
     viewport_dimension viewport_height,
-    LasercakeGLWidget& gl_widget,
+    LasercakeGLWidget* gl_widget,
     // volatile: Ensure that every load is in fact done,
     // even though they look redundant.
     atomic::atomic_bool const volatile& interrupt
@@ -117,6 +117,7 @@ void gl_renderer::output_gl_data_to_OpenGL(
   glEnableClientState(GL_COLOR_ARRAY);
 
   if(interrupt.load(atomic::memory_order_relaxed)) {return;};
+size_t vertices = 0;
   if(gl_data.stuff_to_draw_as_gl_collections_by_distance.size() > state_->by_distance_VBO_names.size()) {
     const size_t new_buffers_base = state_->by_distance_VBO_names.size()*DISTANCE_IDX_FACTOR;
     const size_t num_new_buffers = gl_data.stuff_to_draw_as_gl_collections_by_distance.size()*DISTANCE_IDX_FACTOR - new_buffers_base;
@@ -133,7 +134,8 @@ void gl_renderer::output_gl_data_to_OpenGL(
       state_->by_distance_VBO_sizes[new_buffers_base + i] = 0;
     }
   }
-
+//TODO close->far nearby opaque things with z buffer
+// to help out GL throw out pixels etc
   for(size_t dist_plus_one = gl_data.stuff_to_draw_as_gl_collections_by_distance.size(); dist_plus_one != 0; --dist_plus_one) {
     if(interrupt.load(atomic::memory_order_relaxed)) {return;};
     const size_t dist = dist_plus_one - 1;
@@ -153,6 +155,7 @@ void gl_renderer::output_gl_data_to_OpenGL(
       if(interrupt.load(atomic::memory_order_relaxed)) {return;};
       gl_call_data const& data = coll.*(type.gl_data_container_ptr_to_member);
       if(const size_t count = data.size()) {
+        vertices += count;
         const size_t buf_name_idx = dist*DISTANCE_IDX_FACTOR + type.our_idx_adj;
         glBindBufferARB(GL_ARRAY_BUFFER, state_->by_distance_VBO_names[buf_name_idx]);
         if(state_->by_distance_VBO_sizes[buf_name_idx] < count) {
@@ -168,6 +171,7 @@ void gl_renderer::output_gl_data_to_OpenGL(
     }
   }
   if(interrupt.load(atomic::memory_order_relaxed)) {return;};
+LOG << "\n!!!!!!!!! " << vertices << " VERTICES!!!!!!!!\n";
   // Is there a simpler way to tint the whole screen a color?
   const color tint = gl_data.tint_everything_with_this_color;
   const rect_type rect = {{
@@ -186,7 +190,9 @@ void gl_renderer::output_gl_data_to_OpenGL(
 
   if(interrupt.load(atomic::memory_order_relaxed)) {return;};
 
-  render_2d_text_overlay_(abstract_gl_data, viewport_width, viewport_height, gl_widget);
+  if(gl_widget) {
+    render_2d_text_overlay_(abstract_gl_data, viewport_width, viewport_height, *gl_widget);
+  }
 }
 
 void gl_renderer::fini() {

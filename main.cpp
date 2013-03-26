@@ -560,7 +560,7 @@ microseconds_t LasercakeGLThread::gl_render(gl_data_ptr_t& gl_data_ptr, Lasercak
     *gl_data_ptr,
     viewport_size.width(),
     viewport_size.height(),
-    gl_widget,
+    &gl_widget,
     gl_thread_data_->interrupt
   );
   if(!gl_thread_data_->interrupt.load()) {
