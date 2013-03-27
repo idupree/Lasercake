@@ -19,6 +19,8 @@
 
 */
 
+#define USE_BOUNDS_CHECKED_INTS 1
+
 #include <GL/glew.h>
    
 #include <stdio.h>
@@ -146,11 +148,18 @@ typedef physical_quantity<lint64_t, distance_units_t> distance;
 typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
 typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
 
+// Standard (Earth-equivalent) gravity: precisely 9.80665 m/s2
+constexpr acceleration1d gravity_acceleration_magnitude = 9806650LL * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
+constexpr vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
 
-typedef luint32_t region_idx_type;
-typedef luint32_t vertex_idx_type;
-constexpr region_idx_type no_region_idx = std::numeric_limits<region_idx_type>::max();
-constexpr vertex_idx_type no_vertex_idx = std::numeric_limits<vertex_idx_type>::max();
+typedef uint32_t region_idx_type;
+typedef uint32_t face_idx_type;
+typedef uint32_t vertex_idx_type;
+//constexpr region_idx_type no_region_idx = std::numeric_limits<region_idx_type>::max();
+//constexpr face_idx_type no_face_idx = std::numeric_limits<region_idx_type>::max();
+//constexpr vertex_idx_type no_vertex_idx = std::numeric_limits<vertex_idx_type>::max();
+
+const int triangle_sides = 3;
 
 // A vertex is an imaginary thing that moves around
 // independent of the substances it is helping to represent.
@@ -164,6 +173,8 @@ struct edge {
 };
 // All faces are triangles.
 struct face {
+  array<vertex_idx_type, triangle_sides> vertices_;
+  array<region_idx_type, 2> neighbors_;
 };
 
 
@@ -171,14 +182,10 @@ struct region_vertex {
   vertex_idx_type shared_vertex_data_;
   //other data
 };
-const int tetrahedron_sides = 4;
 struct region {
-  // Regions are tetrahedrons.
-  array<region_vertex, tetrahedron_sides> vertices_;
-  // Each face has the array index of the vertex it does not contain.
-  // Regions touching the edge of the world have a TODO DEFINE WHICH
-  // idx value (0? region_idx_type(-1)? the same region?)
-  array<region_idx_type, tetrahedron_sides> neighbors_;
+  // Regions are arbitrary, non-convex polyhedra which can have holes.
+  //std::vector<vertex_idx_type, tetrahedron_sides> vertices_;
+  std::vector<region_idx_type> faces_;
 };
 
 struct event {
@@ -188,116 +195,107 @@ struct event {
 struct collision : public event {
 };
 struct vertex_face_collision : public collision {
-  //This includes polyhedrons that involute (hopefully)
+  //This includes polyhedra that involute (hopefully)
 };
-//not with tetrahedron-mesh!
-//struct edge_edge_collision : public collision {
-//};
+struct edge_edge_collision : public collision {
+};
 
 
-// What happens when two neighboring regions overlap?
-// They can only become overlapping, if the initial state is consistent, by
-// one of them becoming flat for a moment.
-// Also, maybe region::vertices_ should be required to follow a right-hand-rule
+// Maybe the structures should be required to follow some kind of right-hand-rule
 // order? Then asserts could check that it is still correct, and OpenGL would
 // be more easily able to draw directional surfaces.
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
+  std::vector<face> faces_;
   std::vector<vertex> vertices_;
+
+  void hack_insert_rock(vector3<distance> loc) {
+    face_idx_type first_face_idx = faces_.size();
+    face_idx_type first_vertex_idx = vertices_.size();
+    face_idx_type region_idx = regions_.size();
+
+    static const vector3<distance> diffs[4] = {
+      vector3<lint64_t>(0, 0, 100)*(centi*meters)*identity(distance_units/(centi*meters)),
+      vector3<lint64_t>(0, 83, -45)*(centi*meters)*identity(distance_units/(centi*meters)),
+      vector3<lint64_t>(60, -40, -50)*(centi*meters)*identity(distance_units/(centi*meters)),
+      vector3<lint64_t>(-62, -42, -43)*(centi*meters)*identity(distance_units/(centi*meters))
+    };
+
+    regions_.push_back(region());
+    region& air = regions_[0];
+    region& r = regions_.back();
+    for (int i = 0; i < 4; ++i) {
+      faces_.push_back(face());
+      vertices_.push_back(vertex{0*time_units, loc + diffs[i], 0, gravity_acceleration});
+      face& f = faces_.back();
+      f.neighbors_[0] = 0;
+      f.neighbors_[1] = region_idx;
+      r.faces_.push_back(first_face_idx + i);
+      air.faces_.push_back(first_face_idx + i);
+      //r.vertices_.push_back(first_vertex_idx + i);
+      int k = 0;
+      for (int j = 0; j < 4; ++j) {
+        if (j != i) f.vertices_[k++] = (first_vertex_idx + j);
+      }
+    }
+  }
+  
 public:
   grand_structure_of_lasercake() {
-    vertices_.push_back(vertex{0*time_units,
-      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters),
-      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters)/seconds,
-      vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters)/seconds/seconds});
-    vertices_.push_back(vertex{0*time_units,
-      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters),
-      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters)/seconds,
-      vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters)/seconds/seconds});
-    vertices_.push_back(vertex{0*time_units,
-      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters),
-      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters)/seconds,
-      vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters)/seconds/seconds});
-    vertices_.push_back(vertex{0*time_units,
-      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters),
-      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters)/seconds,
-      vector3<lint64_t>(90, 7, 51)*meters*identity(distance_units/meters)/seconds/seconds});
-    vertices_.push_back(vertex{0*time_units,
-      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters),
-      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters)/seconds,
-      vector3<lint64_t>(300, 200, 100)*meters*identity(distance_units/meters)/seconds/seconds});
-    regions_.push_back(region{
-      {{region_vertex{0}, region_vertex{1}, region_vertex{2}, region_vertex{3}}},
-      {{region_idx_type{1}, no_region_idx, no_region_idx, no_region_idx}}});
-    regions_.push_back(region{
-      {{region_vertex{4}, region_vertex{1}, region_vertex{2}, region_vertex{3}}},
-      {{region_idx_type{0}, no_region_idx, no_region_idx, no_region_idx}}});
+    regions_.push_back(region()); // the air
+    hack_insert_rock(vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters));
     
     this->debug_check_consistency();
   }
   void debug_check_consistency()const {
     // region internal consistency
-    for(size_t i = 0; i != regions_.size(); ++i) {
-      region const& r = regions_[i];
-      for(int j = 0; j != tetrahedron_sides; ++j) {
-        // a region has all four vertices
-        assert(r.vertices_[j].shared_vertex_data_ != no_vertex_idx);
-        for(int k = 0; k != tetrahedron_sides; ++k) {
-          if(j != k) {
-            // no two vertices or neighbors of a region have the same identity
-            assert(r.vertices_[j].shared_vertex_data_ != r.vertices_[k].shared_vertex_data_);
-            if(r.neighbors_[j] != no_region_idx && r.neighbors_[k] != no_region_idx) {
-              assert(r.neighbors_[j] != r.neighbors_[k]);
-            }
-          }
+    for(region const& r : regions_) {
+      // no two vertices of a region have the same identity
+      /*for(size_t j = 0; j < r.vertices_.size(); ++j) {
+        for(size_t k = j + 1; k != r.vertices_.size(); ++k) {
+          assert(r.vertices_[j] != r.vertices_[k]);
+        }
+      }*/
+      // no two faces of a region have the same identity
+      for(size_t j = 0; j < r.faces_.size(); ++j) {
+        for(size_t k = j + 1; k != r.faces_.size(); ++k) {
+          assert(r.faces_[j] != r.faces_[k]);
         }
       }
     }
-    // region reference in-bound-ness
+    // reference in-bound-ness
+    for(region const& r : regions_) {
+      //for(vertex_idx_type vi : r.vertices_) { assert(vi < vertices_.size()); }
+      for(face_idx_type fi : r.faces_) { assert(fi < faces_.size()); }
+    }
+    for(face const& f : faces_) {
+      for(vertex_idx_type vi : f.vertices_) { assert(vi < vertices_.size()); }
+      for(region_idx_type ri : f.neighbors_) { assert(ri < regions_.size()); }
+    }
+    // region-face data consistency
     for(size_t i = 0; i != regions_.size(); ++i) {
       region const& r = regions_[i];
-      for(int j = 0; j != tetrahedron_sides; ++j) {
-        assert(r.vertices_[j].shared_vertex_data_ == no_vertex_idx || r.vertices_[j].shared_vertex_data_ < vertices_.size());
-        assert(r.neighbors_[j] == no_region_idx || r.neighbors_[j] < regions_.size());
+      for(face_idx_type fi : r.faces_) {
+        face const& f = faces_[fi];
+        assert((f.neighbors_[0] == i) || (f.neighbors_[1] == i));
       }
     }
-    // region neighbor data consistency
-    for(size_t i = 0; i != regions_.size(); ++i) {
-      region const& r = regions_[i];
-      for(int l = 0; l != tetrahedron_sides; ++l) {
-        const region_idx_type ni = r.neighbors_[l];
-        if(ni != no_region_idx) {
-          assert(ni < regions_.size());
-          // neighboring tetrahedra link to each other
-          region const& n = regions_[ni];
-          int reciprocal_links = 0;
-          int reciprocal_link;
-          for(int j = 0; j != tetrahedron_sides; ++j) {
-            if(n.neighbors_[j] == i) {
-              reciprocal_links += 1;
-              reciprocal_link = j;
-            }
-          }
-          assert(reciprocal_links == 1);
-
-          // neighboring tetrahedra share three vertices
-          int shared_vertices = 0;
-          for(int j = 0; j != tetrahedron_sides; ++j) {
-            for(int k = 0; k != tetrahedron_sides; ++k) {
-              shared_vertices += (r.vertices_[j].shared_vertex_data_ == n.vertices_[k].shared_vertex_data_);
-            }
-          }
-          assert(shared_vertices == 3);
-          
-          // ordering of neighbor links and of vertices are consistent
-          // with each other
-          for(int j = 0; j != tetrahedron_sides; ++j) {
-            assert(r.vertices_[l].shared_vertex_data_ != n.vertices_[j].shared_vertex_data_);
-            assert(r.vertices_[j].shared_vertex_data_ != n.vertices_[reciprocal_link].shared_vertex_data_);
+    for(size_t i = 0; i != faces_.size(); ++i) {
+      face const& f = faces_[i];
+      for(region_idx_type ri : f.neighbors_) {
+        region const& r = regions_[ri];
+        bool found_reference = false;
+        for (face_idx_type fi : r.faces_) {
+          if (fi == i) {
+            found_reference = true;
           }
         }
+        assert(found_reference);
       }
     }
+    // TODO: check stuff about edges as well.
   }
   // TODO thing-ness e.g. robots
   std::priority_queue<shared_ptr<event>> next_events_;
@@ -306,11 +304,10 @@ public:
   gl_triangles/*triangles*/ display(time_type when, vector3<distance> where) {
     //assert(when < next_event_time)
     gl_triangles triangles;
-    for(region const& r : regions_) {
-      array<gl_data_format::vertex_with_color, tetrahedron_sides> vertices;
-      for(int i = 0; i < tetrahedron_sides; ++i) {
-        region_vertex const& rv = r.vertices_[i];
-        vertex const& v = vertices_[rv.shared_vertex_data_];
+    for(face const& f : faces_) {
+      gl_triangle triangle;
+      for(int i = 0; i < triangle_sides; ++i) {
+        vertex const& v = vertices_[f.vertices_[i]];
         const time_type relative_time = when - v.base_time_;
         const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
         //TODO deal with times somehow more correctly
@@ -319,30 +316,14 @@ public:
             + v.vertex_velocity_*relative_timem/identity(units_factor<1, 1000>())
             + v.vertex_acceleration_*relative_timem*relative_timem/identity(units_factor<1, 1000000>())/2
             ;
-        vertices[i] = gl_data_format::vertex_with_color(
-          GLfloat(loc.x/distance_units) / 1000000000.0, GLfloat(loc.y/distance_units) / 1000000000.0, GLfloat(loc.z/distance_units) / 1000000000.0,
+        triangle.vertices[i] = gl_data_format::vertex_with_color(
+          get_primitive_int(loc.x/distance_units),
+          get_primitive_int(loc.y/distance_units),
+          get_primitive_int(loc.z/distance_units),
           gl_data_format::color(0xffff0080));
         //std::cerr << vertices[i] << '\n';
       }
-      for(int i = 0; i < tetrahedron_sides; ++i) {
-        // draw edges (for debugging)
-        for(int j = i+1; j < tetrahedron_sides; ++j) {
-        }
-        // draw sides
-        gl_triangle triangle;
-        int k = 0;
-        //std::cerr << "\n\n";
-        for(int j = 0; j < tetrahedron_sides; ++j) {
-          if(i != j) {
-            triangle.vertices[k++] = vertices[j];
-            //std::cerr << triangle.vertices[k-1] << "  ";
-          }
-          //std::cerr << " ?"<<i << " ?"<<j << "\n";
-        }
-        //std::cerr << "\n";
-        //triangles.push_back(triangle);
-        push_wireframe_triangle(triangles, 10, triangle);
-      }
+      push_wireframe_triangle(triangles, 10e9, triangle);
     }
     sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
@@ -381,8 +362,8 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, time_t
   //gluPerspective(90, 1, 1, 1000);
   //gluLookAt(20,20,20,0,0,0,0,0,1);
   //gluLookAt(0,0,0,1,1,1,0,0,1);
-  const double wid = 500;
-  gluPerspective(80, 1, 1, 2*wid);
+  const double wid = 500e9;
+  gluPerspective(80, 1, 1e9, 2.0*wid);
   const vector3<double> viewcenter(0+wid*std::cos(double(frame) / 200), 0+wid*std::sin(double(frame) / 200), 0);
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
             0,0,0, 0,0,1);
