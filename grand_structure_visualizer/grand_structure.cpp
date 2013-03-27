@@ -244,8 +244,8 @@ public:
   grand_structure_of_lasercake() {
     regions_.push_back(region()); // the air
     hack_insert_rock(vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(2, 70, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(15, 70, 51)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<lint64_t>(2, 14, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<lint64_t>(15, 14, 21)*meters*identity(distance_units/meters));
     
     this->debug_check_consistency();
   }
@@ -323,7 +323,7 @@ public:
           gl_data_format::color(0xffff0080));
         //std::cerr << vertices[i] << '\n';
       }
-      push_wireframe_triangle(triangles, 10e9, triangle);
+      push_wireframe_triangle(triangles, 0.5e9, triangle);
     }
     sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
@@ -362,7 +362,7 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, time_t
   //gluPerspective(90, 1, 1, 1000);
   //gluLookAt(20,20,20,0,0,0,0,0,1);
   //gluLookAt(0,0,0,1,1,1,0,0,1);
-  const double wid = 500e9;
+  const double wid = 100e9;
   gluPerspective(80, 1, 1e9, 2.0*wid);
   const vector3<double> viewcenter(0+wid*std::cos(double(frame) / 200), 0+wid*std::sin(double(frame) / 200), 0);
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
