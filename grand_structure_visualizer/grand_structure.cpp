@@ -173,10 +173,36 @@ struct edge {
 };
 // All faces are triangles.
 struct face {
-  array<vertex_idx_type, triangle_sides> vertices_;
-  array<region_idx_type, 2> neighbors_;
+  time_type base_time_;
+  vector3<lint64_t> ABC;
+  distance D;
+  velocity1d D_velocity;
+  acceleration1d D_acceleration;
+  std::vector<face_idx_type> neighboring_faces_;
+  array<region_idx_type, 2> neighboring_regions_;
+  face updated_to_time(time_type t)const {
+    face result(*this);
+    const time_type relative_time = t - base_time_;
+    const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
+    //TODO deal with times somehow more correctly
+    result.D += D_velocity    *relative_timem                / identity(units_factor<1,    1000>())
+              + D_acceleration*relative_timem*relative_timem / identity(units_factor<1, 1000000>())/2;
+    return result;
+  }
 };
 
+lint64_t scalar_triple_product(vector3<lint64_t> v1, vector3<lint64_t> v2, vector3<lint64_t> v3) {
+  return v1(X)*v2(Y)*v3(Z) - v1(X)*v3(Y)*v2(Z) + v2(X)*v3(Y)*v1(Z) - v2(X)*v1(Y)*v3(Z) + v3(X)*v1(Y)*v2(Z) - v3(X)*v2(Y)*v1(Z);
+}
+vector3<distance> approx_loc_of_triple_intersection(face const& f1, face const& f2, face const& f3) {
+  lint64_t p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  assert(p != 0);
+  return vector3<distance>(
+    f1.D * (f2.ABC(1)*f3.ABC(2) - f3.ABC(1)*f2.ABC(2)) + f2.D * (f3.ABC(1)*f1.ABC(2) - f1.ABC(1)*f3.ABC(2)) + f3.D * (f1.ABC(1)*f2.ABC(2) - f2.ABC(1)*f1.ABC(2)),
+    f1.D * (f2.ABC(2)*f3.ABC(0) - f3.ABC(2)*f2.ABC(0)) + f2.D * (f3.ABC(2)*f1.ABC(0) - f1.ABC(2)*f3.ABC(0)) + f3.D * (f1.ABC(2)*f2.ABC(0) - f2.ABC(2)*f1.ABC(0)),
+    f1.D * (f2.ABC(0)*f3.ABC(1) - f3.ABC(0)*f2.ABC(1)) + f2.D * (f3.ABC(0)*f1.ABC(1) - f1.ABC(0)*f3.ABC(1)) + f3.D * (f1.ABC(0)*f2.ABC(1) - f2.ABC(0)*f1.ABC(1))
+                 ) / p;
+}
 
 struct region_vertex {
   vertex_idx_type shared_vertex_data_;
@@ -207,18 +233,16 @@ struct edge_edge_collision : public collision {
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
-  std::vector<vertex> vertices_;
 
   void hack_insert_rock(vector3<distance> loc) {
     face_idx_type first_face_idx = faces_.size();
-    face_idx_type first_vertex_idx = vertices_.size();
     face_idx_type region_idx = regions_.size();
 
-    static const vector3<distance> diffs[4] = {
-      vector3<lint64_t>(0, 0, 100)*(centi*meters)*identity(distance_units/(centi*meters)),
-      vector3<lint64_t>(0, 83, -45)*(centi*meters)*identity(distance_units/(centi*meters)),
-      vector3<lint64_t>(60, -40, -50)*(centi*meters)*identity(distance_units/(centi*meters)),
-      vector3<lint64_t>(-62, -42, -43)*(centi*meters)*identity(distance_units/(centi*meters))
+    static const vector3<lint64_t> diffs[4] = {
+      vector3<lint64_t>(0, 0, 100),
+      vector3<lint64_t>(0, 83, -45),
+      vector3<lint64_t>(60, -40, -50),
+      vector3<lint64_t>(-62, -42, -43)
     };
 
     regions_.push_back(region());
@@ -226,16 +250,19 @@ class grand_structure_of_lasercake {
     region& r = regions_.back();
     for (int i = 0; i < 4; ++i) {
       faces_.push_back(face());
-      vertices_.push_back(vertex{0*time_units, loc + diffs[i], 0, gravity_acceleration});
       face& f = faces_.back();
-      f.neighbors_[0] = 0;
-      f.neighbors_[1] = region_idx;
+      f.base_time_ = 0;
+      f.ABC = diffs[i];
+      f.D = loc.dot<lint64_t>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
+      f.D_velocity = 0;
+      f.D_acceleration = f.ABC.dot<lint64_t>(gravity_acceleration);
+      f.neighboring_regions_[0] = 0;
+      f.neighboring_regions_[1] = region_idx;
       r.faces_.push_back(first_face_idx + i);
       air.faces_.push_back(first_face_idx + i);
       //r.vertices_.push_back(first_vertex_idx + i);
-      int k = 0;
       for (int j = 0; j < 4; ++j) {
-        if (j != i) f.vertices_[k++] = (first_vertex_idx + j);
+        if (j != i) f.neighboring_faces_.push_back(first_face_idx + j);
       }
     }
   }
@@ -271,20 +298,20 @@ public:
       for(face_idx_type fi : r.faces_) { assert(fi < faces_.size()); }
     }
     for(face const& f : faces_) {
-      for(vertex_idx_type vi : f.vertices_) { assert(vi < vertices_.size()); }
-      for(region_idx_type ri : f.neighbors_) { assert(ri < regions_.size()); }
+      for(vertex_idx_type fi : f.neighboring_faces_) { assert(fi < faces_.size()); }
+      for(region_idx_type ri : f.neighboring_regions_) { assert(ri < regions_.size()); }
     }
     // region-face data consistency
     for(size_t i = 0; i != regions_.size(); ++i) {
       region const& r = regions_[i];
       for(face_idx_type fi : r.faces_) {
         face const& f = faces_[fi];
-        assert((f.neighbors_[0] == i) || (f.neighbors_[1] == i));
+        assert((f.neighboring_regions_[0] == i) || (f.neighboring_regions_[1] == i));
       }
     }
     for(size_t i = 0; i != faces_.size(); ++i) {
       face const& f = faces_[i];
-      for(region_idx_type ri : f.neighbors_) {
+      for(region_idx_type ri : f.neighboring_regions_) {
         region const& r = regions_[ri];
         bool found_reference = false;
         for (face_idx_type fi : r.faces_) {
@@ -306,16 +333,12 @@ public:
     gl_triangles triangles;
     for(face const& f : faces_) {
       gl_triangle triangle;
-      for(int i = 0; i < triangle_sides; ++i) {
-        vertex const& v = vertices_[f.vertices_[i]];
-        const time_type relative_time = when - v.base_time_;
-        const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
-        //TODO deal with times somehow more correctly
-        const vector3<distance> loc =
-              v.vertex_position_
-            + v.vertex_velocity_*relative_timem/identity(units_factor<1, 1000>())
-            + v.vertex_acceleration_*relative_timem*relative_timem/identity(units_factor<1, 1000000>())/2
-            ;
+      const face present_face = f.updated_to_time(when);
+      for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+        size_t j = (i+1)%f.neighboring_faces_.size();
+        const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(when);
+        const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
+        vector3<distance> loc = approx_loc_of_triple_intersection(present_face, present_neighbor_1, present_neighbor_2);
         triangle.vertices[i] = gl_data_format::vertex_with_color(
           get_primitive_int(loc.x/distance_units),
           get_primitive_int(loc.y/distance_units),
