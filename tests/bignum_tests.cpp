@@ -29,6 +29,10 @@
 
 #include "../data_structures/bignum.hpp"
 
+
+#include "../data_structures/bounds_checked_int.hpp"
+#include "../units.hpp"
+
 /*
 extern void g(bignum<6> const&);
 extern unsigned int q,p,r,s,t,u,v,w;
@@ -109,6 +113,11 @@ static void bignum_compile_test() {
   popcount(ac);
   count_trailing_zeroes(aa);
   count_trailing_zeroes(ac);
+  
+  //bounds_checked_int<bigint<256> > fsddfs;
+  physical_quantity<bigint<256>, units<dim::meter<1>> > dist;
+  dist+dist;
+  dist*dist*dist;
 }
 
 BOOST_AUTO_TEST_CASE(bignum_runtests) {
