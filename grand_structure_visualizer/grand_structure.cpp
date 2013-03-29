@@ -185,8 +185,9 @@ struct face {
     const time_type relative_time = t - base_time_;
     const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
     //TODO deal with times somehow more correctly
-    result.D += D_velocity    *relative_timem                / identity(units_factor<1,    1000>())
-              + D_acceleration*relative_timem*relative_timem / identity(units_factor<1, 1000000>())/2;
+    result.D          += D_velocity    *relative_timem                / identity(units_factor<1,    1000>())
+                       + D_acceleration*relative_timem*relative_timem / identity(units_factor<1, 1000000>())/2;
+    result.D_velocity += D_acceleration*relative_timem                / identity(units_factor<1,    1000>());
     return result;
   }
 };
