@@ -44,6 +44,7 @@
 
 #include <boost/preprocessor/stringize.hpp>
 #include "../config.hpp"
+#include "../data_structures/numbers.hpp" //struct comparators
 
 typedef int tests_file_id;
 template<tests_file_id File> struct register_test_file;

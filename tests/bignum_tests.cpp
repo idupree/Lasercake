@@ -66,6 +66,74 @@ static void bignum_compile_test() {
   aa<=aa;ac<=ac;
   aa>aa;ac>ac;
   aa>=aa;ac>=ac;
+  
+  aa+=aa;ac+=ac;
+  aa-=aa;ac-=ac;
+  aa*=aa;ac*=ac;
+  aa&=aa;ac&=ac;
+  aa|=aa;ac|=ac;
+  aa^=aa;ac^=ac;
+  aa>>=90;ac>>=90;
+  aa<<=90;ac<<=90;
+}
+
+BOOST_AUTO_TEST_CASE(bignum_runtests) {
+  //bigint<128> aa = bigint<64>(1000000000LL);
+  //aa = aa*aa*aa*(aa*(aa*aa));
+  bigint<512> aa = bigint<64>(1000000000LL);
+  aa = aa*aa*aa*(aa*(aa*aa));
+  //LOG << aa << "\n";
+  //LOG << decltype(aa)(2) << "\n";
+  BOOST_CHECK(+aa);
+  BOOST_CHECK(-aa);
+  BOOST_CHECK_EQUAL(-(-aa), aa);
+  BOOST_CHECK_NE(-aa, aa);
+  BOOST_CHECK_EQUAL(aa, aa);
+  BOOST_CHECK_EQUAL(aa-aa, decltype(aa)(0));
+  BOOST_CHECK_NE(aa+aa, aa);
+  BOOST_CHECK_NE(aa+aa, decltype(aa)(0));
+  BOOST_CHECK_LT(decltype(aa)(-1), decltype(aa)(0));
+  BOOST_CHECK(!(aa-aa));
+  BOOST_CHECK(!-(aa-aa));
+  BOOST_CHECK(~(aa-aa));
+  BOOST_CHECK(!(aa+(-aa)));
+  BOOST_CHECK(!((-aa)+aa));
+  BOOST_CHECK_EQUAL(-1*aa, -aa);
+  BOOST_CHECK_EQUAL(aa*(aa*aa), (aa*aa)*aa);
+  BOOST_CHECK_EQUAL(aa*(-aa*aa), (-aa*-aa)*-aa);
+  BOOST_CHECK_EQUAL(aa*(aa+aa), aa*aa+aa*aa);
+  BOOST_CHECK_EQUAL(aa*(aa-aa), aa*aa-aa*aa);
+  BOOST_CHECK_EQUAL(aa*(aa+(-aa)), aa*aa-aa*aa);
+  BOOST_CHECK_EQUAL(aa*(aa+(-aa)), aa*aa+(-aa*aa));
+  BOOST_CHECK_EQUAL(aa+aa, 2*aa);
+  BOOST_CHECK_EQUAL(aa+aa+aa, 3*aa);
+
+  BOOST_CHECK_EQUAL(multiply_to_fit(aa, multiply_to_fit(aa,aa)), multiply_to_fit(multiply_to_fit(aa, aa), aa));
+  BOOST_CHECK_EQUAL(multiply_to_fit(aa, multiply_to_fit(-aa,aa)), multiply_to_fit(multiply_to_fit(-aa, -aa), -aa));
+  BOOST_CHECK_EQUAL(multiply_to_fit(aa, aa+aa), multiply_to_fit(aa, aa) + multiply_to_fit(aa, aa));
+  BOOST_CHECK_EQUAL(multiply_to_fit(aa, aa-aa), multiply_to_fit(aa, aa) - multiply_to_fit(aa, aa));
+/*
+  aa&aa;
+  aa|aa;
+  aa^aa;
+  ~aa;~ac;
+  aa>>90;ac>>90;
+  aa<<90;ac<<90;
+  aa==aa;ac==ac;
+  aa!=aa;ac!=ac;
+  aa<aa;ac<ac;
+  aa<=aa;ac<=ac;
+  aa>aa;ac>ac;
+  aa>=aa;ac>=ac;
+  
+  aa+=aa;ac+=ac;
+  aa-=aa;ac-=ac;
+  aa*=aa;ac*=ac;
+  aa&=aa;ac&=ac;
+  aa|=aa;ac|=ac;
+  aa^=aa;ac^=ac;
+  aa>>=90;ac>>=90;
+  aa<<=90;ac<<=90;*/
 }
 
 

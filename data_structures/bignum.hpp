@@ -26,10 +26,12 @@
 // We need bit depths that are too large for mere uint64_t but which
 // are small enough that register/stack allocation and inlining are
 // more efficient than heap allocation and function calls.
+// With -O3, most operations unroll to straight-line code with no
+// loops or branches.
 
 #include "../config.hpp"
 #include <boost/utility/enable_if.hpp>
-
+#include <ostream>
 
 
 /*
@@ -41,6 +43,7 @@ struct fixed_size_bignum {
 
 // can be 32ey later for small platforms
 
+// 'limb' following GMP lib terminology
 typedef uint64_t limb_type;
 typedef int64_t signed_limb_type;
 static const int limb_bits = 64;
@@ -87,7 +90,7 @@ inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> 
         result.limbs[ir] += low;
       }
     }
-    const size_t ir = ia+LimbsB;
+    const size_t ir = ia+LimbsB+1;
     if(ir < LimbsOut) {
       // hasn't been touched yet
       assert(result.limbs[ir] == 0);
@@ -112,12 +115,14 @@ inline bignum_with_overflow<Limbs> negate_overflow(bignum<Limbs> a) {
   bool carry = true;
   for(size_t ir = 0; ir != Limbs; ++ir) {
     const limb_type newlimb = ~a.limbs[ir] + (limb_type)(carry);
+    //LOG << std::hex << "?<" << a.limbs[ir] << ":->" << newlimb << ">";
     result.num.limbs[ir] = newlimb;
     if(ir == Limbs-1 && carry && newlimb == ((limb_type)(1) << (limb_bits-1))) {
       result.overflow = true;
     }
     carry = (carry && (newlimb == 0));
   }
+  //LOG << "\n";
   return result;
 }
 template<size_t Limbs>
@@ -136,20 +141,23 @@ inline bignum<LimbsOut> long_multiply_signed(bignum<LimbsA> a, bignum<LimbsB> b)
   const bignum_with_overflow<LimbsB> negb = negate_overflow(b);
   // max negative two's complement int requires special treatment.
   // unspecified zeroes here are implicit from "= {}" of result above.
-  if(nega.overflow) {
+  if(isnega && nega.overflow) {
     for(size_t ib = 0; ib+LimbsA < LimbsOut && ib < LimbsB; ++ib) {
       const size_t ir = ib+LimbsA;
       result.limbs[ir] = negb.num.limbs[ib];
     }
   }
-  else if(negb.overflow) {
+  else if(isnegb && negb.overflow) {
     for(size_t ia = 0; ia+LimbsB < LimbsOut && ia < LimbsA; ++ia) {
       const size_t ir = ia+LimbsB;
       result.limbs[ir] = nega.num.limbs[ia];
     }
   }
   else {
-    result = long_multiply_unsigned<LimbsOut>(a, b);
+    const bignum<LimbsA> absa = (isnega ? nega.num : a);
+    const bignum<LimbsB> absb = (isnegb ? negb.num : b);
+    result = long_multiply_unsigned<LimbsOut>(absa, absb);
+    //LOG << "Well?" << (isnega) << ','<<isnegb<<".\n";
     if(isnega != isnegb) {
       result = negate(result);
     }
@@ -167,9 +175,11 @@ inline bignum<Limbs> add(bignum<Limbs> a, bignum<Limbs> b) {
     const limb_type oldlimba = result.limbs[ir];
     const limb_type newlimba = oldlimba + a.limbs[ir];
     carry = (carry || newlimba < oldlimba);
+    result.limbs[ir] = newlimba;
     const limb_type oldlimbb = result.limbs[ir];
     const limb_type newlimbb = oldlimbb + b.limbs[ir];
     carry = (carry || newlimbb < oldlimbb);
+    result.limbs[ir] = newlimbb;
   }
   return result;
 }
@@ -183,9 +193,11 @@ inline bignum<Limbs> subtract(bignum<Limbs> a, bignum<Limbs> b) {
     const limb_type oldlimba = result.limbs[ir];
     const limb_type newlimba = oldlimba + a.limbs[ir];
     carry = (carry || newlimba < oldlimba);
+    result.limbs[ir] = newlimba;
     const limb_type oldlimbb = result.limbs[ir];
     const limb_type newlimbb = oldlimbb + ~b.limbs[ir];
     carry = (carry || newlimbb < oldlimbb);
+    result.limbs[ir] = newlimbb;
   }
   return result;
 }
@@ -222,6 +234,15 @@ inline bignum<Limbs> bitwise_complement(bignum<Limbs> a) {
   return result;
 }
 template<size_t Limbs>
+inline bool nonzero(bignum<Limbs> a) {
+  for(size_t ir = 0; ir != Limbs; ++ir) {
+    if(a.limbs[ir]) {
+      return true;
+    }
+  }
+  return false;
+}
+template<size_t Limbs>
 inline bool equal(bignum<Limbs> a, bignum<Limbs> b) {
   for(size_t ir = 0; ir != Limbs; ++ir) {
     if(a.limbs[ir] != b.limbs[ir]) {
@@ -233,8 +254,8 @@ inline bool equal(bignum<Limbs> a, bignum<Limbs> b) {
 template<size_t Limbs>
 inline bool less_than_unsigned(bignum<Limbs> a, bignum<Limbs> b) {
   for(size_t ir = 0; ir != Limbs; ++ir) {
-    const limb_type av = a.limbs[Limbs-ir];
-    const limb_type bv = b.limbs[Limbs-ir];
+    const limb_type av = a.limbs[Limbs-1-ir];
+    const limb_type bv = b.limbs[Limbs-1-ir];
     if(av < bv) {
       return true;
     }
@@ -247,8 +268,8 @@ inline bool less_than_unsigned(bignum<Limbs> a, bignum<Limbs> b) {
 template<size_t Limbs>
 inline bool less_than_signed(bignum<Limbs> a, bignum<Limbs> b) {
   for(size_t ir = 0; ir != Limbs; ++ir) {
-    limb_type av = a.limbs[Limbs-ir];
-    limb_type bv = b.limbs[Limbs-ir];
+    limb_type av = a.limbs[Limbs-1-ir];
+    limb_type bv = b.limbs[Limbs-1-ir];
     if(ir == 0) {
       const limb_type adj = (limb_type)(1) << (limb_bits-1); 
       av ^= adj;
@@ -369,6 +390,8 @@ inline bignum<LimbsOut> shift_right_sign_extend(bignum<Limbs> a, uint32_t shift)
 }
 
 
+
+
 #if 0
 // problem: sign extension whetherness.
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
@@ -459,6 +482,25 @@ inline bignum<LimbsOut> sign_extend_from_int32(int32_t a) {
   return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
 }
 
+template<size_t LimbsOut, size_t Limbs>
+inline bignum<LimbsOut> divide_by_limb_unsigned(bignum<Limbs> a, limb_type b) {
+  
+}
+template<size_t Limbs>
+inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/4 + 1)]) {
+  size_t i = 0;
+  for(size_t ia = 0; ia != Limbs; ++ia) {
+    limb_type val = a.limbs[Limbs-1-ia];
+    //LOG <<std::hex<< "?" << val << "?";
+    for(int off = limb_bits - 4; off >= 0; off -= 4) {
+      const char nybble = (char)((val >> off) & 0xf);
+      out[i++] = ((nybble < 0xa) ? ('0'+nybble) : ('a'+nybble-0xa));
+    }
+    out[i++] = ' ';
+  }
+  out[i-1] = '\0';
+}
+
 
 //bounds checking could be stuck in these fairly runtime-efficiently.
 //these are fairly macro-able.
@@ -483,6 +525,42 @@ struct biguint : bignum<(Bits/limb_bits)> {
   explicit biguint(biguint<OtherBits> i,
     typename boost::enable_if_c<(OtherBits > Bits)>::type* = 0
   ) : bignum_type(zero_extend<bignum_limbs>(i)) {}
+
+  explicit operator bool()const { return nonzero(*this); }
+friend inline biguint<Bits> operator*(biguint<Bits> a, biguint<Bits> b)
+{ return long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b); }
+
+friend inline biguint<Bits> operator+(biguint<Bits> a) { return a; }
+friend inline biguint<Bits> operator-(biguint<Bits> a) { return negate(a); }
+friend inline biguint<Bits> operator+(biguint<Bits> a, biguint<Bits> b) { return add(a, b); }
+friend inline biguint<Bits> operator-(biguint<Bits> a, biguint<Bits> b) { return subtract(a, b); }
+
+friend inline biguint<Bits> operator&(biguint<Bits> a, biguint<Bits> b) { return bitwise_and(a, b); }
+friend inline biguint<Bits> operator|(biguint<Bits> a, biguint<Bits> b) { return bitwise_or(a, b); }
+friend inline biguint<Bits> operator^(biguint<Bits> a, biguint<Bits> b) { return bitwise_xor(a, b); }
+friend inline biguint<Bits> operator~(biguint<Bits> a) { return bitwise_complement(a); }
+
+friend inline biguint<Bits> operator<<(biguint<Bits> a, uint32_t shift) { return shift_left_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+friend inline biguint<Bits> operator>>(biguint<Bits> a, uint32_t shift) { return shift_right_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+
+friend inline bool operator==(biguint<Bits> a, biguint<Bits> b) { return equal(a, b); }
+friend inline bool operator!=(biguint<Bits> a, biguint<Bits> b) { return !equal(a, b); }
+friend inline bool operator<(biguint<Bits> a, biguint<Bits> b) { return less_than_unsigned(a, b); }
+friend inline bool operator>(biguint<Bits> a, biguint<Bits> b) { return less_than_unsigned(b, a); }
+friend inline bool operator>=(biguint<Bits> a, biguint<Bits> b) { return !less_than_unsigned(a, b); }
+friend inline bool operator<=(biguint<Bits> a, biguint<Bits> b) { return !less_than_unsigned(b, a); }
+
+
+friend inline biguint<Bits>& operator+=(biguint<Bits>& a, biguint<Bits> b) { a = a + b; return a; }
+friend inline biguint<Bits>& operator-=(biguint<Bits>& a, biguint<Bits> b) { a = a - b; return a; }
+friend inline biguint<Bits>& operator*=(biguint<Bits>& a, biguint<Bits> b) { a = a * b; return a; }
+friend inline biguint<Bits>& operator&=(biguint<Bits>& a, biguint<Bits> b) { a = a & b; return a; }
+friend inline biguint<Bits>& operator|=(biguint<Bits>& a, biguint<Bits> b) { a = a | b; return a; }
+friend inline biguint<Bits>& operator^=(biguint<Bits>& a, biguint<Bits> b) { a = a ^ b; return a; }
+friend inline biguint<Bits>& operator<<=(biguint<Bits>& a, uint32_t shift) { a = a << shift; return a; }
+friend inline biguint<Bits>& operator>>=(biguint<Bits>& a, uint32_t shift) { a = a >> shift; return a; }
+
+friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; }
 };
 
 
@@ -507,26 +585,56 @@ struct bigint : bignum<(Bits/limb_bits)> {
   explicit bigint(bigint<OtherBits> i,
     typename boost::enable_if_c<(OtherBits > Bits)>::type* = 0
   ) : bignum_type(sign_extend<bignum_limbs>(i)) {}
+
+  explicit operator bool()const { return nonzero(*this); }
+
+friend inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
+{ return long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b); }
+friend inline bigint<Bits> operator+(bigint<Bits> a) { return a; }
+friend inline bigint<Bits> operator-(bigint<Bits> a) { return negate(a); }
+friend inline bigint<Bits> operator+(bigint<Bits> a, bigint<Bits> b) { return add(a, b); }
+friend inline bigint<Bits> operator-(bigint<Bits> a, bigint<Bits> b) { return subtract(a, b); }
+
+friend inline bigint<Bits> operator&(bigint<Bits> a, bigint<Bits> b) { return bitwise_and(a, b); }
+friend inline bigint<Bits> operator|(bigint<Bits> a, bigint<Bits> b) { return bitwise_or(a, b); }
+friend inline bigint<Bits> operator^(bigint<Bits> a, bigint<Bits> b) { return bitwise_xor(a, b); }
+friend inline bigint<Bits> operator~(bigint<Bits> a) { return bitwise_complement(a); }
+
+friend inline bool operator==(bigint<Bits> a, bigint<Bits> b) { return equal(a, b); }
+friend inline bool operator!=(bigint<Bits> a, bigint<Bits> b) { return !equal(a, b); }
+friend inline bool operator<(bigint<Bits> a, bigint<Bits> b) { return less_than_signed(a, b); }
+friend inline bool operator>(bigint<Bits> a, bigint<Bits> b) { return less_than_signed(b, a); }
+friend inline bool operator>=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(a, b); }
+friend inline bool operator<=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(b, a); }
+
+friend inline bigint<Bits> operator<<(bigint<Bits> a, uint32_t shift) { return shift_left_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+friend inline bigint<Bits> operator>>(bigint<Bits> a, uint32_t shift) { return shift_right_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+
+friend inline bigint<Bits>& operator+=(bigint<Bits>& a, bigint<Bits> b) { a = a + b; return a; }
+friend inline bigint<Bits>& operator-=(bigint<Bits>& a, bigint<Bits> b) { a = a - b; return a; }
+friend inline bigint<Bits>& operator*=(bigint<Bits>& a, bigint<Bits> b) { a = a * b; return a; }
+friend inline bigint<Bits>& operator&=(bigint<Bits>& a, bigint<Bits> b) { a = a & b; return a; }
+friend inline bigint<Bits>& operator|=(bigint<Bits>& a, bigint<Bits> b) { a = a | b; return a; }
+friend inline bigint<Bits>& operator^=(bigint<Bits>& a, bigint<Bits> b) { a = a ^ b; return a; }
+friend inline bigint<Bits>& operator<<=(bigint<Bits>& a, uint32_t shift) { a = a << shift; return a; }
+friend inline bigint<Bits>& operator>>=(bigint<Bits>& a, uint32_t shift) { a = a >> shift; return a; }
+friend std::ostream& operator<<(std::ostream& os, bigint<Bits> a) {
+  char out[biguint<Bits>::bignum_limbs*(limb_bits/4 + 1)];
+  show_limbs_hex_bigendian(a, out);
+  os << out;
+  return os;
+}
 };
 
 // Or templatize on both bits and take the max?
 // Might be faster depending on inlining, but requires mixed operators with non-bigint
 // types to be explicitly defined.
-template<size_t Bits> inline biguint<Bits> operator+(biguint<Bits> a) { return a; }
-template<size_t Bits> inline bigint<Bits> operator+(bigint<Bits> a) { return a; }
-template<size_t Bits> inline biguint<Bits> operator-(biguint<Bits> a) { return negate(a); }
-template<size_t Bits> inline bigint<Bits> operator-(bigint<Bits> a) { return negate(a); }
-
-template<size_t Bits> inline biguint<Bits> operator+(biguint<Bits> a, biguint<Bits> b) { return add(a, b); }
-template<size_t Bits> inline bigint<Bits> operator+(bigint<Bits> a, bigint<Bits> b) { return add(a, b); }
-template<size_t Bits> inline biguint<Bits> operator-(biguint<Bits> a, biguint<Bits> b) { return subtract(a, b); }
-template<size_t Bits> inline bigint<Bits> operator-(bigint<Bits> a, bigint<Bits> b) { return subtract(a, b); }
-
+/*
 template<size_t Bits> inline biguint<Bits> operator*(biguint<Bits> a, biguint<Bits> b)
 { return long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b); }
 template<size_t Bits> inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
 { return long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b); }
-
+*/
 // For explicit multiplication-precision control:
 template<size_t Bits, size_t BitsA, size_t BitsB> inline biguint<Bits>
 multiply_to(biguint<BitsA> a, biguint<BitsB> b) { return long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b); }
@@ -536,35 +644,6 @@ template<size_t BitsA, size_t BitsB> inline biguint<(BitsA+BitsB)>
 multiply_to_fit(biguint<BitsA> a, biguint<BitsB> b) { return long_multiply_unsigned<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b); }
 template<size_t BitsA, size_t BitsB> inline bigint<(BitsA+BitsB)>
 multiply_to_fit(bigint<BitsA> a, bigint<BitsB> b) { return long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b); }
-
-template<size_t Bits> inline biguint<Bits> operator&(biguint<Bits> a, biguint<Bits> b) { return bitwise_and(a, b); }
-template<size_t Bits> inline bigint<Bits> operator&(bigint<Bits> a, bigint<Bits> b) { return bitwise_and(a, b); }
-template<size_t Bits> inline biguint<Bits> operator|(biguint<Bits> a, biguint<Bits> b) { return bitwise_or(a, b); }
-template<size_t Bits> inline bigint<Bits> operator|(bigint<Bits> a, bigint<Bits> b) { return bitwise_or(a, b); }
-template<size_t Bits> inline biguint<Bits> operator^(biguint<Bits> a, biguint<Bits> b) { return bitwise_xor(a, b); }
-template<size_t Bits> inline bigint<Bits> operator^(bigint<Bits> a, bigint<Bits> b) { return bitwise_xor(a, b); }
-template<size_t Bits> inline biguint<Bits> operator~(biguint<Bits> a) { return bitwise_complement(a); }
-template<size_t Bits> inline bigint<Bits> operator~(bigint<Bits> a) { return bitwise_complement(a); }
-
-template<size_t Bits> inline biguint<Bits> operator<<(biguint<Bits> a, uint32_t shift) { return shift_left_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-template<size_t Bits> inline bigint<Bits> operator<<(bigint<Bits> a, uint32_t shift) { return shift_left_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-template<size_t Bits> inline biguint<Bits> operator>>(biguint<Bits> a, uint32_t shift) { return shift_right_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-template<size_t Bits> inline bigint<Bits> operator>>(bigint<Bits> a, uint32_t shift) { return shift_right_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-
-template<size_t Bits> inline bool operator==(biguint<Bits> a, biguint<Bits> b) { return equal(a, b); }
-template<size_t Bits> inline bool operator==(bigint<Bits> a, bigint<Bits> b) { return equal(a, b); }
-template<size_t Bits> inline bool operator!=(biguint<Bits> a, biguint<Bits> b) { return !equal(a, b); }
-template<size_t Bits> inline bool operator!=(bigint<Bits> a, bigint<Bits> b) { return !equal(a, b); }
-template<size_t Bits> inline bool operator<(biguint<Bits> a, biguint<Bits> b) { return less_than_unsigned(a, b); }
-template<size_t Bits> inline bool operator<(bigint<Bits> a, bigint<Bits> b) { return less_than_signed(a, b); }
-template<size_t Bits> inline bool operator>(biguint<Bits> a, biguint<Bits> b) { return less_than_unsigned(b, a); }
-template<size_t Bits> inline bool operator>(bigint<Bits> a, bigint<Bits> b) { return less_than_signed(b, a); }
-template<size_t Bits> inline bool operator>=(biguint<Bits> a, biguint<Bits> b) { return !less_than_unsigned(a, b); }
-template<size_t Bits> inline bool operator>=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(a, b); }
-template<size_t Bits> inline bool operator<=(biguint<Bits> a, biguint<Bits> b) { return !less_than_unsigned(b, a); }
-template<size_t Bits> inline bool operator<=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(b, a); }
-
-
 
 #if 0
 // gcc explorer tests
