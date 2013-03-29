@@ -35,6 +35,7 @@
 #include <cmath>
 #include "../cxx11/hash.hpp"
 #include <boost/functional/hash.hpp>
+#include "numbers.hpp"
 
 /*
 template<size_t Bits>
@@ -44,6 +45,8 @@ struct fixed_size_bignum {
 };*/
 
 // can be 32ey later for small platforms
+
+namespace bignum {
 
 // 'limb' following GMP lib terminology
 typedef uint64_t limb_type;
@@ -101,6 +104,102 @@ inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> 
   }
   return result;
 }
+
+//cast_unsigned
+template<size_t LimbsOut, size_t LimbsA>
+inline bignum<LimbsOut> zero_extend(bignum<LimbsA> a) {
+  bignum<LimbsOut> result;
+  for(size_t ir = 0; ir < LimbsA && ir < LimbsOut; ++ir) {
+    result.limbs[ir] = a.limbs[ir];
+  }
+  for(size_t ir = LimbsA; ir < LimbsOut; ++ir) {
+    result.limbs[ir] = 0;
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> zero_extend_from_limb(limb_type a) {
+  bignum<LimbsOut> result = {{}};
+  if(LimbsOut > 0) {
+    result.limbs[0] = a;
+  }
+  return result;
+}
+
+template<size_t LimbsOut>
+inline bignum<LimbsOut> zero_extend_from_uint64(uint64_t a) {
+  static_assert(limb_bits >= 64, "bug");
+  return zero_extend_from_limb<LimbsOut>(a);
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> zero_extend_from_uint32(uint32_t a) {
+  static_assert(limb_bits >= 32, "bug");
+  return zero_extend_from_limb<LimbsOut>(a);
+}
+
+
+template<size_t LimbsOut, size_t LimbsA>
+inline bignum<LimbsOut> sign_extend(bignum<LimbsA> a) {
+  bignum<LimbsOut> result;
+  const bool neg = is_negative(a);
+  const limb_type sign_ext = (neg ? (limb_type)(-1) : (limb_type)(0));
+  for(size_t ir = 0; ir != LimbsA && ir != LimbsOut; ++ir) {
+    result.limbs[ir] = a.limbs[ir];
+  }
+  if(LimbsOut > LimbsA) {
+    for(size_t ir = LimbsA; ir != LimbsOut; ++ir) {
+      result.limbs[ir] = sign_ext;
+    }
+  }
+  return result;
+}
+
+template<size_t LimbsOut>
+inline bignum<LimbsOut> sign_extend_from_limb(signed_limb_type a) {
+  return sign_extend<LimbsOut>(bignum<1>{{(limb_type)(a)}});
+}
+
+template<size_t LimbsOut>
+inline bignum<LimbsOut> sign_extend_from_int64(int64_t a) {
+  static_assert(limb_bits >= 64, "bug");
+  return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> sign_extend_from_int32(int32_t a) {
+  static_assert(limb_bits >= 32, "bug");
+  return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
+}
+
+template<size_t LimbsOut>
+inline bignum<LimbsOut> zero() {
+  bignum<LimbsOut> result = {{}};
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> max_unsigned() {
+  bignum<LimbsOut> result;
+  for(size_t ir = 0; ir != LimbsOut; ++ir) {
+    result.limbs[ir] = (limb_type)(-1);
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> max_signed() {
+  bignum<LimbsOut> result;
+  for(size_t ir = 0; ir != LimbsOut-1; ++ir) {
+    result.limbs[ir] = (limb_type)(-1);
+  }
+  result.limbs[LimbsOut-1] = ((limb_type)(-1) >> 1);
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> min_signed() {
+  bignum<LimbsOut> result = {{}};
+  result.limbs[LimbsOut-1] = ((limb_type)(1) << (limb_bits-1));;
+  return result;
+}
+
+
 inline bool is_negative_limb(limb_type a) {
   return a & ((limb_type)(1) << (limb_bits-1));
 }
@@ -286,6 +385,42 @@ inline bool less_than_signed(bignum<Limbs> a, bignum<Limbs> b) {
   }
   return false;
 }
+
+
+template<size_t Limbs>
+inline int32_t popcount(bignum<Limbs> a) {
+  int32_t result = 0;
+  for(size_t ia = 0; ia != Limbs; ++ia) {
+    result += ::popcount(a.limbs[ia]);
+  }
+  return result;
+}
+
+template<size_t Limbs>
+inline int32_t log2_unsigned(bignum<Limbs> a) {
+  for(int ir = Limbs-1; ir >= 0; --ir) {
+    if(a.limbs[ir] != 0) {
+      return ilog2(a.limbs[ir]) + ir*limb_bits;
+    }
+  }
+  caller_error("the logarithm of zero is undefined");
+}
+template<size_t Limbs>
+inline int32_t log2_signed(bignum<Limbs> a) {
+  caller_error_if(is_negative(a), "logarithm is only defined on positive numbers");
+  return log2_unsigned(a);
+}
+
+template<size_t Limbs>
+inline int32_t count_trailing_zeroes(bignum<Limbs> a) {
+  for(int ir = 0; ir != Limbs; ++ir) {
+    if(a.limbs[ir] != 0) {
+      return ::count_trailing_zeroes(a.limbs[ir]) + ir*limb_bits;
+    }
+  }
+  caller_error("the number of trailing zeroes of zero is undefined");
+}
+
 #if 0
 // TODO is that a good shift argument type?
 template<size_t LimbsOut, size_t Limbs>
@@ -393,6 +528,58 @@ inline bignum<LimbsOut> shift_right_sign_extend(bignum<Limbs> a, uint32_t shift)
 
 
 
+template<size_t LimbsOut, size_t Limbs, size_t OperationLimbs = Limbs/2+1>
+inline bignum<LimbsOut> sqrt_unsigned(bignum<Limbs> radicand) {
+  typedef bignum<OperationLimbs> operation_t;
+  // in fact, lower_bound and mid stay within (Limbs+1)/2 ... hmm.
+
+  bignum<LimbsOut> result = {{}};
+
+  // log2(0) doesn't exist, but sqrt(0) does, so we have to check for it here.
+  if(!nonzero(radicand)) {
+    return result;
+  }
+
+  //shift is the log base 2 of radicand, divided by two, rounded down.
+  const int32_t shift = log2_unsigned(radicand) >> 1;
+
+  //bounds are [lower_bound, upper_bound), a half-open range.
+  //lower_bound is guaranteed to be less than or equal to the answer.
+  //upper_bound is guaranteed to be greater than the answer.
+  operation_t lower_bound = {{}};  // = half_t(1) << shift;
+  lower_bound.limbs[shift / limb_bits] = ((limb_type)(1) << (shift % limb_bits));
+
+  //upper_bound is twice the original lower_bound;
+  //upper_bound is    2**(floor(log2(radicand) / 2)+1)
+  //which is equal to 2**ceil((log2(radicand)+1) / 2)
+  operation_t upper_bound = {{}};
+  upper_bound.limbs[(shift+1) / limb_bits] = ((limb_type)(1) << ((shift+1) % limb_bits));
+
+  /* while(lower_bound < upper_bound - 1) */
+  while(less_than_unsigned(lower_bound, add(upper_bound, max_unsigned<OperationLimbs>())))
+  {
+    const operation_t mid = shift_impl<false, OperationLimbs>(add(upper_bound, lower_bound), -1, limb_bits-1) /* >> 1 */;
+    if(less_than_unsigned(radicand, long_multiply_unsigned<Limbs>(mid, mid))) {
+      upper_bound = mid;
+    }
+    else {
+      lower_bound = mid;
+    }
+  }
+  
+  result = zero_extend<LimbsOut>(lower_bound);
+  return result;
+}
+
+template<size_t LimbsOut, size_t Limbs>
+inline bignum<LimbsOut> sqrt_signed(bignum<Limbs> radicand) {
+  caller_error_if(is_negative(radicand), "sqrt of a negative number");
+  // We know there's one bit free now (the sign bit), which
+  // is enough to fit that awkward initial upper_bound in.
+  // Optimization!
+  return sqrt_unsigned<LimbsOut, Limbs, ((Limbs+1)/2)>(radicand);
+}
+
 
 #if 0
 // problem: sign extension whetherness.
@@ -419,99 +606,6 @@ inline bignum<LimbsOut> add(bignum<LimbsA> a, bignum<LimbsB> b) {
 #endif
 //TODO subtract, bitwise
 
-//cast_unsigned
-template<size_t LimbsOut, size_t LimbsA>
-inline bignum<LimbsOut> zero_extend(bignum<LimbsA> a) {
-  bignum<LimbsOut> result;
-  for(size_t ir = 0; ir < LimbsA && ir < LimbsOut; ++ir) {
-    result.limbs[ir] = a.limbs[ir];
-  }
-  for(size_t ir = LimbsA; ir < LimbsOut; ++ir) {
-    result.limbs[ir] = 0;
-  }
-  return result;
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> zero_extend_from_limb(limb_type a) {
-  bignum<LimbsOut> result = {{}};
-  if(LimbsOut > 0) {
-    result.limbs[0] = a;
-  }
-  return result;
-}
-
-template<size_t LimbsOut>
-inline bignum<LimbsOut> zero_extend_from_uint64(uint64_t a) {
-  static_assert(limb_bits >= 64, "bug");
-  return zero_extend_from_limb<LimbsOut>(a);
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> zero_extend_from_uint32(uint32_t a) {
-  static_assert(limb_bits >= 32, "bug");
-  return zero_extend_from_limb<LimbsOut>(a);
-}
-
-
-template<size_t LimbsOut, size_t LimbsA>
-inline bignum<LimbsOut> sign_extend(bignum<LimbsA> a) {
-  bignum<LimbsOut> result;
-  const bool neg = is_negative(a);
-  const limb_type sign_ext = (neg ? (limb_type)(-1) : (limb_type)(0));
-  for(size_t ir = 0; ir != LimbsA && ir != LimbsOut; ++ir) {
-    result.limbs[ir] = a.limbs[ir];
-  }
-  if(LimbsOut > LimbsA) {
-    for(size_t ir = LimbsA; ir != LimbsOut; ++ir) {
-      result.limbs[ir] = sign_ext;
-    }
-  }
-  return result;
-}
-
-template<size_t LimbsOut>
-inline bignum<LimbsOut> sign_extend_from_limb(signed_limb_type a) {
-  return sign_extend<LimbsOut>(bignum<1>{{(limb_type)(a)}});
-}
-
-template<size_t LimbsOut>
-inline bignum<LimbsOut> sign_extend_from_int64(int64_t a) {
-  static_assert(limb_bits >= 64, "bug");
-  return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> sign_extend_from_int32(int32_t a) {
-  static_assert(limb_bits >= 32, "bug");
-  return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
-}
-
-template<size_t LimbsOut>
-inline bignum<LimbsOut> zero() {
-  bignum<LimbsOut> result = {{}};
-  return result;
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> max_unsigned() {
-  bignum<LimbsOut> result;
-  for(size_t ir = 0; ir != LimbsOut; ++ir) {
-    result.limbs[ir] = (limb_type)(-1);
-  }
-  return result;
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> max_signed() {
-  bignum<LimbsOut> result;
-  for(size_t ir = 0; ir != LimbsOut-1; ++ir) {
-    result.limbs[ir] = (limb_type)(-1);
-  }
-  result.limbs[LimbsOut-1] = ((limb_type)(-1) >> 1);
-  return result;
-}
-template<size_t LimbsOut>
-inline bignum<LimbsOut> min_signed() {
-  bignum<LimbsOut> result = {{}};
-  result.limbs[LimbsOut-1] = ((limb_type)(1) << (limb_bits-1));;
-  return result;
-}
 
 template<size_t Limbs>
 float to_float_unsigned(bignum<Limbs> a) {
@@ -679,6 +773,10 @@ friend inline biguint<Bits> operator++(biguint<Bits>& a, int) { biguint<Bits> ol
 friend inline biguint<Bits>& operator--(biguint<Bits>& a) { a = a - 1; return a; }
 friend inline biguint<Bits> operator--(biguint<Bits>& a, int) { biguint<Bits> old = a; a = a - 1; return old; }
 
+friend inline biguint<((Bits+1)/2)> isqrt(biguint<Bits> a)
+{ return biguint<((Bits+1)/2)>(sqrt_unsigned<biguint<((Bits+1)/2)>::bignum_limbs>(a)); }
+friend inline int32_t ilog2(biguint<Bits> a) { return log2_unsigned(a); }
+
 friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; }
 };
 
@@ -712,7 +810,7 @@ struct bigint : bignum<(Bits/limb_bits)> {
   explicit operator long double()const { return to_long_double_signed(*this); }
 
 friend inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
-{ return bigint<Bits>(long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b)); }
+{ return bigint<Bits>(long_multiply_signed<bigint<Bits>::bignum_limbs>(a, b)); }
 friend inline bigint<Bits> operator+(bigint<Bits> a) { return a; }
 friend inline bigint<Bits> operator-(bigint<Bits> a) { return bigint<Bits>(negate(a)); }
 friend inline bigint<Bits> abs(bigint<Bits> a) { return (a < 0 ? -a : a); }
@@ -732,9 +830,9 @@ friend inline bool operator>=(bigint<Bits> a, bigint<Bits> b) { return !less_tha
 friend inline bool operator<=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(b, a); }
 
 friend inline bigint<Bits> operator<<(bigint<Bits> a, uint32_t shift)
-{ return bigint<Bits>(shift_left_sign_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
+{ return bigint<Bits>(shift_left_sign_extend<bigint<Bits>::bignum_limbs>(a, shift)); }
 friend inline bigint<Bits> operator>>(bigint<Bits> a, uint32_t shift)
-{ return bigint<Bits>(shift_right_sign_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
+{ return bigint<Bits>(shift_right_sign_extend<bigint<Bits>::bignum_limbs>(a, shift)); }
 
 friend inline bigint<Bits>& operator+=(bigint<Bits>& a, bigint<Bits> b) { a = a + b; return a; }
 friend inline bigint<Bits>& operator-=(bigint<Bits>& a, bigint<Bits> b) { a = a - b; return a; }
@@ -750,8 +848,12 @@ friend inline bigint<Bits> operator++(bigint<Bits>& a, int) { bigint<Bits> old =
 friend inline bigint<Bits>& operator--(bigint<Bits>& a) { a = a - 1; return a; }
 friend inline bigint<Bits> operator--(bigint<Bits>& a, int) { bigint<Bits> old = a; a = a - 1; return old; }
 
+friend inline bigint<((Bits+1)/2)> isqrt(bigint<Bits> a)
+{ return bigint<((Bits+1)/2)>(sqrt_signed<bigint<((Bits+1)/2)>::bignum_limbs>(a)); }
+friend inline int32_t ilog2(bigint<Bits> a) { return log2_signed(a); }
+
 friend std::ostream& operator<<(std::ostream& os, bigint<Bits> a) {
-  char out[biguint<Bits>::bignum_limbs*(limb_bits/4 + 1)];
+  char out[bigint<Bits>::bignum_limbs*(limb_bits/4 + 1)];
   show_limbs_hex_bigendian(a, out);
   os << out;
   return os;
@@ -777,15 +879,22 @@ lossless_multiply(biguint<BitsA> a, biguint<BitsB> b) { return biguint<(BitsA+Bi
 template<size_t BitsA, size_t BitsB> inline bigint<(BitsA+BitsB)>
 lossless_multiply(bigint<BitsA> a, bigint<BitsB> b) { return bigint<(BitsA+BitsB)>(long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
 
+} /* end namespace bignum */
+
+using bignum::biguint;
+using bignum::bigint;
+using bignum::multiply_to;
+using bignum::lossless_multiply;
+
 namespace std {
 template<size_t Bits>
 class numeric_limits< biguint<Bits> >
 {
 public:
   static constexpr bool is_specialized = true;
-  static biguint<Bits> min() noexcept { return biguint<Bits>(zero<biguint<Bits>::bignum_limbs>()); }
-  static biguint<Bits> max() noexcept { return biguint<Bits>(max_unsigned<biguint<Bits>::bignum_limbs>()); }
-  static biguint<Bits> lowest() noexcept { return biguint<Bits>(zero<biguint<Bits>::bignum_limbs>()); }
+  static biguint<Bits> min() noexcept { return biguint<Bits>(bignum::zero<biguint<Bits>::bignum_limbs>()); }
+  static biguint<Bits> max() noexcept { return biguint<Bits>(bignum::max_unsigned<biguint<Bits>::bignum_limbs>()); }
+  static biguint<Bits> lowest() noexcept { return biguint<Bits>(bignum::zero<biguint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits;
   static constexpr int  digits10 = Bits * std::log10(2);
@@ -805,9 +914,9 @@ class numeric_limits< bigint<Bits> >
 {
 public:
   static constexpr bool is_specialized = true;
-  static bigint<Bits> min() noexcept { return bigint<Bits>(min_signed<bigint<Bits>::bignum_limbs>()); }
-  static bigint<Bits> max() noexcept { return bigint<Bits>(max_signed<bigint<Bits>::bignum_limbs>()); }
-  static bigint<Bits> lowest() noexcept { return bigint<Bits>(min_signed<bigint<Bits>::bignum_limbs>()); }
+  static bigint<Bits> min() noexcept { return bigint<Bits>(bignum::min_signed<bigint<Bits>::bignum_limbs>()); }
+  static bigint<Bits> max() noexcept { return bigint<Bits>(bignum::max_signed<bigint<Bits>::bignum_limbs>()); }
+  static bigint<Bits> lowest() noexcept { return bigint<Bits>(bignum::min_signed<bigint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits-1;
   static constexpr int  digits10 = (Bits-1) * std::log10(2);
@@ -865,6 +974,8 @@ void f() { g(long_multiply<6>(bignum<4>{q,p,t,u},bignum<4>{r,s,v,w})); }
 
 //lossless_multiply
 //multiply_to_fit
+
+//division: FORCEINLINE to see likely shared reciprocal?
 
 #endif
 

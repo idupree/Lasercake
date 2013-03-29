@@ -79,6 +79,9 @@ static void bignum_compile_test() {
   (++aa)++; (++ac)++;
   (--aa)--; (--ac)--;
   
+  !aa; !ac;
+  (bool)(aa); (bool)(ac);
+  
   //aa = ac;
   // explicit sign conversion
   aa = decltype(aa)(ac);
@@ -93,6 +96,19 @@ static void bignum_compile_test() {
   (double)(ac);
   //(long double)(aa);
   //(long double)(ac);
+  
+  abs(aa);
+  abs(ac);
+  hash_value(aa);
+  hash_value(ac);
+  ilog2(aa);
+  ilog2(ac);
+  isqrt(aa);
+  isqrt(ac);
+  popcount(aa);
+  popcount(ac);
+  count_trailing_zeroes(aa);
+  count_trailing_zeroes(ac);
 }
 
 BOOST_AUTO_TEST_CASE(bignum_runtests) {

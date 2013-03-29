@@ -600,7 +600,7 @@ struct static_num_bits_in_integer_that_are_not_leading_zeroes<0> {
   static const uint64_t value = 0;
 };
 
-inline int32_t count_trailing_zeroes_64(uint64_t argument) {
+inline int32_t count_trailing_zeroes(uint64_t argument) {
   caller_error_if(argument == 0, "the number of trailing zeroes of zero is undefined");
 #if defined(DETECTED_builtin_ctz64)
   return DETECTED_builtin_ctz64(argument);
@@ -616,6 +616,27 @@ inline int32_t count_trailing_zeroes_64(uint64_t argument) {
 #endif
 }
 
+inline int32_t count_trailing_zeroes(uint32_t argument) {
+  caller_error_if(argument == 0, "the number of trailing zeroes of zero is undefined");
+#if defined(DETECTED_builtin_ctz32)
+  return DETECTED_builtin_ctz32(argument);
+#else
+  int32_t shift
+         = argument &  ((1ULL << 16) - 1)           ? 0 : 16;
+  shift += argument & (((1ULL <<  8) - 1) << shift) ? 0 : 8;
+  shift += argument & (((1ULL <<  4) - 1) << shift) ? 0 : 4;
+  shift += argument & (((1ULL <<  2) - 1) << shift) ? 0 : 2;
+  shift += argument & (((1ULL <<  1) - 1) << shift) ? 0 : 1;
+  return shift;
+#endif
+}
+inline int32_t count_trailing_zeroes(uint16_t argument) { return count_trailing_zeroes(uint32_t(argument)); }
+inline int32_t count_trailing_zeroes(uint8_t argument) { return count_trailing_zeroes(uint32_t(argument)); }
+
+inline int32_t count_trailing_zeroes(int64_t argument) { return count_trailing_zeroes(uint64_t(argument)); }
+inline int32_t count_trailing_zeroes(int32_t argument) { return count_trailing_zeroes(uint32_t(argument)); }
+inline int32_t count_trailing_zeroes(int16_t argument) { return count_trailing_zeroes(uint32_t(argument)); }
+inline int32_t count_trailing_zeroes(int8_t argument) { return count_trailing_zeroes(uint32_t(argument)); }
 
 template<uintmax_t Result>
 struct static_pow_nonnegative_integer_answer {
@@ -834,6 +855,203 @@ inline constexpr int32_t lossless_multiply(int16_t a1, int16_t a2) { return (int
 
 inline constexpr uint64_t lossless_multiply(uint32_t a1, uint32_t a2) { return (uint64_t)a1 * a2; }
 inline constexpr int64_t lossless_multiply(int32_t a1, int32_t a2) { return (int64_t)a1 * a2; }
+
+#if 0
+// Alignment attribute: maybe it will allow SSE sometime?
+// I think 16-byte aligned is the most we can count on. Maybe 8 on some machines.
+// 32 byte can be useful for AVX. Hmm.
+#ifdef __cplusplus
+//#define LASERCAKE_IF_CPLUSPLUS(
+//static_assert(!std::numeric_limits<UInt>::is_signed, "LASERCAKE_UINT_TWICE is for unsigned");
+// implicit conversion
+// Endianness doesn't matter, I guess.
+//    !std::numeric_limits<SmallerInt>::is_signed &&
+#define LASERCAKE_UINT_TWICE_CONSTRUCTORS(TypeName, BaseUInt) \
+  constexpr TypeName() {} \
+  template<typename SmallerInt, typename = typename boost::enable_if< \
+    (std::numeric_limits<SmallerInt>::digits <= std::numeric_limits<BaseUInt>::digits) \
+  >::type> \
+  constexpr TypeName(SmallerInt low) : low(low), high(0) {} \
+  constexpr TypeName(BaseUInt low, BaseUInt high) : low(low), high(high) {}
+#else
+#define LASERCAKE_UINT_TWICE_CONSTRUCTORS(TypeName, BaseUInt)
+#endif
+
+#define LASERCAKE_UINT_TWICE(TypeName, BaseUInt, Alignment) \
+struct TypeName { \
+  base_type low; \
+  base_type high; \
+  LASERCAKE_UINT_TWICE_CONSTRUCTORS(TypeName, BaseUInt) \
+} __attribute__((aligned(Alignment)));
+
+//LASERCAKE_UINT_TWICE(uint128, uint64_t, 16, (uint64_t))
+//LASERCAKE_UINT_TWICE(uint256, uint128, 16, (uint64_t)(uint128))
+LASERCAKE_UINT_TWICE(uint128, uint64_t, 16)
+LASERCAKE_UINT_TWICE(uint256, uint128, 16)
+
+template<typename UInt>
+struct uint_twice {
+  static_assert(!std::numeric_limits<UInt>::is_signed, "uint_twice is for unsigned");
+  typedef UInt base_type;
+  constexpr uint_twice() {}
+  // implicit conversion
+  constexpr uint_twice(base_type low) : low(low), high(0) {}
+  constexpr uint_twice(base_type low, base_type high) : low(low), high(high) {}
+  // Endianness doesn't matter, I guess.
+  base_type low;
+  base_type high;
+} __attribute__((aligned(16)));
+template<typename Int>
+struct int_twice {
+  static_assert(std::numeric_limits<Int>::is_signed, "int_twice is for signed");
+  typedef boost::make_unsigned<Int>::type base_type;
+  constexpr int_twice() {}
+  // implicit conversion
+  constexpr int_twice(base_type low)
+    : low(low),
+      //sign-extend
+      high((Int)(low) >> std::numeric_limits<Int>::digits)
+    {}
+  constexpr int_twice(base_type low, base_type high) : low(low), high(high) {}
+  // Endianness doesn't matter, I guess.
+  base_type low;
+  base_type high;
+} __attribute__((aligned(16)));
+
+// This could be a macro (with explicit passing of HALF_MAX and HALF_DIGITS
+// as well as the types) for use in C code (e.g. OpenCL someday).
+//template<typename full_t, typename half_t>
+//    const half_t half_max = std::numeric_limits<half_t>::max();
+//    const int half_digits = std::numeric_limits<half_t>::digits;
+#define LASERCAKE_CAST_SMALLER_TO_UINT64(smaller_typed_val) ((uint64_t)(smaller_typed_val))
+#define LASERCAKE_CAST_SMALLER_TO_UINT128(smaller_typed_val) ((uint128){smaller_typed_val, 0})
+#define LASERCAKE_MULTIPLY_UINT_VIA_HALF_SIZE_TYPES(func_name, ret_expr, ret_type, twice_t, full_t, half_t, half_max, half_digits) 
+
+//need:
+//width_doubling_multiply half->full
+//full->half(low)
+//full->half(high)
+//half->full(low)
+//half->full(high)
+// + on full_t
+// < on full_t
+// bool -> full_t (or increment thereof)
+// (with 'static' addition this can work for compiletime lolol)
+#define LASERCAKE_INT_LOW_HALF_uint64(i) ((uint32_t)(i))
+#define LASERCAKE_INT_HIGH_HALF_uint64(i) ((uint32_t)((i) >> 32))
+#define LASERCAKE_INT_LOW_HALF_uint128(i) ((i).low)
+#define LASERCAKE_INT_HIGH_HALF_uint128(i) ((i).high)
+#define LASERCAKE_INT_AS_LOW_HALF_OF_uint64(i) ((uint64_t)(i))
+#define LASERCAKE_INT_AS_HIGH_HALF_OF_uint64(i) (((uint64_t)(i) << 32))
+#define LASERCAKE_INT_AS_LOW_HALF_OF_uint128(i) ((uint128){(i), 0})
+#define LASERCAKE_INT_AS_HIGH_HALF_OF_uint64(i) ((uint128){0, (i)})
+inline twice_t func_name(full_t a1, full_t a2) {
+  twice_t result;
+  /* optimization */
+  if ((half_t)(a1) == a1 && (half_t)(a2) == a2) {
+    result.high = 0;
+    result.low = width_doubling_multiply((half_t)(a1), (half_t)(a2));
+  }
+  else {
+    const half_t low1 = (half_t)(a1);
+    const half_t low2 = (half_t)(a2);
+    const half_t high1 = (half_t)(a1 >> half_digits);
+    const half_t high2 = (half_t)(a2 >> half_digits);
+    const full_t highhigh = width_doubling_multiply(high1, high2);
+    const full_t highlow = width_doubling_multiply(high1, low2);
+    const half_t highlow_low = (half_t)(highlow);
+    const half_t highlow_high = (half_t)(highlow >> half_digits);
+    const full_t lowhigh = width_doubling_multiply(low1, high2);
+    const half_t lowhigh_low = (half_t)(lowhigh);
+    const half_t lowhigh_high = (half_t)(lowhigh >> half_digits);
+    const full_t lowlow = width_doubling_multiply(low1, low2);
+
+    // Won't overflow:
+    result.high = (full_t)highhigh + highlow_high + lowhigh_high;
+
+    result.low = lowlow;
+    const full_t overflow_check_A = result.low;
+    result.low += ((full_t)highlow_low << half_digits);
+    result.high += (result.low < overflow_check_A);
+
+    const full_t overflow_check_B = result.low;
+    result.low += ((full_t)lowhigh_low << half_digits);
+    result.high += (result.low < overflow_check_B);
+  }
+
+  //assert(result.low == (((DETECTED_uint128_t)a1 * a2) & std::numeric_limits<full_t>::max()));
+  //assert(result.high == (((DETECTED_uint128_t)a1 * a2) >> std::numeric_limits<full_t>::digits));
+
+  return result;
+}
+template<typename full_t, typename half_t,
+  typename unsigned_full_t = typename boost::make_unsigned<full_t>::type,
+  typename unsigned_half_t = typename boost::make_unsigned<half_t>::type,
+  >
+inline int_twice<full_t> width_doubling_multiply_int_via_half_size_types(full_t a1, full_t a2) {
+  typedef int_twice<full_t> twice_t;
+  typedef uint_twice<full_t> unsigned_twice_t;
+  twice_t result;
+  // optimization
+  if ((half_t)(a1) == a1 && (half_t)(a2) == a2) {
+    const full_t result_small = (full_t)(half_t)(a1) * (full_t)(half_t)(a2);
+    //high part: sign-extend
+    result.high = (unsigned_full_t)(result_small >> std::numeric_limits<full_t>::digits);
+    result.low = (unsigned_full_t)(result_small);
+  }
+  // optimization
+  else if (a1 == 0 || a2 == 0) {
+    result.high = 0;
+    result.low = 0;
+  }
+  // necessary: abs(min int) has issues
+  else if (a1 == std::numeric_limits<full_t>::min()) {
+    result.high = -a2;
+    result.low = 0;
+  }
+  // necessary: abs(min int) has issues
+  else if (a2 == std::numeric_limits<full_t>::min()) {
+    result.high = -a1;
+    result.low = 0;
+  }
+  else {
+    const unsigned_full_t abs_a1 = (unsigned_full_t)(std::abs(a1));
+    const unsigned_full_t abs_a2 = (unsigned_full_t)(std::abs(a2));
+    const unsigned_twice_t unsigned_result =
+      width_doubling_multiply_uint_via_half_size_types(abs_a1, abs_a2);
+    if ((a1 < 0) == (a2 < 0)) {
+      result.high = unsigned_result.high;
+      result.low = unsigned_result.low;
+    }
+    else {
+      result.high = ~unsigned_result.high;
+      result.low = -unsigned_result.low;
+    }
+  }
+  //assert(full_t(result.low) == full_t((DETECTED_int128_t)a1 * a2));
+  //assert(full_t(result.high) == full_t(((DETECTED_int128_t)a1 * a2) >> 64));
+  return result;
+}
+
+typedef uint_twice<uint64_t> uint128;
+typedef int_twice<int64_t> int128;
+typedef uint_twice<uint128> uint256;
+typedef int_twice<int128> int256;
+typedef uint_twice<uint256> uint512;
+typedef int_twice<int256> int512;
+
+#ifdef DETECTED_uint128_t
+inline uint128 width_doubling_multiply(uint64_t a1, uint64_t a2) {
+  return (DETECTED_uint128_t)a1 * a2;
+}
+#endif
+#ifdef DETECTED_int128_t
+inline int128 width_doubling_multiply(int64_t a1, int64_t a2) {
+  return (DETECTED_int128_t)a1 * a2;
+}
+#endif
+inline uint128 operator*(
+#endif
 
 #ifdef DETECTED_uint128_t
 typedef DETECTED_uint128_t uint128;
