@@ -275,7 +275,7 @@ struct region_vertex {
 struct region {
   // Regions are arbitrary, non-convex polyhedra which can have holes.
   //std::vector<vertex_idx_type, tetrahedron_sides> vertices_;
-  std::vector<region_idx_type> faces_;
+  std::vector<face_idx_type> faces_;
 };
 
 struct event {
