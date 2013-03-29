@@ -195,7 +195,7 @@ struct face {
 lint64_t scalar_triple_product(vector3<lint64_t> v1, vector3<lint64_t> v2, vector3<lint64_t> v3) {
   return v1(X)*v2(Y)*v3(Z) - v1(X)*v3(Y)*v2(Z) + v2(X)*v3(Y)*v1(Z) - v2(X)*v1(Y)*v3(Z) + v3(X)*v1(Y)*v2(Z) - v3(X)*v2(Y)*v1(Z);
 }
-vector3<distance> approx_loc_of_triple_intersection(face const& f1, face const& f2, face const& f3) {
+vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
   lint64_t p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   assert(p != 0);
   return vector3<distance>(
@@ -339,7 +339,7 @@ public:
         size_t j = (i+1)%f.neighboring_faces_.size();
         const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(when);
         const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
-        vector3<distance> loc = approx_loc_of_triple_intersection(present_face, present_neighbor_1, present_neighbor_2);
+        vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
         triangle.vertices[i] = gl_data_format::vertex_with_color(
           get_primitive_int(loc.x/distance_units),
           get_primitive_int(loc.y/distance_units),
