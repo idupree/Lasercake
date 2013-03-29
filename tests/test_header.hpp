@@ -58,6 +58,7 @@ template<tests_file_id File> struct register_test_file;
 DECLARE_TESTS_FILES_BEGIN
 
 DECLARE_TESTS_FILE(bbox_collision_detector_tests)
+DECLARE_TESTS_FILE(bignum_tests)
 DECLARE_TESTS_FILE(borrowed_bitset_tests)
 DECLARE_TESTS_FILE(bounds_checked_int_tests)
 DECLARE_TESTS_FILE(misc_utils_tests)
