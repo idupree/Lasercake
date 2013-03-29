@@ -372,8 +372,10 @@ operator>>=(bounds_checked_int<Int,Min,Max>& a, IntAny shift) {
 
 // overloading and calling the numbers.hpp ones
 #include "numbers.hpp"
-inline bounds_checked_int<uint32_t> i64sqrt(bounds_checked_int<uint64_t> i) {
-  return i64sqrt(i.get());
+// hmm this doesn't decrease the int range
+template<typename Int, Int Min, Int Max>
+inline bounds_checked_int<Int, Min, Max> isqrt(bounds_checked_int<Int, Min, Max> i) {
+  return isqrt(i.get());
 }
 inline constexpr bounds_checked_int<uint16_t> lossless_multiply(bounds_checked_int<uint8_t> a1, bounds_checked_int<uint8_t> a2) { return (uint16_t)a1.get() * a2.get(); }
 inline constexpr bounds_checked_int<int16_t> lossless_multiply(bounds_checked_int<int8_t> a1, bounds_checked_int<int8_t> a2) { return (int16_t)a1.get() * a2.get(); }

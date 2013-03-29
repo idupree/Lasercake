@@ -298,8 +298,8 @@ BOOST_AUTO_TEST_CASE( my_popcount ) {
   std::for_each(numbers_to_test.begin(), numbers_to_test.end(), &popcount_test);
 }
 
-void i64sqrt_test(uint64_t radicand) {
-  uint64_t sqrt_result = i64sqrt(radicand); //implicit cast the result to 64 bits so we can square it
+void isqrt_test(uint64_t radicand) {
+  uint64_t sqrt_result = isqrt(radicand); //implicit cast the result to 64 bits so we can square it
   BOOST_CHECK_LE(sqrt_result * sqrt_result, radicand);
   if(sqrt_result != std::numeric_limits<uint32_t>::max()) {
     BOOST_CHECK_GT((sqrt_result+1) * (sqrt_result+1), radicand);
@@ -313,7 +313,7 @@ BOOST_AUTO_TEST_CASE( my_sqrt ) {
     0x100000001ull, 0xffffffffffffffffull, 0xfffffffffffffffeull,
     0xeeeeeeeeeeeeeeeeull, 0xfffffffe00000001ull, 0xfffffffe00000000ull
   }};
-  std::for_each(numbers_to_test.begin(), numbers_to_test.end(), &i64sqrt_test);
+  std::for_each(numbers_to_test.begin(), numbers_to_test.end(), &isqrt_test);
 }
 
 

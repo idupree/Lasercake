@@ -261,7 +261,7 @@ void robot::update(world& w, input_representation::input_news_t const& input_new
   // TODO is this the best rounding strategy? (do we care here?)
   velocity_.x = divide(velocity_.x, 2, rounding_strategy<round_down, negative_mirrors_positive>());
   velocity_.y = divide(velocity_.y, 2, rounding_strategy<round_down, negative_mirrors_positive>());
-  const distance xymag = i64sqrt(facing_.x*facing_.x + facing_.y*facing_.y);
+  const distance xymag = isqrt(facing_.x*facing_.x + facing_.y*facing_.y);
   /*if (input_news.is_currently_pressed("5") || input_news.is_currently_pressed("s")) {
     velocity_.x = (facing_.x * tile_width * 15 / (4 * xymag)) / seconds;
     velocity_.y = (facing_.y * tile_width * 15 / (4 * xymag)) / seconds;
@@ -307,8 +307,8 @@ void robot::update(world& w, input_representation::input_news_t const& input_new
   if (turn_right_amount != 0) {
     const distance new_facing_x = facing_.x + turn_right_amount * facing_.y / speed_divisor;
     const distance new_facing_y = facing_.y - turn_right_amount * facing_.x / speed_divisor;
-    const distance new_xymag = i64sqrt(new_facing_x*new_facing_x + new_facing_y*new_facing_y);
-    const distance target_xymag = i64sqrt(tile_width*tile_width - facing_.z*facing_.z);
+    const distance new_xymag = isqrt(new_facing_x*new_facing_x + new_facing_y*new_facing_y);
+    const distance target_xymag = isqrt(tile_width*tile_width - facing_.z*facing_.z);
     facing_.x = new_facing_x * target_xymag / new_xymag;
     facing_.y = new_facing_y * target_xymag / new_xymag;
   }

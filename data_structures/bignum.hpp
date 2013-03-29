@@ -704,7 +704,7 @@ template<size_t Limbs> inline size_t hash_value(bignum<Limbs> a) {
 
 template<size_t Bits>
 struct biguint : bignum<(Bits/limb_bits)> {
-  static_assert(Bits % limb_bits == 0, "There is no bigint with bit-size not a multiple of limb size.");
+  static_assert(Bits % limb_bits == 0, "Bigint only supports bit sizes that are a multiple of limb size.");
   static const size_t bignum_limbs = Bits/limb_bits;
   typedef bignum<bignum_limbs> bignum_type;
 
@@ -773,8 +773,8 @@ friend inline biguint<Bits> operator++(biguint<Bits>& a, int) { biguint<Bits> ol
 friend inline biguint<Bits>& operator--(biguint<Bits>& a) { a = a - 1; return a; }
 friend inline biguint<Bits> operator--(biguint<Bits>& a, int) { biguint<Bits> old = a; a = a - 1; return old; }
 
-friend inline biguint<((Bits+1)/2)> isqrt(biguint<Bits> a)
-{ return biguint<((Bits+1)/2)>(sqrt_unsigned<biguint<((Bits+1)/2)>::bignum_limbs>(a)); }
+friend inline biguint<((bigint<Bits>::bignum_limbs+1)/2)*limb_bits> isqrt(biguint<Bits> a)
+{ return biguint<((bigint<Bits>::bignum_limbs+1)/2)*limb_bits>(sqrt_unsigned<((bigint<Bits>::bignum_limbs+1)/2)>(a)); }
 friend inline int32_t ilog2(biguint<Bits> a) { return log2_unsigned(a); }
 
 friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; }
@@ -784,7 +784,7 @@ friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; 
 
 template<size_t Bits>
 struct bigint : bignum<(Bits/limb_bits)> {
-  static_assert(Bits % limb_bits == 0, "There is no bigint with bit-size not a multiple of limb size.");
+  static_assert(Bits % limb_bits == 0, "Bigint only supports bit sizes that are a multiple of limb size.");
   static const size_t bignum_limbs = Bits/limb_bits;
   typedef bignum<bignum_limbs> bignum_type;
 
@@ -848,8 +848,11 @@ friend inline bigint<Bits> operator++(bigint<Bits>& a, int) { bigint<Bits> old =
 friend inline bigint<Bits>& operator--(bigint<Bits>& a) { a = a - 1; return a; }
 friend inline bigint<Bits> operator--(bigint<Bits>& a, int) { bigint<Bits> old = a; a = a - 1; return old; }
 
-friend inline bigint<((Bits+1)/2)> isqrt(bigint<Bits> a)
-{ return bigint<((Bits+1)/2)>(sqrt_signed<bigint<((Bits+1)/2)>::bignum_limbs>(a)); }
+//Imagine taking the sqrt of a signed 8 bit value.  Can it fit into 4 bits?
+// sqrt(127) is 11.something, which is less than 15 (unsigned 4bit max) but
+// greater than 7 (signed 4bit max).  So we conservatively leave enough space here.
+friend inline bigint<(bigint<Bits>::bignum_limbs/2+1)*limb_bits> isqrt(bigint<Bits> a)
+{ return bigint<(bigint<Bits>::bignum_limbs/2+1)*limb_bits>(sqrt_signed<(bigint<Bits>::bignum_limbs/2+1)>(a)); }
 friend inline int32_t ilog2(bigint<Bits> a) { return log2_signed(a); }
 
 friend std::ostream& operator<<(std::ostream& os, bigint<Bits> a) {

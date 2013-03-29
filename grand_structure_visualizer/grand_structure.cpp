@@ -258,7 +258,7 @@ faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(f
         c = -c;
       }
       // we want the earlier time, but not if it's negative
-      const velocity1d sqrt_disc = i64sqrt(discriminant);
+      const velocity1d sqrt_disc = isqrt(discriminant);
       const velocity1d  lesser_numerator = -b - sqrt_disc;
       if ( lesser_numerator >= 0) return divide(lesser_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
       const velocity1d greater_numerator = -b + sqrt_disc;

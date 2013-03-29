@@ -1468,7 +1468,7 @@ void update_fluids_impl(state_t& state) {
               const sub_tile_velocity amount_of_vel_in_pressure_receiving_dir = fluid.velocity.dot<sub_tile_velocity>(-cardinal_direction_vectors[dir]);
               // This velocity pushes us towards opposite_loc, and pressure is a measure of how much water wants to
               // *go to* the height pressure is being measured at, so we measure at opposite_loc.
-              const sub_tile_velocity deficiency_of_vel = sub_tile_velocity(i64sqrt(
+              const sub_tile_velocity deficiency_of_vel = sub_tile_velocity(isqrt(
                     // "2gh"
                     ((2 * gravity_acceleration_magnitude * pressure) / pressure_per_depth_in_tile_heights) * tile_height
                     * identity(tile_physics_sub_tile_distance_units * tile_physics_sub_tile_distance_units / fine_distance_units / fine_distance_units)

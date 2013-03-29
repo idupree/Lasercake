@@ -238,7 +238,7 @@ public:
 
   typedef lint64_t int64_type_to_use_with_dot;
   ScalarType magnitude_within_32_bits()const {
-    return ScalarType(i64sqrt(dot<int64_type_to_use_with_dot>(*this)));
+    return ScalarType(isqrt(dot<int64_type_to_use_with_dot>(*this)));
   }
   
   // Choose these the way you'd choose dot's output type (see the comment above)

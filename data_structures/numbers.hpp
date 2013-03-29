@@ -803,30 +803,25 @@ template<uintmax_t Factor> struct extract_factor<Factor, 0>;
 
 
 
-
-// TODO rename to isqrt or similar?
-inline uint32_t i64sqrt(uint64_t radicand)
-{
-  typedef uint64_t full_t;
-  typedef uint32_t half_t;
-
+template<typename result_t, typename lower_bound_and_mid_t, typename upper_bound_t, typename test_multiply_t, typename radicand_t>
+inline result_t isqrt_impl(radicand_t radicand) {
   // log2(0) doesn't exist, but sqrt(0) does, so we have to check for it here.
   if(radicand == 0)return 0;
 
   //shift is the log base 2 of radicand, rounded down.
-  int shift = ilog2(radicand);
+  int32_t shift = ilog2(radicand);
 
   //bounds are [lower_bound, upper_bound), a half-open range.
   //lower_bound is guaranteed to be less than or equal to the answer.
   //upper_bound is guaranteed to be greater than the answer.
-  half_t lower_bound = half_t(1) << (shift >> 1);
+  lower_bound_and_mid_t lower_bound = lower_bound_and_mid_t(1) << (shift >> 1);
 
   //upper_bound is twice the original lower_bound;
   //upper_bound is    2**(floor(log2(radicand) / 2)+1)
   //which is equal to 2**ceil((log2(radicand)+1) / 2)
-  full_t upper_bound = full_t(lower_bound) << 1;
+  upper_bound_t upper_bound = upper_bound_t(lower_bound) << 1;
 
-#ifdef DETECTED_uint128_t
+#if 0//def DETECTED_uint128_t
   typedef DETECTED_uint128_t twice_t;
   assert_if_ASSERT_EVERYTHING(full_t(lower_bound)*lower_bound <= radicand);
   assert_if_ASSERT_EVERYTHING(twice_t(upper_bound)*upper_bound > radicand);
@@ -834,8 +829,8 @@ inline uint32_t i64sqrt(uint64_t radicand)
 
   while(lower_bound < upper_bound - 1)
   {
-    const half_t mid = half_t((upper_bound + lower_bound) >> 1);
-    if(full_t(mid) * mid > radicand) {
+    const lower_bound_and_mid_t mid((upper_bound + lower_bound) >> 1);
+    if(test_multiply_t(mid) * test_multiply_t(mid) > test_multiply_t(radicand)) {
       upper_bound = mid;
     }
     else {
@@ -843,7 +838,26 @@ inline uint32_t i64sqrt(uint64_t radicand)
     }
   }
 
-  return lower_bound;
+  return result_t(lower_bound);
+}
+
+// range: [0, 2^32-1]
+inline uint32_t isqrt(uint64_t radicand) {
+  return isqrt_impl<uint32_t, uint32_t, uint64_t, uint64_t, uint64_t>(radicand);
+}
+// range: [0, floor(2^31.5)]
+inline int64_t isqrt(int64_t radicand) {
+  caller_error_if(radicand < 0, "sqrt of a negative number");
+  return isqrt_impl<int64_t, uint32_t, uint32_t, uint64_t, int64_t>(radicand);
+}
+// range: [0, 2^16-1]
+inline uint32_t isqrt(uint32_t radicand) {
+  return isqrt_impl<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>(radicand);
+}
+// range: [0, floor(2^15.5)]
+inline int32_t isqrt(int32_t radicand) {
+  caller_error_if(radicand < 0, "sqrt of a negative number");
+  return isqrt_impl<int32_t, uint32_t, uint32_t, uint32_t, int32_t>(radicand);
 }
 
 

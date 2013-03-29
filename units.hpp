@@ -795,9 +795,9 @@ identity(units<dim::ratio<1, N>> u) {
 // Sqrt'ing a quantity sqrts its units.
 template<typename Int, typename Units>
 inline physical_quantity<Int, typename units_root<Units, 2>::type>
-i64sqrt(physical_quantity<Int, Units> const& radicand) {
+isqrt(physical_quantity<Int, Units> const& radicand) {
   typedef typename units_root<Units, 2>::type sqrt_units;
-  return physical_quantity<Int, sqrt_units>(i64sqrt(get(radicand, Units())), sqrt_units());
+  return physical_quantity<Int, sqrt_units>(isqrt(get(radicand, Units())), sqrt_units());
 }
 
 // helper
