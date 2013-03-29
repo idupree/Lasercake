@@ -44,6 +44,7 @@
 #include "../units.hpp"
 #include "../gl_data_format.hpp"
 #include "../utils.hpp"
+#include "../data_structures/misc_structures.hpp"
 
 
 #ifdef LASERCAKE_HAVE_SYS_RESOURCE_H
@@ -203,6 +204,68 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
     f1.D * (f2.ABC(2)*f3.ABC(0) - f3.ABC(2)*f2.ABC(0)) + f2.D * (f3.ABC(2)*f1.ABC(0) - f1.ABC(2)*f3.ABC(0)) + f3.D * (f1.ABC(2)*f2.ABC(0) - f2.ABC(2)*f1.ABC(0)),
     f1.D * (f2.ABC(0)*f3.ABC(1) - f3.ABC(0)*f2.ABC(1)) + f2.D * (f3.ABC(0)*f1.ABC(1) - f1.ABC(0)*f3.ABC(1)) + f3.D * (f1.ABC(0)*f2.ABC(1) - f2.ABC(0)*f1.ABC(1))
                  ) / p;
+}
+
+faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(face const& f1, face const& f2, face const& f3, face const& f4) {
+  // When the 4x4 determinant is 0.
+  // That's
+  // + D1 * scalar_triple_product(f2.ABC, f3.ABC, f4.ABC)
+  // - D2 * scalar_triple_product(f3.ABC, f4.ABC, f1.ABC)
+  // + D3 * scalar_triple_product(f4.ABC, f1.ABC, f2.ABC)
+  // - D4 * scalar_triple_product(f1.ABC, f2.ABC, f3.ABC)
+  // But Dn is Dn + dDn*t + .5ddDn*t^2
+  // so
+  const lint64_t t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
+  const lint64_t t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
+  const lint64_t t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
+  const lint64_t t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  // in at^2 + bt + c = 0
+  acceleration1d a_times_2 = f1.D_acceleration*t1 + f2.D_acceleration*t2 + f3.D_acceleration*t3 + f4.D_acceleration*t4;
+  velocity1d     b         = f1.D_velocity    *t1 + f2.D_velocity    *t2 + f3.D_velocity    *t3 + f4.D_velocity    *t4;
+  distance       c         = f1.D             *t1 + f2.D             *t2 + f3.D             *t3 + f4.D             *t4;
+  
+  // (-b +/- sqrt(b^2 - 2(a_times_2)c)) / a_times_2
+  const auto discriminant = b*b - a_times_2*2*c;
+  if (discriminant < 0) {
+    return boost::none;
+  }
+  else {
+    const rounding_strategy<round_down, negative_is_forbidden> strat;
+    if (a_times_2 == 0) {
+      if (b == 0) {
+        // Eww. A constant. They're either ALWAYS intersecting (c == 0) or NEVER (c != 0).
+        if (c == 0) {
+          assert(false); // I don't think we can handle this case.
+          return time_type(0);
+        }
+        else return boost::none;
+      }
+      if (b < 0) {
+        b = -b;
+        c = -c;
+      }
+      if (c > 0) return boost::none;
+      // hack - should just be
+      // return divide(-c * identity(time_units / seconds), b, strat);
+      // but overflow stuff
+      // also see below
+      return divide(-c * lint64_t(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+    }
+    else {
+      if (a_times_2 < 0) {
+        a_times_2 = -a_times_2;
+        b = -b;
+        c = -c;
+      }
+      // we want the earlier time, but not if it's negative
+      const velocity1d sqrt_disc = i64sqrt(discriminant);
+      const velocity1d  lesser_numerator = -b - sqrt_disc;
+      if ( lesser_numerator >= 0) return divide(lesser_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      const velocity1d greater_numerator = -b + sqrt_disc;
+      if (greater_numerator >= 0) return divide(greater_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      return boost::none;
+    }
+  }
 }
 
 struct region_vertex {
