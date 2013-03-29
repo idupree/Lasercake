@@ -826,6 +826,15 @@ inline uint32_t i64sqrt(uint64_t radicand)
 }
 
 
+inline constexpr uint16_t lossless_multiply(uint8_t a1, uint8_t a2) { return (uint16_t)a1 * a2; }
+inline constexpr int16_t lossless_multiply(int8_t a1, int8_t a2) { return (int16_t)a1 * a2; }
+
+inline constexpr uint32_t lossless_multiply(uint16_t a1, uint16_t a2) { return (uint32_t)a1 * a2; }
+inline constexpr int32_t lossless_multiply(int16_t a1, int16_t a2) { return (int32_t)a1 * a2; }
+
+inline constexpr uint64_t lossless_multiply(uint32_t a1, uint32_t a2) { return (uint64_t)a1 * a2; }
+inline constexpr int64_t lossless_multiply(int32_t a1, int32_t a2) { return (int64_t)a1 * a2; }
+
 #ifdef DETECTED_uint128_t
 typedef DETECTED_uint128_t uint128;
 #else
@@ -886,16 +895,10 @@ struct int128 {
 };
 #endif
 
-inline constexpr uint16_t width_doubling_multiply(uint8_t a1, uint8_t a2) { return (uint16_t)a1 * a2; }
-inline constexpr int16_t width_doubling_multiply(int8_t a1, int8_t a2) { return (int16_t)a1 * a2; }
 
-inline constexpr uint32_t width_doubling_multiply(uint16_t a1, uint16_t a2) { return (uint32_t)a1 * a2; }
-inline constexpr int32_t width_doubling_multiply(int16_t a1, int16_t a2) { return (int32_t)a1 * a2; }
 
-inline constexpr uint64_t width_doubling_multiply(uint32_t a1, uint32_t a2) { return (uint64_t)a1 * a2; }
-inline constexpr int64_t width_doubling_multiply(int32_t a1, int32_t a2) { return (int64_t)a1 * a2; }
 
-inline uint128 width_doubling_multiply(uint64_t a1, uint64_t a2) {
+inline uint128 lossless_multiply(uint64_t a1, uint64_t a2) {
 #ifdef DETECTED_uint128_t
   return (DETECTED_uint128_t)a1 * a2;
 #else
@@ -943,7 +946,7 @@ inline uint128 width_doubling_multiply(uint64_t a1, uint64_t a2) {
   return result;
 #endif
 }
-inline int128 width_doubling_multiply(int64_t a1, int64_t a2) {
+inline int128 lossless_multiply(int64_t a1, int64_t a2) {
 #ifdef DETECTED_int128_t
   return (DETECTED_int128_t)a1 * a2;
 #else
@@ -969,7 +972,7 @@ inline int128 width_doubling_multiply(int64_t a1, int64_t a2) {
   else {
     const uint64_t abs_a1 = std::abs(a1);
     const uint64_t abs_a2 = std::abs(a2);
-    const uint128 unsigned_result = width_doubling_multiply(abs_a1, abs_a2);
+    const uint128 unsigned_result = lossless_multiply(abs_a1, abs_a2);
     if ((a1 < 0) == (a2 < 0)) {
       result.high = unsigned_result.high;
       result.low = unsigned_result.low;
@@ -998,12 +1001,12 @@ template<typename IntType> struct non_normalized_rational {
   constexpr explicit operator float()const { return float(double(numerator) / double(denominator)); }
   constexpr explicit operator double()const { return double(numerator) / double(denominator); }
   // The comparison operators would only be constexpr for 32-bits-or-less
-  // IntType, because the int128-emulation width_doubling_multiply() is
+  // IntType, because the int128-emulation lossless_multiply() is
   // rather tricky to make constexpr.
   bool operator< (non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     if (is_negative(denominator) == is_negative(o.denominator))
       return prod1 < prod2;
     else
@@ -1011,8 +1014,8 @@ template<typename IntType> struct non_normalized_rational {
   }
   bool operator> (non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     if (is_negative(denominator) == is_negative(o.denominator))
       return prod1 > prod2;
     else
@@ -1020,8 +1023,8 @@ template<typename IntType> struct non_normalized_rational {
   }
   bool operator<=(non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     if (is_negative(denominator) == is_negative(o.denominator))
       return prod1 <= prod2;
     else
@@ -1029,8 +1032,8 @@ template<typename IntType> struct non_normalized_rational {
   }
   bool operator>=(non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     if (is_negative(denominator) == is_negative(o.denominator))
       return prod1 >= prod2;
     else
@@ -1038,14 +1041,14 @@ template<typename IntType> struct non_normalized_rational {
   }
   bool operator==(non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     return prod1 == prod2;
   }
   bool operator!=(non_normalized_rational const& o)const {
     assert(denominator != 0 && o.denominator != 0);
-    const auto prod1 = width_doubling_multiply(numerator, o.denominator);
-    const auto prod2 = width_doubling_multiply(o.numerator, denominator);
+    const auto prod1 = lossless_multiply(numerator, o.denominator);
+    const auto prod2 = lossless_multiply(o.numerator, denominator);
     return prod1 != prod2;
   }
   

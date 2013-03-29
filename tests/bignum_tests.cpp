@@ -52,8 +52,8 @@ static void bignum_compile_test() {
   aa*aa;ac*ac;
   multiply_to<64>(aa,aa);
   multiply_to<64>(ac,ac);
-  multiply_to_fit(aa,aa);
-  multiply_to_fit(ac,ac);
+  lossless_multiply(aa,aa);
+  lossless_multiply(ac,ac);
   aa&aa;ac&ac;
   aa|aa;ac|ac;
   aa^aa;ac^ac;
@@ -83,6 +83,16 @@ static void bignum_compile_test() {
   // explicit sign conversion
   aa = decltype(aa)(ac);
   ac = decltype(ac)(aa);
+  
+  std::numeric_limits<decltype(aa)>::max();
+  std::numeric_limits<decltype(ac)>::max();
+  
+  (float)(aa);
+  (float)(ac);
+  (double)(aa);
+  (double)(ac);
+  //(long double)(aa);
+  //(long double)(ac);
 }
 
 BOOST_AUTO_TEST_CASE(bignum_runtests) {
@@ -116,10 +126,10 @@ BOOST_AUTO_TEST_CASE(bignum_runtests) {
   BOOST_CHECK_EQUAL(aa+aa, 2*aa);
   BOOST_CHECK_EQUAL(aa+aa+aa, 3*aa);
 
-  BOOST_CHECK_EQUAL(multiply_to_fit(aa, multiply_to_fit(aa,aa)), multiply_to_fit(multiply_to_fit(aa, aa), aa));
-  BOOST_CHECK_EQUAL(multiply_to_fit(aa, multiply_to_fit(-aa,aa)), multiply_to_fit(multiply_to_fit(-aa, -aa), -aa));
-  BOOST_CHECK_EQUAL(multiply_to_fit(aa, aa+aa), multiply_to_fit(aa, aa) + multiply_to_fit(aa, aa));
-  BOOST_CHECK_EQUAL(multiply_to_fit(aa, aa-aa), multiply_to_fit(aa, aa) - multiply_to_fit(aa, aa));
+  BOOST_CHECK_EQUAL(lossless_multiply(aa, lossless_multiply(aa,aa)), lossless_multiply(lossless_multiply(aa, aa), aa));
+  BOOST_CHECK_EQUAL(lossless_multiply(aa, lossless_multiply(-aa,aa)), lossless_multiply(lossless_multiply(-aa, -aa), -aa));
+  BOOST_CHECK_EQUAL(lossless_multiply(aa, aa+aa), lossless_multiply(aa, aa) + lossless_multiply(aa, aa));
+  BOOST_CHECK_EQUAL(lossless_multiply(aa, aa-aa), lossless_multiply(aa, aa) - lossless_multiply(aa, aa));
 /*
   aa&aa;
   aa|aa;

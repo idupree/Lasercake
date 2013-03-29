@@ -32,7 +32,9 @@
 #include "../config.hpp"
 #include <boost/utility/enable_if.hpp>
 #include <ostream>
-
+#include <cmath>
+#include "../cxx11/hash.hpp"
+#include <boost/functional/hash.hpp>
 
 /*
 template<size_t Bits>
@@ -482,6 +484,93 @@ inline bignum<LimbsOut> sign_extend_from_int32(int32_t a) {
   return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
 }
 
+template<size_t LimbsOut>
+inline bignum<LimbsOut> zero() {
+  bignum<LimbsOut> result = {{}};
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> max_unsigned() {
+  bignum<LimbsOut> result;
+  for(size_t ir = 0; ir != LimbsOut; ++ir) {
+    result.limbs[ir] = (limb_type)(-1);
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> max_signed() {
+  bignum<LimbsOut> result;
+  for(size_t ir = 0; ir != LimbsOut-1; ++ir) {
+    result.limbs[ir] = (limb_type)(-1);
+  }
+  result.limbs[LimbsOut-1] = ((limb_type)(-1) >> 1);
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> min_signed() {
+  bignum<LimbsOut> result = {{}};
+  result.limbs[LimbsOut-1] = ((limb_type)(1) << (limb_bits-1));;
+  return result;
+}
+
+template<size_t Limbs>
+float to_float_unsigned(bignum<Limbs> a) {
+  static_assert(limb_bits >= 32, "bug");
+  int ir;
+  for(ir = Limbs-1; ir > 0; --ir) {
+    if(a.limbs[ir] != 0) {
+      break;
+    }
+  }
+  if(ir == 0) {
+    return (float)(a.limbs[0]);
+  }
+  else {
+    return
+      ldexpf((float)(a.limbs[ir]), ir*limb_bits) +
+      ldexpf((float)(a.limbs[ir-1]), (ir-1)*limb_bits);
+  }
+}
+template<size_t Limbs>
+double to_double_unsigned(bignum<Limbs> a) {
+  static_assert(limb_bits >= 64, "bug");
+  int ir;
+  for(ir = Limbs-1; ir > 0; --ir) {
+    if(a.limbs[ir] != 0) {
+      break;
+    }
+  }
+  if(ir == 0) {
+    return (double)(a.limbs[0]);
+  }
+  else {
+    return
+      ldexp((double)(a.limbs[ir]), ir*limb_bits) +
+      ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits);
+  }
+}
+template<size_t Limbs>
+long double to_long_double_unsigned(bignum<Limbs> a) {
+  static_assert(Limbs-Limbs, "unimplemented");
+  return to_double_unsigned(a);
+}
+
+template<size_t Limbs>
+float to_float_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_float_unsigned(negate(a)); }
+  else { return to_float_unsigned(a); }
+}
+template<size_t Limbs>
+double to_double_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_double_unsigned(negate(a)); }
+  else { return to_double_unsigned(a); }
+}
+template<size_t Limbs>
+long double to_long_double_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_long_double_unsigned(negate(a)); }
+  else { return to_long_double_unsigned(a); }
+}
+
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> divide_by_limb_unsigned(bignum<Limbs> a, limb_type b) {
   
@@ -510,6 +599,15 @@ inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/
 template<size_t Bits> struct bigint;
 template<size_t Bits> struct biguint;
 
+
+template<size_t Limbs> inline size_t hash_value(bignum<Limbs> a) {
+  size_t seed = 0;
+  for(size_t ia = 0; ia != Limbs; ++ia) {
+    boost::hash_combine(seed, a.limbs[ia]);
+  }
+  return seed;
+}
+
 template<size_t Bits>
 struct biguint : bignum<(Bits/limb_bits)> {
   static_assert(Bits % limb_bits == 0, "There is no bigint with bit-size not a multiple of limb size.");
@@ -535,11 +633,17 @@ struct biguint : bignum<(Bits/limb_bits)> {
   //explicit biguint(bigint<OtherBits> i) : bignum_type(i) {}
 
   explicit operator bool()const { return nonzero(*this); }
+
+  explicit operator float()const { return to_float_unsigned(*this); }
+  explicit operator double()const { return to_double_unsigned(*this); }
+  explicit operator long double()const { return to_long_double_unsigned(*this); }
+
 friend inline biguint<Bits> operator*(biguint<Bits> a, biguint<Bits> b)
 { return biguint<Bits>(long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b)); }
 
 friend inline biguint<Bits> operator+(biguint<Bits> a) { return a; }
 friend inline biguint<Bits> operator-(biguint<Bits> a) { return biguint<Bits>(negate(a)); }
+friend inline biguint<Bits> abs(biguint<Bits> a) { return a; }
 friend inline biguint<Bits> operator+(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(add(a, b)); }
 friend inline biguint<Bits> operator-(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(subtract(a, b)); }
 
@@ -603,10 +707,15 @@ struct bigint : bignum<(Bits/limb_bits)> {
 
   explicit operator bool()const { return nonzero(*this); }
 
+  explicit operator float()const { return to_float_signed(*this); }
+  explicit operator double()const { return to_double_signed(*this); }
+  explicit operator long double()const { return to_long_double_signed(*this); }
+
 friend inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
 { return bigint<Bits>(long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b)); }
 friend inline bigint<Bits> operator+(bigint<Bits> a) { return a; }
 friend inline bigint<Bits> operator-(bigint<Bits> a) { return bigint<Bits>(negate(a)); }
+friend inline bigint<Bits> abs(bigint<Bits> a) { return (a < 0 ? -a : a); }
 friend inline bigint<Bits> operator+(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(add(a, b)); }
 friend inline bigint<Bits> operator-(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(subtract(a, b)); }
 
@@ -664,9 +773,83 @@ multiply_to(biguint<BitsA> a, biguint<BitsB> b) { return biguint<Bits>(long_mult
 template<size_t Bits, size_t BitsA, size_t BitsB> inline bigint<Bits>
 multiply_to(bigint<BitsA> a, bigint<BitsB> b) { return bigint<Bits>(long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b)); }
 template<size_t BitsA, size_t BitsB> inline biguint<(BitsA+BitsB)>
-multiply_to_fit(biguint<BitsA> a, biguint<BitsB> b) { return biguint<(BitsA+BitsB)>(long_multiply_unsigned<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
+lossless_multiply(biguint<BitsA> a, biguint<BitsB> b) { return biguint<(BitsA+BitsB)>(long_multiply_unsigned<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
 template<size_t BitsA, size_t BitsB> inline bigint<(BitsA+BitsB)>
-multiply_to_fit(bigint<BitsA> a, bigint<BitsB> b) { return bigint<(BitsA+BitsB)>(long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
+lossless_multiply(bigint<BitsA> a, bigint<BitsB> b) { return bigint<(BitsA+BitsB)>(long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
+
+namespace std {
+template<size_t Bits>
+class numeric_limits< biguint<Bits> >
+{
+public:
+  static constexpr bool is_specialized = true;
+  static biguint<Bits> min() noexcept { return biguint<Bits>(zero<biguint<Bits>::bignum_limbs>()); }
+  static biguint<Bits> max() noexcept { return biguint<Bits>(max_unsigned<biguint<Bits>::bignum_limbs>()); }
+  static biguint<Bits> lowest() noexcept { return biguint<Bits>(zero<biguint<Bits>::bignum_limbs>()); }
+
+  static constexpr int  digits = Bits;
+  static constexpr int  digits10 = Bits * std::log10(2);
+  static constexpr bool is_signed = false;
+  static constexpr bool is_integer = true;
+  static constexpr bool is_exact = true;
+  static constexpr int  radix = 2;
+
+  static constexpr bool is_iec559 = false;
+  static constexpr bool is_bounded = true;
+  static constexpr bool is_modulo = true;
+
+  static constexpr bool traps = false;
+};
+template<size_t Bits>
+class numeric_limits< bigint<Bits> >
+{
+public:
+  static constexpr bool is_specialized = true;
+  static bigint<Bits> min() noexcept { return bigint<Bits>(min_signed<bigint<Bits>::bignum_limbs>()); }
+  static bigint<Bits> max() noexcept { return bigint<Bits>(max_signed<bigint<Bits>::bignum_limbs>()); }
+  static bigint<Bits> lowest() noexcept { return bigint<Bits>(min_signed<bigint<Bits>::bignum_limbs>()); }
+
+  static constexpr int  digits = Bits-1;
+  static constexpr int  digits10 = (Bits-1) * std::log10(2);
+  static constexpr bool is_signed = true;
+  static constexpr bool is_integer = true;
+  static constexpr bool is_exact = true;
+  static constexpr int  radix = 2;
+
+  static constexpr bool is_iec559 = false;
+  static constexpr bool is_bounded = true;
+  static constexpr bool is_modulo = true;
+
+  static constexpr bool traps = false;
+};
+}
+
+namespace boost {
+  template<size_t Bits> struct   make_signed<  bigint<Bits> > { typedef  bigint<Bits> type; };
+  template<size_t Bits> struct   make_signed< biguint<Bits> > { typedef  bigint<Bits> type; };
+  template<size_t Bits> struct make_unsigned<  bigint<Bits> > { typedef biguint<Bits> type; };
+  template<size_t Bits> struct make_unsigned< biguint<Bits> > { typedef biguint<Bits> type; };
+}
+
+namespace std {
+template<size_t Bits> inline bigint<Bits> abs(bigint<Bits> a) { return (a < 0) ? -a : a; }
+template<size_t Bits> inline biguint<Bits> abs(biguint<Bits> a) { return a; }
+}
+
+namespace HASH_NAMESPACE {
+  template<size_t Bits>
+  struct hash< bigint<Bits> > {
+    inline size_t operator()(bigint<Bits> a)const {
+      return hash_value(a);
+    }
+  };
+  template<size_t Bits>
+  struct hash< biguint<Bits> > {
+    inline size_t operator()(bigint<Bits> a)const {
+      return hash_value(a);
+    }
+  };
+}
 
 #if 0
 // gcc explorer tests
@@ -679,6 +862,9 @@ extern void g(bignum<6> const&);
 extern int q,p,r,s,t,u,v,w;
 void f() { g(long_multiply<6>(bignum<4>{q,p,t,u},bignum<4>{r,s,v,w})); }
 #endif
+
+//lossless_multiply
+//multiply_to_fit
 
 #endif
 
