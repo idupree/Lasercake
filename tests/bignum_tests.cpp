@@ -75,6 +75,14 @@ static void bignum_compile_test() {
   aa^=aa;ac^=ac;
   aa>>=90;ac>>=90;
   aa<<=90;ac<<=90;
+  
+  (++aa)++; (++ac)++;
+  (--aa)--; (--ac)--;
+  
+  //aa = ac;
+  // explicit sign conversion
+  aa = decltype(aa)(ac);
+  ac = decltype(ac)(aa);
 }
 
 BOOST_AUTO_TEST_CASE(bignum_runtests) {

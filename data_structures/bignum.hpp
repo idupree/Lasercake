@@ -505,6 +505,11 @@ inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/
 //bounds checking could be stuck in these fairly runtime-efficiently.
 //these are fairly macro-able.
 
+//TODO increment could be made faster
+
+template<size_t Bits> struct bigint;
+template<size_t Bits> struct biguint;
+
 template<size_t Bits>
 struct biguint : bignum<(Bits/limb_bits)> {
   static_assert(Bits % limb_bits == 0, "There is no bigint with bit-size not a multiple of limb size.");
@@ -515,7 +520,7 @@ struct biguint : bignum<(Bits/limb_bits)> {
 
   biguint(uint64_t i) : bignum_type(zero_extend_from_uint64<bignum_limbs>(i)) {}
 
-  biguint(bignum_type i) : bignum_type(i) {}
+  explicit biguint(bignum_type i) : bignum_type(i) {}
 
   template<size_t OtherBits>
   biguint(biguint<OtherBits> i,
@@ -526,22 +531,27 @@ struct biguint : bignum<(Bits/limb_bits)> {
     typename boost::enable_if_c<(OtherBits > Bits)>::type* = 0
   ) : bignum_type(zero_extend<bignum_limbs>(i)) {}
 
+  //template<size_t OtherBits>
+  //explicit biguint(bigint<OtherBits> i) : bignum_type(i) {}
+
   explicit operator bool()const { return nonzero(*this); }
 friend inline biguint<Bits> operator*(biguint<Bits> a, biguint<Bits> b)
-{ return long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b); }
+{ return biguint<Bits>(long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b)); }
 
 friend inline biguint<Bits> operator+(biguint<Bits> a) { return a; }
-friend inline biguint<Bits> operator-(biguint<Bits> a) { return negate(a); }
-friend inline biguint<Bits> operator+(biguint<Bits> a, biguint<Bits> b) { return add(a, b); }
-friend inline biguint<Bits> operator-(biguint<Bits> a, biguint<Bits> b) { return subtract(a, b); }
+friend inline biguint<Bits> operator-(biguint<Bits> a) { return biguint<Bits>(negate(a)); }
+friend inline biguint<Bits> operator+(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(add(a, b)); }
+friend inline biguint<Bits> operator-(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(subtract(a, b)); }
 
-friend inline biguint<Bits> operator&(biguint<Bits> a, biguint<Bits> b) { return bitwise_and(a, b); }
-friend inline biguint<Bits> operator|(biguint<Bits> a, biguint<Bits> b) { return bitwise_or(a, b); }
-friend inline biguint<Bits> operator^(biguint<Bits> a, biguint<Bits> b) { return bitwise_xor(a, b); }
-friend inline biguint<Bits> operator~(biguint<Bits> a) { return bitwise_complement(a); }
+friend inline biguint<Bits> operator&(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(bitwise_and(a, b)); }
+friend inline biguint<Bits> operator|(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(bitwise_or(a, b)); }
+friend inline biguint<Bits> operator^(biguint<Bits> a, biguint<Bits> b) { return biguint<Bits>(bitwise_xor(a, b)); }
+friend inline biguint<Bits> operator~(biguint<Bits> a) { return biguint<Bits>(bitwise_complement(a)); }
 
-friend inline biguint<Bits> operator<<(biguint<Bits> a, uint32_t shift) { return shift_left_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-friend inline biguint<Bits> operator>>(biguint<Bits> a, uint32_t shift) { return shift_right_zero_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+friend inline biguint<Bits> operator<<(biguint<Bits> a, uint32_t shift)
+{ return biguint<Bits>(shift_left_zero_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
+friend inline biguint<Bits> operator>>(biguint<Bits> a, uint32_t shift)
+{ return biguint<Bits>(shift_right_zero_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
 
 friend inline bool operator==(biguint<Bits> a, biguint<Bits> b) { return equal(a, b); }
 friend inline bool operator!=(biguint<Bits> a, biguint<Bits> b) { return !equal(a, b); }
@@ -560,6 +570,11 @@ friend inline biguint<Bits>& operator^=(biguint<Bits>& a, biguint<Bits> b) { a =
 friend inline biguint<Bits>& operator<<=(biguint<Bits>& a, uint32_t shift) { a = a << shift; return a; }
 friend inline biguint<Bits>& operator>>=(biguint<Bits>& a, uint32_t shift) { a = a >> shift; return a; }
 
+friend inline biguint<Bits>& operator++(biguint<Bits>& a) { a = a + 1; return a; }
+friend inline biguint<Bits> operator++(biguint<Bits>& a, int) { biguint<Bits> old = a; a = a + 1; return old; }
+friend inline biguint<Bits>& operator--(biguint<Bits>& a) { a = a - 1; return a; }
+friend inline biguint<Bits> operator--(biguint<Bits>& a, int) { biguint<Bits> old = a; a = a - 1; return old; }
+
 friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; }
 };
 
@@ -574,8 +589,8 @@ struct bigint : bignum<(Bits/limb_bits)> {
   bigint() {}
 
   bigint(int64_t i) : bignum_type(sign_extend_from_int64<bignum_limbs>(i)) {}
-  
-  bigint(bignum_type i) : bignum_type(i) {}
+
+  explicit bigint(bignum_type i) : bignum_type(i) {}
 
   template<size_t OtherBits>
   bigint(bigint<OtherBits> i,
@@ -589,16 +604,16 @@ struct bigint : bignum<(Bits/limb_bits)> {
   explicit operator bool()const { return nonzero(*this); }
 
 friend inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
-{ return long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b); }
+{ return bigint<Bits>(long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b)); }
 friend inline bigint<Bits> operator+(bigint<Bits> a) { return a; }
-friend inline bigint<Bits> operator-(bigint<Bits> a) { return negate(a); }
-friend inline bigint<Bits> operator+(bigint<Bits> a, bigint<Bits> b) { return add(a, b); }
-friend inline bigint<Bits> operator-(bigint<Bits> a, bigint<Bits> b) { return subtract(a, b); }
+friend inline bigint<Bits> operator-(bigint<Bits> a) { return bigint<Bits>(negate(a)); }
+friend inline bigint<Bits> operator+(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(add(a, b)); }
+friend inline bigint<Bits> operator-(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(subtract(a, b)); }
 
-friend inline bigint<Bits> operator&(bigint<Bits> a, bigint<Bits> b) { return bitwise_and(a, b); }
-friend inline bigint<Bits> operator|(bigint<Bits> a, bigint<Bits> b) { return bitwise_or(a, b); }
-friend inline bigint<Bits> operator^(bigint<Bits> a, bigint<Bits> b) { return bitwise_xor(a, b); }
-friend inline bigint<Bits> operator~(bigint<Bits> a) { return bitwise_complement(a); }
+friend inline bigint<Bits> operator&(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(bitwise_and(a, b)); }
+friend inline bigint<Bits> operator|(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(bitwise_or(a, b)); }
+friend inline bigint<Bits> operator^(bigint<Bits> a, bigint<Bits> b) { return bigint<Bits>(bitwise_xor(a, b)); }
+friend inline bigint<Bits> operator~(bigint<Bits> a) { return bigint<Bits>(bitwise_complement(a)); }
 
 friend inline bool operator==(bigint<Bits> a, bigint<Bits> b) { return equal(a, b); }
 friend inline bool operator!=(bigint<Bits> a, bigint<Bits> b) { return !equal(a, b); }
@@ -607,8 +622,10 @@ friend inline bool operator>(bigint<Bits> a, bigint<Bits> b) { return less_than_
 friend inline bool operator>=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(a, b); }
 friend inline bool operator<=(bigint<Bits> a, bigint<Bits> b) { return !less_than_signed(b, a); }
 
-friend inline bigint<Bits> operator<<(bigint<Bits> a, uint32_t shift) { return shift_left_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
-friend inline bigint<Bits> operator>>(bigint<Bits> a, uint32_t shift) { return shift_right_sign_extend<biguint<Bits>::bignum_limbs>(a, shift); }
+friend inline bigint<Bits> operator<<(bigint<Bits> a, uint32_t shift)
+{ return bigint<Bits>(shift_left_sign_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
+friend inline bigint<Bits> operator>>(bigint<Bits> a, uint32_t shift)
+{ return bigint<Bits>(shift_right_sign_extend<biguint<Bits>::bignum_limbs>(a, shift)); }
 
 friend inline bigint<Bits>& operator+=(bigint<Bits>& a, bigint<Bits> b) { a = a + b; return a; }
 friend inline bigint<Bits>& operator-=(bigint<Bits>& a, bigint<Bits> b) { a = a - b; return a; }
@@ -618,6 +635,12 @@ friend inline bigint<Bits>& operator|=(bigint<Bits>& a, bigint<Bits> b) { a = a 
 friend inline bigint<Bits>& operator^=(bigint<Bits>& a, bigint<Bits> b) { a = a ^ b; return a; }
 friend inline bigint<Bits>& operator<<=(bigint<Bits>& a, uint32_t shift) { a = a << shift; return a; }
 friend inline bigint<Bits>& operator>>=(bigint<Bits>& a, uint32_t shift) { a = a >> shift; return a; }
+
+friend inline bigint<Bits>& operator++(bigint<Bits>& a) { a = a + 1; return a; }
+friend inline bigint<Bits> operator++(bigint<Bits>& a, int) { bigint<Bits> old = a; a = a + 1; return old; }
+friend inline bigint<Bits>& operator--(bigint<Bits>& a) { a = a - 1; return a; }
+friend inline bigint<Bits> operator--(bigint<Bits>& a, int) { bigint<Bits> old = a; a = a - 1; return old; }
+
 friend std::ostream& operator<<(std::ostream& os, bigint<Bits> a) {
   char out[biguint<Bits>::bignum_limbs*(limb_bits/4 + 1)];
   show_limbs_hex_bigendian(a, out);
@@ -637,13 +660,13 @@ template<size_t Bits> inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits>
 */
 // For explicit multiplication-precision control:
 template<size_t Bits, size_t BitsA, size_t BitsB> inline biguint<Bits>
-multiply_to(biguint<BitsA> a, biguint<BitsB> b) { return long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b); }
+multiply_to(biguint<BitsA> a, biguint<BitsB> b) { return biguint<Bits>(long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b)); }
 template<size_t Bits, size_t BitsA, size_t BitsB> inline bigint<Bits>
-multiply_to(bigint<BitsA> a, bigint<BitsB> b) { return long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b); }
+multiply_to(bigint<BitsA> a, bigint<BitsB> b) { return bigint<Bits>(long_multiply_signed<biguint<Bits>::bignum_limbs>(a, b)); }
 template<size_t BitsA, size_t BitsB> inline biguint<(BitsA+BitsB)>
-multiply_to_fit(biguint<BitsA> a, biguint<BitsB> b) { return long_multiply_unsigned<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b); }
+multiply_to_fit(biguint<BitsA> a, biguint<BitsB> b) { return biguint<(BitsA+BitsB)>(long_multiply_unsigned<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
 template<size_t BitsA, size_t BitsB> inline bigint<(BitsA+BitsB)>
-multiply_to_fit(bigint<BitsA> a, bigint<BitsB> b) { return long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b); }
+multiply_to_fit(bigint<BitsA> a, bigint<BitsB> b) { return bigint<(BitsA+BitsB)>(long_multiply_signed<biguint<(BitsA+BitsB)>::bignum_limbs>(a, b)); }
 
 #if 0
 // gcc explorer tests
