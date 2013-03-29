@@ -180,7 +180,7 @@ struct face {
   velocity1d D_velocity;
   acceleration1d D_acceleration;
   std::vector<face_idx_type> neighboring_faces_;
-  array<region_idx_type, 2> neighboring_regions_;
+  std::vector<region_idx_type> neighboring_regions_;
   face updated_to_time(time_type t)const {
     face result(*this);
     const time_type relative_time = t - base_time_;
@@ -320,8 +320,8 @@ class grand_structure_of_lasercake {
       f.D = loc.dot<lint64_t>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
       f.D_acceleration = f.ABC.dot<lint64_t>(gravity_acceleration);
-      f.neighboring_regions_[0] = 0;
-      f.neighboring_regions_[1] = region_idx;
+      f.neighboring_regions_.push_back(0);
+      f.neighboring_regions_.push_back(region_idx);
       r.faces_.push_back(first_face_idx + i);
       air.faces_.push_back(first_face_idx + i);
       //r.vertices_.push_back(first_vertex_idx + i);
@@ -370,7 +370,13 @@ public:
       region const& r = regions_[i];
       for(face_idx_type fi : r.faces_) {
         face const& f = faces_[fi];
-        assert((f.neighboring_regions_[0] == i) || (f.neighboring_regions_[1] == i));
+        bool found_reference = false;
+        for (region_idx_type ri : f.neighboring_regions_) {
+          if (ri == i) {
+            found_reference = true;
+          }
+        }
+        assert(found_reference);
       }
     }
     for(size_t i = 0; i != faces_.size(); ++i) {
