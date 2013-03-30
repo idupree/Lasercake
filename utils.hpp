@@ -236,6 +236,11 @@ public:
       numeric_representation_cast<OutputRepr>(z) * numeric_representation_cast<OutputRepr>(other.z);
   }
 
+  template<typename Repr>
+  Repr magnitude_using()const {
+    return Repr(isqrt(dot<Repr>(*this)));
+  }
+
   typedef lint64_t int64_type_to_use_with_dot;
   ScalarType magnitude_within_32_bits()const {
     return ScalarType(isqrt(dot<int64_type_to_use_with_dot>(*this)));

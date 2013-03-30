@@ -60,7 +60,7 @@
 #include "../utils.hpp"
 //#include "../data_structures/geometry.hpp"
 
-
+#if 0
 namespace std {
 template<>
 struct numeric_limits<mpz_class>{
@@ -79,6 +79,15 @@ struct numeric_limits<__gmp_expr<T1, T2>>{
   static const bool radix = 2;
 };
 }
+#endif
+/*
+void fffff() {
+  //const acceleration1d gravity_acceleration_magnitude = mpz(9806650) * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
+const auto aaaaa = mpz(9806650) * (micro*meters);
+const auto bbbbb = aaaaa / (seconds * seconds);
+const auto iiiii = identity(distance_units / (micro*meters));
+const auto ccccc = bbbbb * iiiii;
+}*/
 
 // prevents mpz_class's clever optimizations,
 // so that physical_quantity can handle it better.
@@ -88,17 +97,18 @@ class mpz {
 public:
   mpz(){}
   mpz(mpz_class d):data_(d){}
-  //template<typename T> mpz(T t) : data_(t) {}
+  template<typename T> mpz(T t) : data_(t) {}
 
   explicit operator bool()const { return data_ != 0; }
+  explicit operator float()const { return data_.get_d(); }
+  explicit operator double()const { return data_.get_d(); }
 
-friend inline mpz operator*(mpz a, mpz b)
-{ return mpz(a.data_ * b.data_); }
-friend inline mpz operator/(mpz a, mpz b)
-{ return mpz(a.data_ / b.data_); }
+friend inline mpz operator*(mpz a, mpz b) { return mpz(a.data_ * b.data_); }
+friend inline mpz operator/(mpz a, mpz b) { return mpz(a.data_ / b.data_); }
+friend inline mpz operator%(mpz a, mpz b) { return mpz(a.data_ % b.data_); }
 friend inline mpz operator+(mpz a) { return mpz(+a.data_); }
 friend inline mpz operator-(mpz a) { return mpz(-a.data_); }
-friend inline mpz abs(mpz a) { return a.data_ < 0 ? mpz(-a.data_) : mpz(a.data_); }
+friend inline mpz abs(mpz a) { return abs(a.data_); }
 friend inline mpz operator+(mpz a, mpz b) { return mpz(a.data_ + b.data_); }
 friend inline mpz operator-(mpz a, mpz b) { return mpz(a.data_ - b.data_); }
 
@@ -143,6 +153,9 @@ friend inline mpz isqrt(mpz a)
 friend std::ostream& operator<<(std::ostream& os, mpz a) {
   return os << a;
 }
+friend float get_primitive_float(mpz a) {
+  return a.data_.get_d();
+}
 };
 namespace std {
 template<> struct numeric_limits<mpz> {
@@ -152,7 +165,12 @@ template<> struct numeric_limits<mpz> {
   static const int digits = INT_MAX;
   static const int radix = 2;
 };
-} 
+}
+namespace boost {
+template<> struct make_signed<mpz> { typedef mpz type; };
+// HACK: used because rounding_strategy negative_is_forbidden efficiency hack.
+template<> struct make_unsigned<mpz> { typedef mpz type; };
+}
 
 
 static_assert(get_units<mpz>::is_nonunit_scalar, "erejrqrq");
@@ -590,7 +608,7 @@ class grand_structure_of_lasercake {
       face& f = faces_.back();
       f.base_time_ = 0;
       f.ABC = diffs[i];
-      f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
+      f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_using<mpz>()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
       f.D_acceleration = f.ABC.dot<mpz>(gravity_acceleration);
       f.neighboring_regions_.push_back(0);
@@ -687,9 +705,9 @@ public:
         const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
         vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
         triangle.vertices[i] = gl_data_format::vertex_with_color(
-          get_primitive_int(loc.x/distance_units),
-          get_primitive_int(loc.y/distance_units),
-          get_primitive_int(loc.z/distance_units),
+          get_primitive_float(loc.x/distance_units),
+          get_primitive_float(loc.y/distance_units),
+          get_primitive_float(loc.z/distance_units),
           gl_data_format::color(0xffff0080));
         //std::cerr << vertices[i] << '\n';
       }
@@ -903,7 +921,7 @@ time_type when = 0;
     //doing stuff code here
     
     ++frame;
-    if (moving) when += 1000000000LL*pico*seconds;
+    if (moving) when += int64_t(1000000000LL)*pico*seconds;
     
     
     __attribute__((unused)) int after = SDL_GetTicks();
