@@ -267,6 +267,12 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
     }
   }
 }
+faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
+  if (faux_optional<time_type> result = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1,f2,f3,f4)) {
+    return *result + f1.base_time_;
+  }
+  else return boost::none;
+}
 
 struct region_vertex {
   vertex_idx_type shared_vertex_data_;
@@ -335,7 +341,7 @@ class grand_structure_of_lasercake {
           if (fi2 != fi) {
             face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
             if ((fi2 != neighbor_id_1) && (fi2 != neighbor_id_2)) {
-              if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+              if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                 f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                 if (true /*TODO it's actually in the polygon*/) {
                   if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
@@ -351,7 +357,7 @@ class grand_structure_of_lasercake {
                 // only consider each edge once. (without this if, each one would be considered twice...)
                 if (other_neighbor_id > fi2) {
                   face const& present_other_neighbor = faces_[other_neighbor_id].updated_to_time(f.base_time_);
-                  if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                  if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                     f, present_neighbor_1, present_other_face, present_other_neighbor)) {
                     if (true /*TODO the edges actually overlap*/) {
                       if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
@@ -380,7 +386,7 @@ class grand_structure_of_lasercake {
               if ((neighbor_id_1 > fi2) && (neighbor_id_2 > fi2)) {
                 const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
                 const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
-                if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                   present_other_face, present_neighbor_1, present_neighbor_2, f)) {
                   if (true /*TODO it's actually in the polygon*/) {
                     if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
