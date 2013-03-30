@@ -317,6 +317,71 @@ class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
   std::priority_queue<shared_ptr<event>> next_events_;
+
+  bool bounded_edges_cross__hack(time_type t, face const& e11_old, face const& e12_old, size_t neighbor_idx_in_e11, face const& e21_old, face const& e22_old, size_t neighbor_idx_in_e21)const {
+    const face e11 = e11_old.updated_to_time(t);
+    const face e12 = e12_old.updated_to_time(t);
+    const face e21 = e21_old.updated_to_time(t);
+    const face e22 = e22_old.updated_to_time(t);
+    const vector3<distance> approx_cross_location = approx_loc_of_triple_intersection_of_up_to_date_faces(e11, e12, e21); // should be about the same location for any two
+    for (int i = 0; i < 2; ++i) {
+      face const& e1 = i ? e21 : e11;
+      face const& e2 = i ? e22 : e12;
+      size_t const& neighbor_idx = i ? neighbor_idx_in_e21 : neighbor_idx_in_e11;
+      const size_t next_neighbor_idx = (neighbor_idx + 1) % e1.neighboring_faces_.size();
+      const size_t prev_neighbor_idx = (neighbor_idx+e1.neighboring_faces_.size() - 1) % e1.neighboring_faces_.size();
+
+      const vector3<distance> end1 = approx_loc_of_triple_intersection_of_up_to_date_faces(
+        e1, e2, faces_[e1.neighboring_faces_[prev_neighbor_idx]].updated_to_time(t));
+      const vector3<distance> end2 = approx_loc_of_triple_intersection_of_up_to_date_faces(
+        e1, e2, faces_[e1.neighboring_faces_[next_neighbor_idx]].updated_to_time(t));
+
+      // This edge is okay if the intersection point is between the two ends of the edge.
+      // We would normally have to check only one dimension. Do it for all because sometimes
+      // the edge is parallel to an axis.
+      if ((((end1.x-approx_cross_location.x) * (end2.x-approx_cross_location.x)) < 0)
+        || (((end1.y-approx_cross_location.y) * (end2.y-approx_cross_location.y)) < 0)
+        || (((end1.z-approx_cross_location.z) * (end2.z-approx_cross_location.z)) < 0)) {
+        // ...
+      }
+      else {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool vertex_is_in_bounded_face__hack(time_type t, face const& v1_old, face const& v2_old, face const& v3_old, face const& f_old)const {
+    const face v1 = v1_old.updated_to_time(t);
+    const face v2 = v2_old.updated_to_time(t);
+    const face v3 = v3_old.updated_to_time(t);
+    const face  f =  f_old.updated_to_time(t);
+    
+    // we prefer to eliminate the face that's most foreshortened, i.e. the one for which the normal's value is biggest
+    which_dimension_type dim1 = ((f.ABC(X) > f.ABC(Y)) && (f.ABC(X) > f.ABC(Z))) ? Y : X;
+    which_dimension_type dim2 = ((f.ABC(Z) > f.ABC(Y)) && (f.ABC(Z) > f.ABC(X))) ? Y : Z;
+
+    const vector3<distance> v = approx_loc_of_triple_intersection_of_up_to_date_faces(v1, v2, v3);
+
+    int crosses = 0;
+    
+    for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+      const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
+      const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+      const face_idx_type neighbor_id_3 = f.neighboring_faces_[(i+2)%f.neighboring_faces_.size()];
+      const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(t);
+      const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(t);
+      const face present_neighbor_3 = faces_[neighbor_id_3].updated_to_time(t);
+      const vector3<distance> pv1 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_1, present_neighbor_2);
+      const vector3<distance> pv2 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_2, present_neighbor_3);
+      if ((pv1(dim2) > v(dim2)) != (pv2(dim2) > v(dim2))) {
+        if ((v(dim2)-pv1(dim2))*(pv2(dim1)-v(dim1)) >= (pv2(dim2)-v(dim2))*(v(dim1)-pv1(dim1))) {
+          ++crosses;
+        }
+      }
+    }
+    return (crosses % 2);
+  }
   
   shared_ptr<event> next_event_involving(face_idx_type fi)const {
     // Two kinds of events: Vertex-face collisions and edge-edge collisions.
@@ -343,7 +408,7 @@ class grand_structure_of_lasercake {
             if ((fi2 != neighbor_id_1) && (fi2 != neighbor_id_2)) {
               if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                 f, present_neighbor_1, present_neighbor_2, present_other_face)) {
-                if (true /*TODO it's actually in the polygon*/) {
+                if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                   if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
                     soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi, neighbor_id_1, neighbor_id_2, fi2));
                   }
@@ -352,14 +417,15 @@ class grand_structure_of_lasercake {
             }
             
             // Also catch edge-edge collisions...
-            for (face_idx_type other_neighbor_id : present_other_face.neighboring_faces_) {
+            for (size_t j = 0; j < f.neighboring_faces_.size(); ++j) {
+              const face_idx_type other_neighbor_id = present_other_face.neighboring_faces_[j];
               if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
                 // only consider each edge once. (without this if, each one would be considered twice...)
                 if (other_neighbor_id > fi2) {
                   face const& present_other_neighbor = faces_[other_neighbor_id].updated_to_time(f.base_time_);
                   if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                     f, present_neighbor_1, present_other_face, present_other_neighbor)) {
-                    if (true /*TODO the edges actually overlap*/) {
+                    if (bounded_edges_cross__hack(*collision_time, f, present_neighbor_1, i, present_other_face, present_other_neighbor, j)) {
                       if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
                         soonest_event = shared_ptr<event>(new edge_edge_collision(*collision_time, fi, neighbor_id_1, fi2, other_neighbor_id));
                       }
@@ -388,7 +454,7 @@ class grand_structure_of_lasercake {
                 const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
                 if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                   present_other_face, present_neighbor_1, present_neighbor_2, f)) {
-                  if (true /*TODO it's actually in the polygon*/) {
+                  if (vertex_is_in_bounded_face__hack(*collision_time, present_other_face, present_neighbor_1, present_neighbor_2, f)) {
                     if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
                       soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi2, neighbor_id_1, neighbor_id_2, fi));
                     }
