@@ -55,12 +55,107 @@
 #include <boost/chrono/process_cpu_clocks.hpp>
 #include <boost/chrono/thread_clock.hpp>
 
-
-
+#include <gmpxx.h>
 
 #include "../utils.hpp"
 //#include "../data_structures/geometry.hpp"
 
+
+namespace std {
+template<>
+struct numeric_limits<mpz_class>{
+  static const bool is_specialized = true;
+  static const int digits = INT_MAX;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const bool radix = 2;
+};
+template<typename T1, typename T2>
+struct numeric_limits<__gmp_expr<T1, T2>>{
+  static const bool is_specialized = true;
+  static const int digits = INT_MAX;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const bool radix = 2;
+};
+}
+
+// prevents mpz_class's clever optimizations,
+// so that physical_quantity can handle it better.
+// TODO do better.
+class mpz {
+  mpz_class data_;
+public:
+  mpz(){}
+  mpz(mpz_class d):data_(d){}
+  //template<typename T> mpz(T t) : data_(t) {}
+
+  explicit operator bool()const { return data_ != 0; }
+
+friend inline mpz operator*(mpz a, mpz b)
+{ return mpz(a.data_ * b.data_); }
+friend inline mpz operator/(mpz a, mpz b)
+{ return mpz(a.data_ / b.data_); }
+friend inline mpz operator+(mpz a) { return mpz(+a.data_); }
+friend inline mpz operator-(mpz a) { return mpz(-a.data_); }
+friend inline mpz abs(mpz a) { return a.data_ < 0 ? mpz(-a.data_) : mpz(a.data_); }
+friend inline mpz operator+(mpz a, mpz b) { return mpz(a.data_ + b.data_); }
+friend inline mpz operator-(mpz a, mpz b) { return mpz(a.data_ - b.data_); }
+
+friend inline mpz operator&(mpz a, mpz b) { return mpz(a.data_ & b.data_); }
+friend inline mpz operator|(mpz a, mpz b) { return mpz(a.data_ | b.data_); }
+friend inline mpz operator^(mpz a, mpz b) { return mpz(a.data_ ^ b.data_); }
+friend inline mpz operator~(mpz a) { return mpz(~a); }
+
+friend inline bool operator==(mpz a, mpz b) { return a.data_ == b.data_; }
+friend inline bool operator!=(mpz a, mpz b) { return a.data_ != b.data_; }
+friend inline bool operator<(mpz a, mpz b) { return a.data_ < b.data_; }
+friend inline bool operator>(mpz a, mpz b) { return a.data_ > b.data_; }
+friend inline bool operator>=(mpz a, mpz b) { return a.data_ >= b.data_; }
+friend inline bool operator<=(mpz a, mpz b) { return a.data_ <= b.data_; }
+
+friend inline mpz operator<<(mpz a, uint32_t shift)
+{ return mpz(a.data_ << shift); }
+friend inline mpz operator>>(mpz a, uint32_t shift)
+{ return mpz(a.data_ >> shift); }
+
+friend inline mpz& operator+=(mpz& a, mpz b) { a = a + b; return a; }
+friend inline mpz& operator-=(mpz& a, mpz b) { a = a - b; return a; }
+friend inline mpz& operator*=(mpz& a, mpz b) { a = a * b; return a; }
+friend inline mpz& operator&=(mpz& a, mpz b) { a = a & b; return a; }
+friend inline mpz& operator|=(mpz& a, mpz b) { a = a | b; return a; }
+friend inline mpz& operator^=(mpz& a, mpz b) { a = a ^ b; return a; }
+friend inline mpz& operator<<=(mpz& a, uint32_t shift) { a = a << shift; return a; }
+friend inline mpz& operator>>=(mpz& a, uint32_t shift) { a = a >> shift; return a; }
+
+friend inline mpz& operator++(mpz& a) { ++a.data_; return a; }
+friend inline mpz operator++(mpz& a, int) { mpz old = a; ++a.data_; return old; }
+friend inline mpz& operator--(mpz& a) { --a.data_; return a; }
+friend inline mpz operator--(mpz& a, int) { mpz old = a; ++a.data_; return old; }
+
+//Imagine taking the sqrt of a signed 8 bit value.  Can it fit into 4 bits?
+// sqrt(127) is 11.something, which is less than 15 (unsigned 4bit max) but
+// greater than 7 (signed 4bit max).  So we conservatively leave enough space here.
+friend inline mpz isqrt(mpz a)
+{ return mpz(sqrt(a.data_)); }
+//friend inline int32_t ilog2(mpz a) { return ; }
+
+friend std::ostream& operator<<(std::ostream& os, mpz a) {
+  return os << a;
+}
+};
+namespace std {
+template<> struct numeric_limits<mpz> {
+  static const bool is_specialized = true;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const int digits = INT_MAX;
+  static const int radix = 2;
+};
+} 
+
+
+static_assert(get_units<mpz>::is_nonunit_scalar, "erejrqrq");
 
 namespace YO {
 using boost::shared_ptr;
@@ -141,17 +236,17 @@ void push_wireframe_triangle(
 //128
 typedef typename units_prod<pico_t, seconds_t>::type time_units_t;
 constexpr time_units_t time_units = time_units_t();
-typedef physical_quantity<lint64_t, time_units_t> time_type;
+typedef physical_quantity<mpz, time_units_t> time_type;
 
 typedef typename units_prod<nano_t, meters_t>::type distance_units_t;
 constexpr distance_units_t distance_units = distance_units_t();
-typedef physical_quantity<lint64_t, distance_units_t> distance;
-typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
-typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
+typedef physical_quantity<mpz, distance_units_t> distance;
+typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
+typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
 
 // Standard (Earth-equivalent) gravity: precisely 9.80665 m/s2
-constexpr acceleration1d gravity_acceleration_magnitude = 9806650LL * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
-constexpr vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
+const acceleration1d gravity_acceleration_magnitude = mpz(9806650) * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
+const vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
 
 typedef uint32_t region_idx_type;
 typedef uint32_t face_idx_type;
@@ -175,12 +270,12 @@ struct edge {
 // All faces are triangles.
 struct face {
   time_type base_time_;
-  vector3<lint64_t> ABC;
+  vector3<mpz> ABC;
   distance D;
   velocity1d D_velocity;
   acceleration1d D_acceleration;
   std::vector<face_idx_type> neighboring_faces_;
-  array<region_idx_type, 2> neighboring_regions_;
+  std::vector<region_idx_type> neighboring_regions_;
   face updated_to_time(time_type t)const {
     face result(*this);
     const time_type relative_time = t - base_time_;
@@ -193,11 +288,11 @@ struct face {
   }
 };
 
-lint64_t scalar_triple_product(vector3<lint64_t> v1, vector3<lint64_t> v2, vector3<lint64_t> v3) {
+mpz scalar_triple_product(vector3<mpz> v1, vector3<mpz> v2, vector3<mpz> v3) {
   return v1(X)*v2(Y)*v3(Z) - v1(X)*v3(Y)*v2(Z) + v2(X)*v3(Y)*v1(Z) - v2(X)*v1(Y)*v3(Z) + v3(X)*v1(Y)*v2(Z) - v3(X)*v2(Y)*v1(Z);
 }
 vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
-  lint64_t p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  mpz p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   assert(p != 0);
   return vector3<distance>(
     f1.D * (f2.ABC(1)*f3.ABC(2) - f3.ABC(1)*f2.ABC(2)) + f2.D * (f3.ABC(1)*f1.ABC(2) - f1.ABC(1)*f3.ABC(2)) + f3.D * (f1.ABC(1)*f2.ABC(2) - f2.ABC(1)*f1.ABC(2)),
@@ -206,7 +301,7 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
                  ) / p;
 }
 
-faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(face const& f1, face const& f2, face const& f3, face const& f4) {
+faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
   // When the 4x4 determinant is 0.
   // That's
   // + D1 * scalar_triple_product(f2.ABC, f3.ABC, f4.ABC)
@@ -215,10 +310,10 @@ faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(f
   // - D4 * scalar_triple_product(f1.ABC, f2.ABC, f3.ABC)
   // But Dn is Dn + dDn*t + .5ddDn*t^2
   // so
-  const lint64_t t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
-  const lint64_t t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
-  const lint64_t t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
-  const lint64_t t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  const mpz t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
+  const mpz t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
+  const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
+  const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   // in at^2 + bt + c = 0
   acceleration1d a_times_2 = f1.D_acceleration*t1 + f2.D_acceleration*t2 + f3.D_acceleration*t3 + f4.D_acceleration*t4;
   velocity1d     b         = f1.D_velocity    *t1 + f2.D_velocity    *t2 + f3.D_velocity    *t3 + f4.D_velocity    *t4;
@@ -249,7 +344,7 @@ faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(f
       // return divide(-c * identity(time_units / seconds), b, strat);
       // but overflow stuff
       // also see below
-      return divide(-c * lint64_t(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+      return divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
     }
     else {
       if (a_times_2 < 0) {
@@ -260,12 +355,18 @@ faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(f
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = isqrt(discriminant);
       const velocity1d  lesser_numerator = -b - sqrt_disc;
-      if ( lesser_numerator >= 0) return divide(lesser_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if ( lesser_numerator >= 0) return divide(lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
       const velocity1d greater_numerator = -b + sqrt_disc;
-      if (greater_numerator >= 0) return divide(greater_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if (greater_numerator >= 0) return divide(greater_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
       return boost::none;
     }
   }
+}
+faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
+  if (faux_optional<time_type> result = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1,f2,f3,f4)) {
+    return *result + f1.base_time_;
+  }
+  else return boost::none;
 }
 
 struct region_vertex {
@@ -281,13 +382,26 @@ struct region {
 struct event {
   virtual ~event(){}
   time_type when_event_occurs_;
+  event(time_type t):when_event_occurs_(t){}
 };
 struct collision : public event {
+  collision(time_type t):event(t){}
 };
 struct vertex_face_collision : public collision {
-  //This includes polyhedra that involute (hopefully)
+  face_idx_type vertex_face_1_;
+  face_idx_type vertex_face_2_;
+  face_idx_type vertex_face_3_;
+  face_idx_type struck_face_;
+  vertex_face_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
+    collision(t),vertex_face_1_(f1),vertex_face_2_(f2),vertex_face_3_(f3),struck_face_(f4){}
 };
 struct edge_edge_collision : public collision {
+  face_idx_type edge_1_face_1_;
+  face_idx_type edge_1_face_2_;
+  face_idx_type edge_2_face_1_;
+  face_idx_type edge_2_face_2_;
+  edge_edge_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
+    collision(t),edge_1_face_1_(f1),edge_1_face_2_(f2),edge_2_face_1_(f3),edge_2_face_2_(f4){}
 };
 
 
@@ -297,16 +411,175 @@ struct edge_edge_collision : public collision {
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
+  std::priority_queue<shared_ptr<event>> next_events_;
 
+  bool bounded_edges_cross__hack(time_type t, face const& e11_old, face const& e12_old, size_t neighbor_idx_in_e11, face const& e21_old, face const& e22_old, size_t neighbor_idx_in_e21)const {
+    const face e11 = e11_old.updated_to_time(t);
+    const face e12 = e12_old.updated_to_time(t);
+    const face e21 = e21_old.updated_to_time(t);
+    const face e22 = e22_old.updated_to_time(t);
+    const vector3<distance> approx_cross_location = approx_loc_of_triple_intersection_of_up_to_date_faces(e11, e12, e21); // should be about the same location for any two
+    for (int i = 0; i < 2; ++i) {
+      face const& e1 = i ? e21 : e11;
+      face const& e2 = i ? e22 : e12;
+      size_t const& neighbor_idx = i ? neighbor_idx_in_e21 : neighbor_idx_in_e11;
+      const size_t next_neighbor_idx = (neighbor_idx + 1) % e1.neighboring_faces_.size();
+      const size_t prev_neighbor_idx = (neighbor_idx+e1.neighboring_faces_.size() - 1) % e1.neighboring_faces_.size();
+
+      const vector3<distance> end1 = approx_loc_of_triple_intersection_of_up_to_date_faces(
+        e1, e2, faces_[e1.neighboring_faces_[prev_neighbor_idx]].updated_to_time(t));
+      const vector3<distance> end2 = approx_loc_of_triple_intersection_of_up_to_date_faces(
+        e1, e2, faces_[e1.neighboring_faces_[next_neighbor_idx]].updated_to_time(t));
+
+      // This edge is okay if the intersection point is between the two ends of the edge.
+      // We would normally have to check only one dimension. Do it for all because sometimes
+      // the edge is parallel to an axis.
+      if ((((end1.x-approx_cross_location.x) * (end2.x-approx_cross_location.x)) < 0)
+        || (((end1.y-approx_cross_location.y) * (end2.y-approx_cross_location.y)) < 0)
+        || (((end1.z-approx_cross_location.z) * (end2.z-approx_cross_location.z)) < 0)) {
+        // ...
+      }
+      else {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool vertex_is_in_bounded_face__hack(time_type t, face const& v1_old, face const& v2_old, face const& v3_old, face const& f_old)const {
+    const face v1 = v1_old.updated_to_time(t);
+    const face v2 = v2_old.updated_to_time(t);
+    const face v3 = v3_old.updated_to_time(t);
+    const face  f =  f_old.updated_to_time(t);
+    
+    // we prefer to eliminate the face that's most foreshortened, i.e. the one for which the normal's value is biggest
+    which_dimension_type dim1 = ((f.ABC(X) > f.ABC(Y)) && (f.ABC(X) > f.ABC(Z))) ? Y : X;
+    which_dimension_type dim2 = ((f.ABC(Z) > f.ABC(Y)) && (f.ABC(Z) > f.ABC(X))) ? Y : Z;
+
+    const vector3<distance> v = approx_loc_of_triple_intersection_of_up_to_date_faces(v1, v2, v3);
+
+    int crosses = 0;
+    
+    for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+      const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
+      const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+      const face_idx_type neighbor_id_3 = f.neighboring_faces_[(i+2)%f.neighboring_faces_.size()];
+      const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(t);
+      const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(t);
+      const face present_neighbor_3 = faces_[neighbor_id_3].updated_to_time(t);
+      const vector3<distance> pv1 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_1, present_neighbor_2);
+      const vector3<distance> pv2 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_2, present_neighbor_3);
+      if ((pv1(dim2) > v(dim2)) != (pv2(dim2) > v(dim2))) {
+        if ((v(dim2)-pv1(dim2))*(pv2(dim1)-v(dim1)) >= (pv2(dim2)-v(dim2))*(v(dim1)-pv1(dim1))) {
+          ++crosses;
+        }
+      }
+    }
+    return (crosses % 2);
+  }
+  
+  shared_ptr<event> next_event_involving(face_idx_type fi)const {
+    // Two kinds of events: Vertex-face collisions and edge-edge collisions.
+    // From one face, that's three kinds (f being part of the vertex and f being the face.)
+    // Also there's an arguable three extra categories depending on whether the face
+    // neighbors zero, one, two, or three of the faces establishing the vertex.
+    // TODO: try to de-duplicate this "iterate through the present vertices" system which is used elsewhere in the code.
+    face const& f = faces_[fi];
+
+    shared_ptr<event> soonest_event;
+    
+    for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+      const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
+      const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+      const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
+      const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+
+      for (region_idx_type ri : f.neighboring_regions_) {
+        region const& r = regions_[ri];
+        for (face_idx_type fi2 : r.faces_) {
+          // A vertex doesn't collide with one of its own faces
+          if (fi2 != fi) {
+            face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+            if ((fi2 != neighbor_id_1) && (fi2 != neighbor_id_2)) {
+              if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                f, present_neighbor_1, present_neighbor_2, present_other_face)) {
+                if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
+                  if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                    soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi, neighbor_id_1, neighbor_id_2, fi2));
+                  }
+                }
+              }
+            }
+            
+            // Also catch edge-edge collisions...
+            for (size_t j = 0; j < f.neighboring_faces_.size(); ++j) {
+              const face_idx_type other_neighbor_id = present_other_face.neighboring_faces_[j];
+              if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
+                // only consider each edge once. (without this if, each one would be considered twice...)
+                if (other_neighbor_id > fi2) {
+                  face const& present_other_neighbor = faces_[other_neighbor_id].updated_to_time(f.base_time_);
+                  if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                    f, present_neighbor_1, present_other_face, present_other_neighbor)) {
+                    if (bounded_edges_cross__hack(*collision_time, f, present_neighbor_1, i, present_other_face, present_other_neighbor, j)) {
+                      if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                        soonest_event = shared_ptr<event>(new edge_edge_collision(*collision_time, fi, neighbor_id_1, fi2, other_neighbor_id));
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (region_idx_type ri : f.neighboring_regions_) {
+      region const& r = regions_[ri];
+      for (face_idx_type fi2 : r.faces_) {
+        if (fi2 != fi) {
+          face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+          for (size_t i = 0; i < present_other_face.neighboring_faces_.size(); ++i) {
+            const face_idx_type neighbor_id_1 = present_other_face.neighboring_faces_[i];
+            const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+            // a vertex doesn't collide with one of its own faces
+            if ((neighbor_id_1 != fi) && (neighbor_id_2 != fi)) {
+              // only consider each vertex once. (without this if, each one would be considered three times...)
+              if ((neighbor_id_1 > fi2) && (neighbor_id_2 > fi2)) {
+                const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
+                const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+                if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                  present_other_face, present_neighbor_1, present_neighbor_2, f)) {
+                  if (vertex_is_in_bounded_face__hack(*collision_time, present_other_face, present_neighbor_1, present_neighbor_2, f)) {
+                    if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                      soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi2, neighbor_id_1, neighbor_id_2, fi));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return soonest_event;
+  }
+
+  void insert_next_event_involving(face_idx_type fi) {
+    if (shared_ptr<event> soonest_event = next_event_involving(fi)) {
+      next_events_.push(soonest_event);
+    }
+  }
+  
   void hack_insert_rock(vector3<distance> loc) {
     face_idx_type first_face_idx = faces_.size();
-    face_idx_type region_idx = regions_.size();
+    region_idx_type region_idx = regions_.size();
 
-    static const vector3<lint64_t> diffs[4] = {
-      vector3<lint64_t>(0, 0, 100),
-      vector3<lint64_t>(0, 83, -45),
-      vector3<lint64_t>(60, -40, -50),
-      vector3<lint64_t>(-62, -42, -43)
+    static const vector3<mpz> diffs[4] = {
+      vector3<mpz>(0, 0, 100),
+      vector3<mpz>(0, 83, -45),
+      vector3<mpz>(60, -40, -50),
+      vector3<mpz>(-62, -42, -43)
     };
 
     regions_.push_back(region());
@@ -317,11 +590,11 @@ class grand_structure_of_lasercake {
       face& f = faces_.back();
       f.base_time_ = 0;
       f.ABC = diffs[i];
-      f.D = loc.dot<lint64_t>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
+      f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
-      f.D_acceleration = f.ABC.dot<lint64_t>(gravity_acceleration);
-      f.neighboring_regions_[0] = 0;
-      f.neighboring_regions_[1] = region_idx;
+      f.D_acceleration = f.ABC.dot<mpz>(gravity_acceleration);
+      f.neighboring_regions_.push_back(0);
+      f.neighboring_regions_.push_back(region_idx);
       r.faces_.push_back(first_face_idx + i);
       air.faces_.push_back(first_face_idx + i);
       //r.vertices_.push_back(first_vertex_idx + i);
@@ -334,9 +607,14 @@ class grand_structure_of_lasercake {
 public:
   grand_structure_of_lasercake() {
     regions_.push_back(region()); // the air
-    hack_insert_rock(vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(2, 14, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(15, 14, 21)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(2, 7, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(2, 14, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(15, 14, 21)*meters*identity(distance_units/meters));
+
+    // TODO don't duplicate events here.
+    for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
+      insert_next_event_involving(fi);
+    }
     
     this->debug_check_consistency();
   }
@@ -370,7 +648,13 @@ public:
       region const& r = regions_[i];
       for(face_idx_type fi : r.faces_) {
         face const& f = faces_[fi];
-        assert((f.neighboring_regions_[0] == i) || (f.neighboring_regions_[1] == i));
+        bool found_reference = false;
+        for (region_idx_type ri : f.neighboring_regions_) {
+          if (ri == i) {
+            found_reference = true;
+          }
+        }
+        assert(found_reference);
       }
     }
     for(size_t i = 0; i != faces_.size(); ++i) {
@@ -389,7 +673,6 @@ public:
     // TODO: check stuff about edges as well.
   }
   // TODO thing-ness e.g. robots
-  std::priority_queue<shared_ptr<event>> next_events_;
   //void player_input_becomes(time_type when, );
   //void insert_event(time_type when, );
   gl_triangles/*triangles*/ display(time_type when, vector3<distance> where) {
@@ -416,6 +699,11 @@ public:
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
       triangles);
     return triangles;
+  }
+
+  time_type time_of_next_event()const {
+    if (next_events_.empty()) return 0;
+    return next_events_.top()->when_event_occurs_;
   }
 private:
   /*
@@ -586,29 +874,7 @@ time_type when = 0;
         case SDL_KEYDOWN:
           if(event.key.keysym.sym == SDLK_p) ++p_mode;
           if(event.key.keysym.sym == SDLK_m) moving = !moving;
-          /*
-          if(event.key.keysym.sym == SDLK_z) insert_objects ++;
-          if(event.key.keysym.sym == SDLK_x) insert_objects += 50;
-          if(event.key.keysym.sym == SDLK_c) insert_objects += 2500;
-          if(event.key.keysym.sym == SDLK_a) do_2d_test_scenario(root);
-          if(event.key.keysym.sym == SDLK_s) do_3d_test_scenario(root3d);
-          //if(event.key.keysym.sym == SDLK_z) draw_poly = !draw_poly;*/
-          //if(event.key.keysym.sym == SDLK_x) draw_normals = !draw_normals;
-          //if(event.key.keysym.sym == SDLK_c) draw_endp = !draw_endp;
-          //if(event.key.keysym.sym == SDLK_v) draw_coll_stuff = !draw_coll_stuff;
-          //if(event.key.keysym.sym == SDLK_b) use_foo1 = !use_foo1;
-          //if(event.key.keysym.sym == SDLK_q) ++velocity[X];
-          //if(event.key.keysym.sym == SDLK_a) --velocity[X];
-          //if(event.key.keysym.sym == SDLK_w) ++velocity[Y];
-          //if(event.key.keysym.sym == SDLK_s) --velocity[Y];
-          //if(event.key.keysym.sym == SDLK_e) ++velocity[Z];
-          //if(event.key.keysym.sym == SDLK_d) --velocity[Z];
-          //if(event.key.keysym.sym == SDLK_r) obstacle.translate(vector3<geometry_int_type>(1,0,0));
-          //if(event.key.keysym.sym == SDLK_f) obstacle.translate(vector3<geometry_int_type>(-1,0,0));
-          //if(event.key.keysym.sym == SDLK_t) obstacle.translate(vector3<geometry_int_type>(0,1,0));
-          //if(event.key.keysym.sym == SDLK_g) obstacle.translate(vector3<geometry_int_type>(0,-1,0));
-          //if(event.key.keysym.sym == SDLK_y) obstacle.translate(vector3<geometry_int_type>(0,0,1));
-          //if(event.key.keysym.sym == SDLK_h) obstacle.translate(vector3<geometry_int_type>(0,0,-1));
+          if(event.key.keysym.sym == SDLK_e) when = simulated_world.time_of_next_event();
           //if(event.key.keysym.sym == SDLK_r) ++view_dist;
           //if(event.key.keysym.sym == SDLK_f) --view_dist;
           if(event.key.keysym.sym != SDLK_ESCAPE)break;
