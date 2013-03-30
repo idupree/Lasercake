@@ -206,7 +206,7 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
                  ) / p;
 }
 
-faux_optional<time_type> how_long_from_now_will_up_to_date_faces_be_coincident(face const& f1, face const& f2, face const& f3, face const& f4) {
+faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
   // When the 4x4 determinant is 0.
   // That's
   // + D1 * scalar_triple_product(f2.ABC, f3.ABC, f4.ABC)
