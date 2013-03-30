@@ -333,9 +333,9 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
   const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   // in at^2 + bt + c = 0
-  acceleration1d a_times_2 = f1.D_acceleration*t1 + f2.D_acceleration*t2 + f3.D_acceleration*t3 + f4.D_acceleration*t4;
-  velocity1d     b         = f1.D_velocity    *t1 + f2.D_velocity    *t2 + f3.D_velocity    *t3 + f4.D_velocity    *t4;
-  distance       c         = f1.D             *t1 + f2.D             *t2 + f3.D             *t3 + f4.D             *t4;
+  acceleration1d a_times_2 = f1.D_acceleration*t1 - f2.D_acceleration*t2 + f3.D_acceleration*t3 - f4.D_acceleration*t4;
+  velocity1d     b         = f1.D_velocity    *t1 - f2.D_velocity    *t2 + f3.D_velocity    *t3 - f4.D_velocity    *t4;
+  distance       c         = f1.D             *t1 - f2.D             *t2 + f3.D             *t3 - f4.D             *t4;
   
   // (-b +/- sqrt(b^2 - 2(a_times_2)c)) / a_times_2
   const auto discriminant = b*b - a_times_2*2*c;
@@ -346,10 +346,12 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
     const rounding_strategy<round_down, negative_is_forbidden> strat;
     if (a_times_2 == 0) {
       if (b == 0) {
-        // Eww. A constant. They're either ALWAYS intersecting (c == 0) or NEVER (c != 0).
+        // Eww. A constant. They're either ALWAYS intersecting or NEVER.
         if (c == 0) {
-          assert(false); // I don't think we can handle this case.
-          return time_type(0);
+          // Uhh... apparently sometimes c=0 can occur when they're never intersecting, too.
+          // I don't really know. Returning none here is techincally a false-negative sometimes.
+          // But probably only in border cases.
+          return boost::none;
         }
         else return boost::none;
       }
@@ -436,7 +438,7 @@ class grand_structure_of_lasercake {
     const face e12 = e12_old.updated_to_time(t);
     const face e21 = e21_old.updated_to_time(t);
     const face e22 = e22_old.updated_to_time(t);
-    const vector3<distance> approx_cross_location = approx_loc_of_triple_intersection_of_up_to_date_faces(e11, e12, e21); // should be about the same location for any two
+    const vector3<distance> approx_cross_location = approx_loc_of_triple_intersection_of_up_to_date_faces(e11, e12, e21); // should be about the same location for any three
     for (int i = 0; i < 2; ++i) {
       face const& e1 = i ? e21 : e11;
       face const& e2 = i ? e22 : e12;
@@ -516,9 +518,9 @@ class grand_structure_of_lasercake {
         region const& r = regions_[ri];
         for (face_idx_type fi2 : r.faces_) {
           // A vertex doesn't collide with one of its own faces
-          if (fi2 != fi) {
+          if ((fi2 != fi) && (fi2 != neighbor_id_1)) {
             face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
-            if ((fi2 != neighbor_id_1) && (fi2 != neighbor_id_2)) {
+            if (fi2 != neighbor_id_2) {
               if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                 f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                 if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
