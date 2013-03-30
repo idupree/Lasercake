@@ -300,7 +300,7 @@ class grand_structure_of_lasercake {
 
   void hack_insert_rock(vector3<distance> loc) {
     face_idx_type first_face_idx = faces_.size();
-    face_idx_type region_idx = regions_.size();
+    region_idx_type region_idx = regions_.size();
 
     static const vector3<lint64_t> diffs[4] = {
       vector3<lint64_t>(0, 0, 100),
