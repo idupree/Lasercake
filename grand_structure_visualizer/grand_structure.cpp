@@ -319,6 +319,7 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
                  ) / p;
 }
 
+// TODO : What about the cases where two of the planes are parallel? That's legit (handle them separately? they're easier)
 faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
   // When the 4x4 determinant is 0.
   // That's
@@ -532,7 +533,7 @@ class grand_structure_of_lasercake {
             }
             
             // Also catch edge-edge collisions...
-            for (size_t j = 0; j < f.neighboring_faces_.size(); ++j) {
+            for (size_t j = 0; j < present_other_face.neighboring_faces_.size(); ++j) {
               const face_idx_type other_neighbor_id = present_other_face.neighboring_faces_[j];
               if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
                 // only consider each edge once. (without this if, each one would be considered twice...)
@@ -560,7 +561,7 @@ class grand_structure_of_lasercake {
           face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
           for (size_t i = 0; i < present_other_face.neighboring_faces_.size(); ++i) {
             const face_idx_type neighbor_id_1 = present_other_face.neighboring_faces_[i];
-            const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+            const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%present_other_face.neighboring_faces_.size()];
             // a vertex doesn't collide with one of its own faces
             if ((neighbor_id_1 != fi) && (neighbor_id_2 != fi)) {
               // only consider each vertex once. (without this if, each one would be considered three times...)
@@ -596,10 +597,10 @@ class grand_structure_of_lasercake {
     region_idx_type region_idx = regions_.size();
 
     static const vector3<mpz> diffs[4] = {
-      vector3<mpz>(0, 0, 100),
-      vector3<mpz>(0, 83, -45),
-      vector3<mpz>(60, -40, -50),
-      vector3<mpz>(-62, -42, -43)
+      vector3<mpz>(0, 0, 10000),
+      vector3<mpz>(0, 8300, -4500),
+      vector3<mpz>(6000, -4000, -5000),
+      vector3<mpz>(-6200, -4200, -4300)
     };
 
     regions_.push_back(region());
@@ -609,7 +610,7 @@ class grand_structure_of_lasercake {
       faces_.push_back(face());
       face& f = faces_.back();
       f.base_time_ = 0;
-      f.ABC = diffs[i];
+      f.ABC = diffs[i] + vector3<mpz>(first_face_idx+1, first_face_idx+1, first_face_idx+1);
       f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_using<mpz>()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
       f.D_acceleration = f.ABC.dot<mpz>(gravity_acceleration);
@@ -623,6 +624,31 @@ class grand_structure_of_lasercake {
       }
     }
   }
+  void hack_insert_fixed_cube(vector3<distance> loc) {
+    face_idx_type first_face_idx = faces_.size();
+    region_idx_type region_idx = regions_.size();
+    regions_.push_back(region());
+    region& air = regions_[0];
+    region& r = regions_.back();
+    for (int i = 0; i < 6; ++i) {
+      faces_.push_back(face());
+      face& f = faces_.back();
+      f.base_time_ = 0;
+      f.ABC = vector3<mpz>(cardinal_direction_vectors[i]);
+      f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_using<mpz>()*1000*(centi*meters)*identity(distance_units/(centi*meters));
+      f.D_velocity = 0;
+      f.D_acceleration = 0;
+      f.neighboring_regions_.push_back(0);
+      f.neighboring_regions_.push_back(region_idx);
+      r.faces_.push_back(first_face_idx + i);
+      air.faces_.push_back(first_face_idx + i);
+      //r.vertices_.push_back(first_vertex_idx + i);
+      for (int j = 0; j < 6; ++j) {
+        // Hack - relying on the order of the cardinal directions
+        if ((j % 3) != (i % 3)) f.neighboring_faces_.push_back(first_face_idx + j);
+      }
+    }
+  }
   
 public:
   grand_structure_of_lasercake() {
@@ -630,6 +656,7 @@ public:
     hack_insert_rock(vector3<mpz>(2, 7, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(2, 14, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(15, 14, 21)*meters*identity(distance_units/meters));
+    hack_insert_fixed_cube(vector3<mpz>(15, 14, -10)*meters*identity(distance_units/meters));
 
     // TODO don't duplicate events here.
     for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
@@ -702,10 +729,10 @@ public:
       gl_triangle triangle;
       const face present_face = f.updated_to_time(when);
       for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
-        size_t j = (i+1)%f.neighboring_faces_.size();
+        const size_t j = (i+1)%f.neighboring_faces_.size();
         const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(when);
         const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
-        vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
+        const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
         triangle.vertices[i] = gl_data_format::vertex_with_color(
           get_primitive_float(loc.x/distance_units),
           get_primitive_float(loc.y/distance_units),
