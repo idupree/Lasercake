@@ -449,6 +449,11 @@ public:
     hack_insert_rock(vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<lint64_t>(2, 14, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<lint64_t>(15, 14, 21)*meters*identity(distance_units/meters));
+
+    // TODO don't duplicate events here.
+    for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
+      insert_next_event_involving(fi);
+    }
     
     this->debug_check_consistency();
   }
@@ -533,6 +538,11 @@ public:
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
       triangles);
     return triangles;
+  }
+
+  time_type time_of_next_event()const {
+    if (next_events_.empty()) return 0;
+    return next_events_.top()->when_event_occurs_;
   }
 private:
   /*
@@ -703,29 +713,7 @@ time_type when = 0;
         case SDL_KEYDOWN:
           if(event.key.keysym.sym == SDLK_p) ++p_mode;
           if(event.key.keysym.sym == SDLK_m) moving = !moving;
-          /*
-          if(event.key.keysym.sym == SDLK_z) insert_objects ++;
-          if(event.key.keysym.sym == SDLK_x) insert_objects += 50;
-          if(event.key.keysym.sym == SDLK_c) insert_objects += 2500;
-          if(event.key.keysym.sym == SDLK_a) do_2d_test_scenario(root);
-          if(event.key.keysym.sym == SDLK_s) do_3d_test_scenario(root3d);
-          //if(event.key.keysym.sym == SDLK_z) draw_poly = !draw_poly;*/
-          //if(event.key.keysym.sym == SDLK_x) draw_normals = !draw_normals;
-          //if(event.key.keysym.sym == SDLK_c) draw_endp = !draw_endp;
-          //if(event.key.keysym.sym == SDLK_v) draw_coll_stuff = !draw_coll_stuff;
-          //if(event.key.keysym.sym == SDLK_b) use_foo1 = !use_foo1;
-          //if(event.key.keysym.sym == SDLK_q) ++velocity[X];
-          //if(event.key.keysym.sym == SDLK_a) --velocity[X];
-          //if(event.key.keysym.sym == SDLK_w) ++velocity[Y];
-          //if(event.key.keysym.sym == SDLK_s) --velocity[Y];
-          //if(event.key.keysym.sym == SDLK_e) ++velocity[Z];
-          //if(event.key.keysym.sym == SDLK_d) --velocity[Z];
-          //if(event.key.keysym.sym == SDLK_r) obstacle.translate(vector3<geometry_int_type>(1,0,0));
-          //if(event.key.keysym.sym == SDLK_f) obstacle.translate(vector3<geometry_int_type>(-1,0,0));
-          //if(event.key.keysym.sym == SDLK_t) obstacle.translate(vector3<geometry_int_type>(0,1,0));
-          //if(event.key.keysym.sym == SDLK_g) obstacle.translate(vector3<geometry_int_type>(0,-1,0));
-          //if(event.key.keysym.sym == SDLK_y) obstacle.translate(vector3<geometry_int_type>(0,0,1));
-          //if(event.key.keysym.sym == SDLK_h) obstacle.translate(vector3<geometry_int_type>(0,0,-1));
+          if(event.key.keysym.sym == SDLK_e) when = simulated_world.time_of_next_event();
           //if(event.key.keysym.sym == SDLK_r) ++view_dist;
           //if(event.key.keysym.sym == SDLK_f) --view_dist;
           if(event.key.keysym.sym != SDLK_ESCAPE)break;
