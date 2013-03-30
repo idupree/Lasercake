@@ -179,18 +179,21 @@ namespace YO {
 using boost::shared_ptr;
 
 
+struct gl_polygon {
+  std::vector<gl_data_format::vertex_with_color> vertices_;
+};
 // we want to sort threevertices together: triangles: not individual vertices
 struct gl_triangle {
-  array<gl_data_format::vertex_with_color, 3> vertices;
+  array<gl_data_format::vertex_with_color, 3> vertices_;
 };
 typedef std::vector<gl_triangle> gl_triangles;
 glm::vec3 v_to_gv(gl_data_format::vertex v) {
   return glm::vec3(v.x, v.y, v.z);
 }
 float gl_triangle_distance_order(glm::vec3 from, gl_triangle const& triangle) {
-  return glm::distance(from, v_to_gv(triangle.vertices[0].v))
-       + glm::distance(from, v_to_gv(triangle.vertices[1].v))
-       + glm::distance(from, v_to_gv(triangle.vertices[2].v));
+  return glm::distance(from, v_to_gv(triangle.vertices_[0].v))
+       + glm::distance(from, v_to_gv(triangle.vertices_[1].v))
+       + glm::distance(from, v_to_gv(triangle.vertices_[2].v));
 }
 void sort_gl_triangles_near_to_far(glm::vec3 view_center, gl_triangles& ts) {
   std::sort(ts.begin(), ts.end(), [view_center](gl_triangle const& t1, gl_triangle const& t2) {
@@ -220,10 +223,10 @@ gl_data_format::vertex_with_color ceethrough(gl_data_format::vertex_with_color v
   return vc;
 }
 // makes it gradually translucent towards the centre.
-void push_wireframe_triangle(
+void push_wireframe_polygon(
       gl_triangles& coll, GLfloat width,
-      gl_triangle triangle) {
-  const auto vs = triangle.vertices;
+      gl_polygon polygon) {
+  const auto vs = polygon.vertices_;
   const int num_vertices = vs.size();
   const int last = num_vertices - 1;
   caller_correct_if(num_vertices >= 3, "that's not a polygon");
@@ -722,25 +725,25 @@ public:
   // TODO thing-ness e.g. robots
   //void player_input_becomes(time_type when, );
   //void insert_event(time_type when, );
-  gl_triangles/*triangles*/ display(time_type when, vector3<distance> where) {
+  gl_triangles display(time_type when, vector3<distance> where) {
     //assert(when < next_event_time)
     gl_triangles triangles;
     for(face const& f : faces_) {
-      gl_triangle triangle;
+      gl_polygon polygon;
       const face present_face = f.updated_to_time(when);
       for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
         const size_t j = (i+1)%f.neighboring_faces_.size();
         const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(when);
         const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
         const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
-        triangle.vertices[i] = gl_data_format::vertex_with_color(
+        polygon.vertices_.push_back(gl_data_format::vertex_with_color(
           get_primitive_float(loc.x/distance_units),
           get_primitive_float(loc.y/distance_units),
           get_primitive_float(loc.z/distance_units),
-          gl_data_format::color(0xffff0080));
+          gl_data_format::color(0xffff0080)));
         //std::cerr << vertices[i] << '\n';
       }
-      push_wireframe_triangle(triangles, 0.5e9, triangle);
+      push_wireframe_polygon(triangles, 0.5e9, polygon);
     }
     sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
