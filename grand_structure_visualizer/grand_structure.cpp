@@ -281,13 +281,26 @@ struct region {
 struct event {
   virtual ~event(){}
   time_type when_event_occurs_;
+  event(time_type t):when_event_occurs_(t){}
 };
 struct collision : public event {
+  collision(time_type t):event(t){}
 };
 struct vertex_face_collision : public collision {
-  //This includes polyhedra that involute (hopefully)
+  face_idx_type vertex_face_1_;
+  face_idx_type vertex_face_2_;
+  face_idx_type vertex_face_3_;
+  face_idx_type struck_face_;
+  vertex_face_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
+    collision(t),vertex_face_1_(f1),vertex_face_2_(f2),vertex_face_3_(f3),struck_face_(f4){}
 };
 struct edge_edge_collision : public collision {
+  face_idx_type edge_1_face_1_;
+  face_idx_type edge_1_face_2_;
+  face_idx_type edge_2_face_1_;
+  face_idx_type edge_2_face_2_;
+  edge_edge_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
+    collision(t),edge_1_face_1_(f1),edge_1_face_2_(f2),edge_2_face_1_(f3),edge_2_face_2_(f4){}
 };
 
 
@@ -297,7 +310,100 @@ struct edge_edge_collision : public collision {
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
+  std::priority_queue<shared_ptr<event>> next_events_;
+  
+  shared_ptr<event> next_event_involving(face_idx_type fi)const {
+    // Two kinds of events: Vertex-face collisions and edge-edge collisions.
+    // From one face, that's three kinds (f being part of the vertex and f being the face.)
+    // Also there's an arguable three extra categories depending on whether the face
+    // neighbors zero, one, two, or three of the faces establishing the vertex.
+    // TODO: try to de-duplicate this "iterate through the present vertices" system which is used elsewhere in the code.
+    face const& f = faces_[fi];
 
+    shared_ptr<event> soonest_event;
+    
+    for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+      const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
+      const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+      const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
+      const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+
+      for (region_idx_type ri : f.neighboring_regions_) {
+        region const& r = regions_[ri];
+        for (face_idx_type fi2 : r.faces_) {
+          // A vertex doesn't collide with one of its own faces
+          if (fi2 != fi) {
+            face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+            if ((fi2 != neighbor_id_1) && (fi2 != neighbor_id_2)) {
+              if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                f, present_neighbor_1, present_neighbor_2, present_other_face)) {
+                if (true /*TODO it's actually in the polygon*/) {
+                  if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                    soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi, neighbor_id_1, neighbor_id_2, fi2));
+                  }
+                }
+              }
+            }
+            
+            // Also catch edge-edge collisions...
+            for (face_idx_type other_neighbor_id : present_other_face.neighboring_faces_) {
+              if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
+                // only consider each edge once. (without this if, each one would be considered twice...)
+                if (other_neighbor_id > fi2) {
+                  face const& present_other_neighbor = faces_[other_neighbor_id].updated_to_time(f.base_time_);
+                  if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                    f, present_neighbor_1, present_other_face, present_other_neighbor)) {
+                    if (true /*TODO the edges actually overlap*/) {
+                      if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                        soonest_event = shared_ptr<event>(new edge_edge_collision(*collision_time, fi, neighbor_id_1, fi2, other_neighbor_id));
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (region_idx_type ri : f.neighboring_regions_) {
+      region const& r = regions_[ri];
+      for (face_idx_type fi2 : r.faces_) {
+        if (fi2 != fi) {
+          face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+          for (size_t i = 0; i < present_other_face.neighboring_faces_.size(); ++i) {
+            const face_idx_type neighbor_id_1 = present_other_face.neighboring_faces_[i];
+            const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+            // a vertex doesn't collide with one of its own faces
+            if ((neighbor_id_1 != fi) && (neighbor_id_2 != fi)) {
+              // only consider each vertex once. (without this if, each one would be considered three times...)
+              if ((neighbor_id_1 > fi2) && (neighbor_id_2 > fi2)) {
+                const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
+                const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+                if (faux_optional<time_type> collision_time = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                  present_other_face, present_neighbor_1, present_neighbor_2, f)) {
+                  if (true /*TODO it's actually in the polygon*/) {
+                    if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
+                      soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi2, neighbor_id_1, neighbor_id_2, fi));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return soonest_event;
+  }
+
+  void insert_next_event_involving(face_idx_type fi) {
+    if (shared_ptr<event> soonest_event = next_event_involving(fi)) {
+      next_events_.push(soonest_event);
+    }
+  }
+  
   void hack_insert_rock(vector3<distance> loc) {
     face_idx_type first_face_idx = faces_.size();
     region_idx_type region_idx = regions_.size();
@@ -395,7 +501,6 @@ public:
     // TODO: check stuff about edges as well.
   }
   // TODO thing-ness e.g. robots
-  std::priority_queue<shared_ptr<event>> next_events_;
   //void player_input_becomes(time_type when, );
   //void insert_event(time_type when, );
   gl_triangles/*triangles*/ display(time_type when, vector3<distance> where) {
