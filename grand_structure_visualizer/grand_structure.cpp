@@ -55,12 +55,107 @@
 #include <boost/chrono/process_cpu_clocks.hpp>
 #include <boost/chrono/thread_clock.hpp>
 
-
-
+#include <gmpxx.h>
 
 #include "../utils.hpp"
 //#include "../data_structures/geometry.hpp"
 
+
+namespace std {
+template<>
+struct numeric_limits<mpz_class>{
+  static const bool is_specialized = true;
+  static const int digits = INT_MAX;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const bool radix = 2;
+};
+template<typename T1, typename T2>
+struct numeric_limits<__gmp_expr<T1, T2>>{
+  static const bool is_specialized = true;
+  static const int digits = INT_MAX;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const bool radix = 2;
+};
+}
+
+// prevents mpz_class's clever optimizations,
+// so that physical_quantity can handle it better.
+// TODO do better.
+class mpz {
+  mpz_class data_;
+public:
+  mpz(){}
+  mpz(mpz_class d):data_(d){}
+  //template<typename T> mpz(T t) : data_(t) {}
+
+  explicit operator bool()const { return data_ != 0; }
+
+friend inline mpz operator*(mpz a, mpz b)
+{ return mpz(a.data_ * b.data_); }
+friend inline mpz operator/(mpz a, mpz b)
+{ return mpz(a.data_ / b.data_); }
+friend inline mpz operator+(mpz a) { return mpz(+a.data_); }
+friend inline mpz operator-(mpz a) { return mpz(-a.data_); }
+friend inline mpz abs(mpz a) { return a.data_ < 0 ? mpz(-a.data_) : mpz(a.data_); }
+friend inline mpz operator+(mpz a, mpz b) { return mpz(a.data_ + b.data_); }
+friend inline mpz operator-(mpz a, mpz b) { return mpz(a.data_ - b.data_); }
+
+friend inline mpz operator&(mpz a, mpz b) { return mpz(a.data_ & b.data_); }
+friend inline mpz operator|(mpz a, mpz b) { return mpz(a.data_ | b.data_); }
+friend inline mpz operator^(mpz a, mpz b) { return mpz(a.data_ ^ b.data_); }
+friend inline mpz operator~(mpz a) { return mpz(~a); }
+
+friend inline bool operator==(mpz a, mpz b) { return a.data_ == b.data_; }
+friend inline bool operator!=(mpz a, mpz b) { return a.data_ != b.data_; }
+friend inline bool operator<(mpz a, mpz b) { return a.data_ < b.data_; }
+friend inline bool operator>(mpz a, mpz b) { return a.data_ > b.data_; }
+friend inline bool operator>=(mpz a, mpz b) { return a.data_ >= b.data_; }
+friend inline bool operator<=(mpz a, mpz b) { return a.data_ <= b.data_; }
+
+friend inline mpz operator<<(mpz a, uint32_t shift)
+{ return mpz(a.data_ << shift); }
+friend inline mpz operator>>(mpz a, uint32_t shift)
+{ return mpz(a.data_ >> shift); }
+
+friend inline mpz& operator+=(mpz& a, mpz b) { a = a + b; return a; }
+friend inline mpz& operator-=(mpz& a, mpz b) { a = a - b; return a; }
+friend inline mpz& operator*=(mpz& a, mpz b) { a = a * b; return a; }
+friend inline mpz& operator&=(mpz& a, mpz b) { a = a & b; return a; }
+friend inline mpz& operator|=(mpz& a, mpz b) { a = a | b; return a; }
+friend inline mpz& operator^=(mpz& a, mpz b) { a = a ^ b; return a; }
+friend inline mpz& operator<<=(mpz& a, uint32_t shift) { a = a << shift; return a; }
+friend inline mpz& operator>>=(mpz& a, uint32_t shift) { a = a >> shift; return a; }
+
+friend inline mpz& operator++(mpz& a) { ++a.data_; return a; }
+friend inline mpz operator++(mpz& a, int) { mpz old = a; ++a.data_; return old; }
+friend inline mpz& operator--(mpz& a) { --a.data_; return a; }
+friend inline mpz operator--(mpz& a, int) { mpz old = a; ++a.data_; return old; }
+
+//Imagine taking the sqrt of a signed 8 bit value.  Can it fit into 4 bits?
+// sqrt(127) is 11.something, which is less than 15 (unsigned 4bit max) but
+// greater than 7 (signed 4bit max).  So we conservatively leave enough space here.
+friend inline mpz isqrt(mpz a)
+{ return mpz(sqrt(a.data_)); }
+//friend inline int32_t ilog2(mpz a) { return ; }
+
+friend std::ostream& operator<<(std::ostream& os, mpz a) {
+  return os << a;
+}
+};
+namespace std {
+template<> struct numeric_limits<mpz> {
+  static const bool is_specialized = true;
+  static const bool is_integer = true;
+  static const bool is_signed = true;
+  static const int digits = INT_MAX;
+  static const int radix = 2;
+};
+} 
+
+
+static_assert(get_units<mpz>::is_nonunit_scalar, "erejrqrq");
 
 namespace YO {
 using boost::shared_ptr;
@@ -141,17 +236,17 @@ void push_wireframe_triangle(
 //128
 typedef typename units_prod<pico_t, seconds_t>::type time_units_t;
 constexpr time_units_t time_units = time_units_t();
-typedef physical_quantity<lint64_t, time_units_t> time_type;
+typedef physical_quantity<mpz, time_units_t> time_type;
 
 typedef typename units_prod<nano_t, meters_t>::type distance_units_t;
 constexpr distance_units_t distance_units = distance_units_t();
-typedef physical_quantity<lint64_t, distance_units_t> distance;
-typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
-typedef physical_quantity<lint64_t, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
+typedef physical_quantity<mpz, distance_units_t> distance;
+typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
+typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
 
 // Standard (Earth-equivalent) gravity: precisely 9.80665 m/s2
-constexpr acceleration1d gravity_acceleration_magnitude = 9806650LL * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
-constexpr vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
+const acceleration1d gravity_acceleration_magnitude = mpz(9806650) * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
+const vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
 
 typedef uint32_t region_idx_type;
 typedef uint32_t face_idx_type;
@@ -175,7 +270,7 @@ struct edge {
 // All faces are triangles.
 struct face {
   time_type base_time_;
-  vector3<lint64_t> ABC;
+  vector3<mpz> ABC;
   distance D;
   velocity1d D_velocity;
   acceleration1d D_acceleration;
@@ -193,11 +288,11 @@ struct face {
   }
 };
 
-lint64_t scalar_triple_product(vector3<lint64_t> v1, vector3<lint64_t> v2, vector3<lint64_t> v3) {
+mpz scalar_triple_product(vector3<mpz> v1, vector3<mpz> v2, vector3<mpz> v3) {
   return v1(X)*v2(Y)*v3(Z) - v1(X)*v3(Y)*v2(Z) + v2(X)*v3(Y)*v1(Z) - v2(X)*v1(Y)*v3(Z) + v3(X)*v1(Y)*v2(Z) - v3(X)*v2(Y)*v1(Z);
 }
 vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
-  lint64_t p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  mpz p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   assert(p != 0);
   return vector3<distance>(
     f1.D * (f2.ABC(1)*f3.ABC(2) - f3.ABC(1)*f2.ABC(2)) + f2.D * (f3.ABC(1)*f1.ABC(2) - f1.ABC(1)*f3.ABC(2)) + f3.D * (f1.ABC(1)*f2.ABC(2) - f2.ABC(1)*f1.ABC(2)),
@@ -215,10 +310,10 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   // - D4 * scalar_triple_product(f1.ABC, f2.ABC, f3.ABC)
   // But Dn is Dn + dDn*t + .5ddDn*t^2
   // so
-  const lint64_t t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
-  const lint64_t t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
-  const lint64_t t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
-  const lint64_t t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  const mpz t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
+  const mpz t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
+  const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
+  const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   // in at^2 + bt + c = 0
   acceleration1d a_times_2 = f1.D_acceleration*t1 + f2.D_acceleration*t2 + f3.D_acceleration*t3 + f4.D_acceleration*t4;
   velocity1d     b         = f1.D_velocity    *t1 + f2.D_velocity    *t2 + f3.D_velocity    *t3 + f4.D_velocity    *t4;
@@ -249,7 +344,7 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
       // return divide(-c * identity(time_units / seconds), b, strat);
       // but overflow stuff
       // also see below
-      return divide(-c * lint64_t(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+      return divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
     }
     else {
       if (a_times_2 < 0) {
@@ -260,9 +355,9 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = i64sqrt(discriminant);
       const velocity1d  lesser_numerator = -b - sqrt_disc;
-      if ( lesser_numerator >= 0) return divide(lesser_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if ( lesser_numerator >= 0) return divide(lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
       const velocity1d greater_numerator = -b + sqrt_disc;
-      if (greater_numerator >= 0) return divide(greater_numerator * lint64_t(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if (greater_numerator >= 0) return divide(greater_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
       return boost::none;
     }
   }
@@ -480,11 +575,11 @@ class grand_structure_of_lasercake {
     face_idx_type first_face_idx = faces_.size();
     region_idx_type region_idx = regions_.size();
 
-    static const vector3<lint64_t> diffs[4] = {
-      vector3<lint64_t>(0, 0, 100),
-      vector3<lint64_t>(0, 83, -45),
-      vector3<lint64_t>(60, -40, -50),
-      vector3<lint64_t>(-62, -42, -43)
+    static const vector3<mpz> diffs[4] = {
+      vector3<mpz>(0, 0, 100),
+      vector3<mpz>(0, 83, -45),
+      vector3<mpz>(60, -40, -50),
+      vector3<mpz>(-62, -42, -43)
     };
 
     regions_.push_back(region());
@@ -495,9 +590,9 @@ class grand_structure_of_lasercake {
       face& f = faces_.back();
       f.base_time_ = 0;
       f.ABC = diffs[i];
-      f.D = loc.dot<lint64_t>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
+      f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_within_32_bits()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
-      f.D_acceleration = f.ABC.dot<lint64_t>(gravity_acceleration);
+      f.D_acceleration = f.ABC.dot<mpz>(gravity_acceleration);
       f.neighboring_regions_.push_back(0);
       f.neighboring_regions_.push_back(region_idx);
       r.faces_.push_back(first_face_idx + i);
@@ -512,9 +607,9 @@ class grand_structure_of_lasercake {
 public:
   grand_structure_of_lasercake() {
     regions_.push_back(region()); // the air
-    hack_insert_rock(vector3<lint64_t>(2, 7, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(2, 14, 11)*meters*identity(distance_units/meters));
-    hack_insert_rock(vector3<lint64_t>(15, 14, 21)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(2, 7, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(2, 14, 11)*meters*identity(distance_units/meters));
+    hack_insert_rock(vector3<mpz>(15, 14, 21)*meters*identity(distance_units/meters));
 
     // TODO don't duplicate events here.
     for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
