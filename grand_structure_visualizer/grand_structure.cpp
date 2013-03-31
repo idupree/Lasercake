@@ -315,7 +315,85 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
 }
 
 // TODO : What about the cases where two of the planes are parallel? That's legit (handle them separately? they're easier)
-faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
+faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4/*, bool hack_recurse_test = true*/) {
+#if 0
+  if (hack_recurse_test) {
+    const faux_optional<time_type> a = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f2, f3, f4, false);
+    const faux_optional<time_type> b = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f2, f4, f3, false);
+    const faux_optional<time_type> c = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f3, f2, f4, false);
+    const faux_optional<time_type> d = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f3, f4, f2, false);
+    const faux_optional<time_type> e = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f4, f3, f2, false);
+    const faux_optional<time_type> f = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f4, f2, f3, false);
+    const faux_optional<time_type> g = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f1, f3, f4, false);
+    const faux_optional<time_type> h = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f1, f4, f3, false);
+    const faux_optional<time_type> i = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f3, f1, f4, false);
+    const faux_optional<time_type> j = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f3, f4, f1, false);
+    const faux_optional<time_type> k = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f4, f3, f1, false);
+    const faux_optional<time_type> l = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f2, f4, f1, f3, false);
+    const faux_optional<time_type> m = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f2, f1, f4, false);
+    const faux_optional<time_type> n = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f2, f4, f1, false);
+    const faux_optional<time_type> o = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f1, f2, f4, false);
+    const faux_optional<time_type> p = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f1, f4, f2, false);
+    const faux_optional<time_type> q = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f4, f1, f2, false);
+    const faux_optional<time_type> r = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f3, f4, f2, f1, false);
+    const faux_optional<time_type> s = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f2, f3, f1, false);
+    const faux_optional<time_type> t = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f2, f1, f3, false);
+    const faux_optional<time_type> u = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f3, f2, f1, false);
+    const faux_optional<time_type> v = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f3, f1, f2, false);
+    const faux_optional<time_type> w = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f1, f3, f2, false);
+    const faux_optional<time_type> x = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f4, f1, f2, f3, false);
+    if (a) {
+      assert(*a == *b);
+      assert(*a == *c);
+      assert(*a == *d);
+      assert(*a == *e);
+      assert(*a == *f);
+      assert(*a == *g);
+      assert(*a == *h);
+      assert(*a == *i);
+      assert(*a == *j);
+      assert(*a == *k);
+      assert(*a == *l);
+      assert(*a == *m);
+      assert(*a == *n);
+      assert(*a == *o);
+      assert(*a == *p);
+      assert(*a == *q);
+      assert(*a == *r);
+      assert(*a == *s);
+      assert(*a == *t);
+      assert(*a == *u);
+      assert(*a == *v);
+      assert(*a == *w);
+      assert(*a == *x);
+    }
+    else {
+      assert(!b);
+      assert(!c);
+      assert(!d);
+      assert(!e);
+      assert(!f);
+      assert(!g);
+      assert(!h);
+      assert(!i);
+      assert(!j);
+      assert(!k);
+      assert(!l);
+      assert(!m);
+      assert(!n);
+      assert(!o);
+      assert(!p);
+      assert(!q);
+      assert(!r);
+      assert(!s);
+      assert(!t);
+      assert(!u);
+      assert(!v);
+      assert(!w);
+      assert(!x);
+    }
+  }
+#endif
   // When the 4x4 determinant is 0.
   // That's
   // + D1 * scalar_triple_product(f2.ABC, f3.ABC, f4.ABC)
