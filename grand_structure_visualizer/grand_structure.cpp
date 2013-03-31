@@ -564,15 +564,13 @@ class grand_structure_of_lasercake {
     return (crosses % 2);
   }
   
-  shared_ptr<event> next_event_involving(face_idx_type fi)const {
+  void insert_events_involving(face_idx_type fi) {
     // Two kinds of events: Vertex-face collisions and edge-edge collisions.
     // From one face, that's three kinds (f being part of the vertex and f being the face.)
     // Also there's an arguable three extra categories depending on whether the face
     // neighbors zero, one, two, or three of the faces establishing the vertex.
     // TODO: try to de-duplicate this "iterate through the present vertices" system which is used elsewhere in the code.
     face const& f = faces_[fi];
-
-    shared_ptr<event> soonest_event;
     
     for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
       const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
@@ -593,14 +591,12 @@ class grand_structure_of_lasercake {
               if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                 f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                 if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
-                  if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                    soonest_event = shared_ptr<event>(new vertex_face_collision(
-                        *collision_time,
-                                   fi,              f.revision_number_,
-                        neighbor_id_1, old_neighbor_1.revision_number_,
-                        neighbor_id_2, old_neighbor_2.revision_number_,
-                                  fi2, old_other_face.revision_number_));
-                  }
+                  next_events_.push(shared_ptr<event>(new vertex_face_collision(
+                      *collision_time,
+                                 fi,              f.revision_number_,
+                      neighbor_id_1, old_neighbor_1.revision_number_,
+                      neighbor_id_2, old_neighbor_2.revision_number_,
+                                fi2, old_other_face.revision_number_)));
                 }
               }
             }
@@ -616,14 +612,12 @@ class grand_structure_of_lasercake {
                   if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                     f, present_neighbor_1, present_other_face, present_other_neighbor)) {
                     if (bounded_edges_cross__hack(*collision_time, f, present_neighbor_1, i, present_other_face, present_other_neighbor, j)) {
-                      if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                        soonest_event = shared_ptr<event>(new edge_edge_collision(
-                            *collision_time,
-                                           fi,                  f.revision_number_,
-                                neighbor_id_1,     old_neighbor_1.revision_number_,
-                                          fi2,     old_other_face.revision_number_,
-                            other_neighbor_id, old_other_neighbor.revision_number_));
-                      }
+                      next_events_.push(shared_ptr<event>(new edge_edge_collision(
+                          *collision_time,
+                                         fi,                  f.revision_number_,
+                              neighbor_id_1,     old_neighbor_1.revision_number_,
+                                        fi2,     old_other_face.revision_number_,
+                          other_neighbor_id, old_other_neighbor.revision_number_)));
                     }
                   }
                 }
@@ -653,14 +647,12 @@ class grand_structure_of_lasercake {
                 if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                   present_other_face, present_neighbor_1, present_neighbor_2, f)) {
                   if (vertex_is_in_bounded_face__hack(*collision_time, present_other_face, present_neighbor_1, present_neighbor_2, f)) {
-                    if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                      soonest_event = shared_ptr<event>(new vertex_face_collision(
-                          *collision_time,
-                                    fi2, old_other_face.revision_number_,
-                          neighbor_id_1, old_neighbor_1.revision_number_,
-                          neighbor_id_2, old_neighbor_2.revision_number_,
-                                     fi,              f.revision_number_));
-                    }
+                    next_events_.push(shared_ptr<event>(new vertex_face_collision(
+                        *collision_time,
+                                  fi2, old_other_face.revision_number_,
+                        neighbor_id_1, old_neighbor_1.revision_number_,
+                        neighbor_id_2, old_neighbor_2.revision_number_,
+                                   fi,              f.revision_number_)));
                   }
                 }
               }
@@ -668,14 +660,6 @@ class grand_structure_of_lasercake {
           }
         }
       }
-    }
-
-    return soonest_event;
-  }
-
-  void insert_next_event_involving(face_idx_type fi) {
-    if (shared_ptr<event> soonest_event = next_event_involving(fi)) {
-      next_events_.push(soonest_event);
     }
   }
   
@@ -747,7 +731,7 @@ public:
 
     // TODO don't duplicate events here.
     for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
-      insert_next_event_involving(fi);
+      insert_events_involving(fi);
     }
     
     this->debug_check_consistency();
