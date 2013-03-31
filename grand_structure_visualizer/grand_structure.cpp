@@ -437,10 +437,6 @@ faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a
   else return boost::none;
 }
 
-struct region_vertex {
-  vertex_idx_type shared_vertex_data_;
-  //other data
-};
 struct region {
   // Regions are arbitrary, non-convex polyhedra which can have holes.
   //std::vector<vertex_idx_type, tetrahedron_sides> vertices_;
