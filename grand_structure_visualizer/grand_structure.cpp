@@ -494,6 +494,9 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
   }
 }
 faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
+  assert(f1.base_time_ == f2.base_time_);
+  assert(f1.base_time_ == f3.base_time_);
+  assert(f1.base_time_ == f4.base_time_);
   if (faux_optional<time_type> result = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1,f2,f3,f4)) {
     return *result + f1.base_time_;
   }
