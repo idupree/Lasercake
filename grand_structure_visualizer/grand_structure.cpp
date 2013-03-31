@@ -555,9 +555,24 @@ class grand_structure_of_lasercake {
       const face present_neighbor_3 = faces_[neighbor_id_3].updated_to_time(t);
       const vector3<distance> pv1 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_1, present_neighbor_2);
       const vector3<distance> pv2 = approx_loc_of_triple_intersection_of_up_to_date_faces(f, present_neighbor_2, present_neighbor_3);
-      if ((pv1(dim2) > v(dim2)) != (pv2(dim2) > v(dim2))) {
-        if ((v(dim2)-pv1(dim2))*(pv2(dim1)-v(dim1)) >= (pv2(dim2)-v(dim2))*(v(dim1)-pv1(dim1))) {
-          ++crosses;
+      if ((pv1(dim1) > v(dim1)) != (pv2(dim1) > v(dim1))) {
+        const vector3<distance> pv1_to_v = (v - pv1);
+        const vector3<distance> pv1_to_pv2 = (pv2 - pv1);
+        if (pv1_to_pv2(dim2) == 0) {
+          if (pv1_to_v(dim2) <= 0) {
+            ++crosses;
+          }
+        }
+        else if (pv1_to_v(dim2) == 0) {
+          if (pv1_to_pv2(dim2) >= 0) {
+            ++crosses;
+          }
+        }
+        else {
+          const mpz sign_correction = (pv1_to_v(dim1)*pv1_to_pv2(dim1) > 0) ? 1 : -1;
+          if (pv1_to_v(dim2)*pv1_to_pv2(dim1)*sign_correction >= pv1_to_pv2(dim2)*pv1_to_v(dim1)*sign_correction) {
+            ++crosses;
+          }
         }
       }
     }
