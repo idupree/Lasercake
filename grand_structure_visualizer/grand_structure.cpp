@@ -274,23 +274,8 @@ typedef uint32_t region_idx_type;
 typedef uint32_t face_idx_type;
 typedef uint32_t vertex_idx_type;
 typedef uint64_t revision_number_type;
-//constexpr region_idx_type no_region_idx = std::numeric_limits<region_idx_type>::max();
-//constexpr face_idx_type no_face_idx = std::numeric_limits<region_idx_type>::max();
-//constexpr vertex_idx_type no_vertex_idx = std::numeric_limits<vertex_idx_type>::max();
 
-const int triangle_sides = 3;
 
-// A vertex is an imaginary thing that moves around
-// independent of the substances it is helping to represent.
-struct vertex {
-  time_type base_time_;
-  vector3<distance> vertex_position_;
-  vector3<velocity1d> vertex_velocity_;
-  vector3<acceleration1d> vertex_acceleration_;
-};
-struct edge {
-};
-// All faces are triangles.
 struct face {
   face():base_time_(0),revision_number_(0),ABC(0),D(0),D_velocity(0),D_acceleration(0){}
   time_type base_time_;
