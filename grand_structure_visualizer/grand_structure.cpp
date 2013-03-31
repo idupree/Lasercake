@@ -607,15 +607,13 @@ class grand_structure_of_lasercake {
             const face present_other_face = old_other_face.updated_to_time(f.base_time_);
             if (fi2 != neighbor_id_2) {
               if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                f, present_neighbor_1, present_neighbor_2, present_other_face)) {
-                if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
-                  next_events_.push(shared_ptr<event>(new vertex_face_collision(
-                      *collision_time,
-                                 fi,              f.revision_number_,
-                      neighbor_id_1, old_neighbor_1.revision_number_,
-                      neighbor_id_2, old_neighbor_2.revision_number_,
-                                fi2, old_other_face.revision_number_)));
-                }
+                  f, present_neighbor_1, present_neighbor_2, present_other_face)) {
+                next_events_.push(shared_ptr<event>(new vertex_face_collision(
+                    *collision_time,
+                               fi,              f.revision_number_,
+                    neighbor_id_1, old_neighbor_1.revision_number_,
+                    neighbor_id_2, old_neighbor_2.revision_number_,
+                              fi2, old_other_face.revision_number_)));
               }
             }
             
@@ -628,15 +626,13 @@ class grand_structure_of_lasercake {
                   face const& old_other_neighbor = faces_[other_neighbor_id];
                   const face present_other_neighbor = old_other_neighbor.updated_to_time(f.base_time_);
                   if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                    f, present_neighbor_1, present_other_face, present_other_neighbor)) {
-                    if (bounded_edges_cross__hack(*collision_time, f, present_neighbor_1, i, present_other_face, present_other_neighbor, j)) {
-                      next_events_.push(shared_ptr<event>(new edge_edge_collision(
-                          *collision_time,
-                                         fi,                  f.revision_number_,
-                              neighbor_id_1,     old_neighbor_1.revision_number_,
-                                        fi2,     old_other_face.revision_number_,
-                          other_neighbor_id, old_other_neighbor.revision_number_)));
-                    }
+                      f, present_neighbor_1, present_other_face, present_other_neighbor)) {
+                    next_events_.push(shared_ptr<event>(new edge_edge_collision(
+                        *collision_time,
+                                       fi,                  f.revision_number_,
+                            neighbor_id_1,     old_neighbor_1.revision_number_,
+                                      fi2,     old_other_face.revision_number_,
+                        other_neighbor_id, old_other_neighbor.revision_number_)));
                   }
                 }
               }
@@ -663,15 +659,13 @@ class grand_structure_of_lasercake {
                 const face present_neighbor_1 = old_neighbor_1.updated_to_time(f.base_time_);
                 const face present_neighbor_2 = old_neighbor_2.updated_to_time(f.base_time_);
                 if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                  present_other_face, present_neighbor_1, present_neighbor_2, f)) {
-                  if (vertex_is_in_bounded_face__hack(*collision_time, present_other_face, present_neighbor_1, present_neighbor_2, f)) {
-                    next_events_.push(shared_ptr<event>(new vertex_face_collision(
-                        *collision_time,
-                                  fi2, old_other_face.revision_number_,
-                        neighbor_id_1, old_neighbor_1.revision_number_,
-                        neighbor_id_2, old_neighbor_2.revision_number_,
-                                   fi,              f.revision_number_)));
-                  }
+                    present_other_face, present_neighbor_1, present_neighbor_2, f)) {
+                  next_events_.push(shared_ptr<event>(new vertex_face_collision(
+                      *collision_time,
+                                fi2, old_other_face.revision_number_,
+                      neighbor_id_1, old_neighbor_1.revision_number_,
+                      neighbor_id_2, old_neighbor_2.revision_number_,
+                                 fi,              f.revision_number_)));
                 }
               }
             }
@@ -854,16 +848,36 @@ private:
         (faces_[c->f4_].revision_number_ == c->r4_)
       ) {
         if (const shared_ptr<vertex_face_collision> vfc = dynamic_pointer_cast<vertex_face_collision>(c)) {
-          // The vertex stays existent; N new vertices also appear where it is,
-          // where N is the number of edges connected to that vertex.
-          // This requires us to split the faces incident to this vertex into
-          // triangles (N more faces).
-          // The face (which is a triangle) disappears and is replaced with
-          // 3+N faces (triangles), plus N faces inside the ring of new vertices.
+          face& vf1 = faces_[vfc->vertex_face_1()];
+          face& vf2 = faces_[vfc->vertex_face_2()];
+          face& vf3 = faces_[vfc->vertex_face_3()];
+          face& sf  = faces_[vfc->struck_face()];
+          if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
+            //stuff
+          }
         }
         if (const shared_ptr<edge_edge_collision> eec = dynamic_pointer_cast<edge_edge_collision>(c)) {
-          // The two edges do not share a vertex, because we make sure to
-          // generate only a vertex--face collision in that case.
+          face& e11 = faces_[eec->edge_1_face_1()];
+          face& e12 = faces_[eec->edge_1_face_2()];
+          face& e21 = faces_[eec->edge_2_face_1()];
+          face& e22 = faces_[eec->edge_2_face_2()];
+          size_t n1 = 0;
+          size_t n2 = 0;
+          for (size_t i = 0; i < e11.neighboring_faces_.size(); ++i) {
+            if (e11.neighboring_faces_[i] == eec->edge_1_face_2()) {
+              n1 = i;
+              break;
+            }
+          }
+          for (size_t i = 0; i < e21.neighboring_faces_.size(); ++i) {
+            if (e21.neighboring_faces_[i] == eec->edge_2_face_2()) {
+              n2 = i;
+              break;
+            }
+          }
+          if (bounded_edges_cross__hack(eec->when_event_occurs_, e11, e12, n1, e21, e22, n2)) {
+            //stuff
+          }
         }
       }
     }
@@ -1049,6 +1063,7 @@ time_type when = 0;
     
     ++frame;
     if (moving) when += int64_t(1000000000LL)*pico*seconds;
+    std::cerr << when << "\n";
     
     
     __attribute__((unused)) int after = SDL_GetTicks();
