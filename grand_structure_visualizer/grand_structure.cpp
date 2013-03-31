@@ -409,7 +409,7 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
   const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   if ((t1 == 0) || (t2 == 0) || (t3 == 0) || (t4 == 0)) {
-    std::cerr << "Warning: Linearly dependent normals passed to how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point()\n";
+    //std::cerr << "Warning: Linearly dependent normals passed to how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point()\n";
     return boost::none;
   }
   // in at^2 + bt + c = 0
@@ -505,10 +505,17 @@ faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a
   else return boost::none;
 }
 
+enum region_contents {
+  AIR,
+  ROCK
+};
+
 struct region {
   // Regions are arbitrary, non-convex polyhedra which can have holes.
   //std::vector<vertex_idx_type, tetrahedron_sides> vertices_;
   std::vector<face_idx_type> faces_;
+  region_contents contents;
+  region(region_contents contents):contents(contents){}
 };
 
 struct event {
@@ -763,7 +770,7 @@ class grand_structure_of_lasercake {
       vector3<mpz>(-6200, -4200, -4300)
     };
 
-    regions_.push_back(region());
+    regions_.push_back(region(ROCK));
     region& air = regions_[0];
     region& r = regions_.back();
     for (int i = 0; i < 4; ++i) {
@@ -787,7 +794,7 @@ class grand_structure_of_lasercake {
   void hack_insert_fixed_cube(vector3<distance> loc) {
     face_idx_type first_face_idx = faces_.size();
     region_idx_type region_idx = regions_.size();
-    regions_.push_back(region());
+    regions_.push_back(region(ROCK));
     region& air = regions_[0];
     region& r = regions_.back();
     for (int i = 0; i < 6; ++i) {
@@ -812,7 +819,7 @@ class grand_structure_of_lasercake {
   
 public:
   grand_structure_of_lasercake() {
-    regions_.push_back(region()); // the air
+    regions_.push_back(region(AIR));
     hack_insert_rock(vector3<mpz>(2, 7, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(2, 14, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(15, 14, 21)*meters*identity(distance_units/meters));
@@ -928,6 +935,7 @@ public:
         const vector3<mpz> v2 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f3,f4)/distance_units;
         const vector3<mpz> v3 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f2,f4)/distance_units;
         const vector3<mpz> v4 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f2,f3)/distance_units;
+        //std::cerr << v4 << "\n";
         /// haaaaaack
         glBegin(GL_POINTS);
           glVertex3f((float)v1.x, (float)v1.y, (float)v1.z);
@@ -974,8 +982,38 @@ private:
           face& vf3 = faces_[vfc->vertex_face_3()];
           face& sf  = faces_[vfc->struck_face()];
           if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
-            std::cerr << "vfc.\n";
-            //stuff
+            //std::cerr << c->r1_ << "," << c->r2_ << "," << c->r2_ << "," << c->r2_ << "\n";
+            //std::cerr << "vfc.\n";
+            // Haaaaaaack
+            region_idx_type ri1 = 0;
+            region_idx_type ri2 = 0;
+            for (auto ri : vf1.neighboring_regions_) {
+              if (regions_[ri].contents == ROCK) ri1 = ri;
+            }
+            for (auto ri : sf.neighboring_regions_) {
+              if (regions_[ri].contents == ROCK) ri2 = ri;
+            }
+            region& r1 = regions_[ri1];
+            region& r2 = regions_[ri2];
+            assert(r1.contents = ROCK); assert(r2.contents = ROCK);
+            vector3<mpz> normal = sf.ABC;
+            // Hack, this is COMPLETELY wrong
+            vector3<velocity1d> vel_thing = normal * (mpz(1000000000)*distance_units/seconds) / normal.magnitude_using<mpz>();
+            for (face_idx_type fi : r1.faces_) {
+              faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
+              faces_[fi].D_velocity *= -1; //= faces_[fi].ABC.dot<mpz>(vel_thing);
+            }
+            for (face_idx_type fi : r2.faces_) {
+              faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
+              faces_[fi].D_velocity *= -1; // = -faces_[fi].ABC.dot<mpz>(vel_thing);
+            }
+            // TODO : have the recomputation be automated somehow
+            for (face_idx_type fi : r1.faces_) {
+              insert_events_involving(fi);
+            }
+            for (face_idx_type fi : r2.faces_) {
+              insert_events_involving(fi);
+            }
             return true;
           }
         }
@@ -999,7 +1037,7 @@ private:
             }
           }
           if (bounded_edges_cross__hack(eec->when_event_occurs_, e11, e12, n1, e21, e22, n2)) {
-            std::cerr << "eec.\n";
+            //std::cerr << "eec.\n";
             //stuff
             return true;
           }
