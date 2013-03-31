@@ -776,7 +776,7 @@ public:
           gl_data_format::color(0xffff0080)));
         //std::cerr << vertices[i] << '\n';
       }
-      push_wireframe_polygon(triangles, 0.5e9, polygon);
+      push_wireframe_polygon(triangles, 1e9, polygon);
     }
     sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
