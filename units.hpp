@@ -265,7 +265,7 @@ namespace dim {
   template<intmax_t Exponent> struct kilogram : basic_physical_dimension<
     kilogram, kilogram_tag, Exponent>{ static const char* symbol() { return "kg"; } };
   template<intmax_t Exponent> struct second : basic_physical_dimension<
-    second, second_tag, Exponent> { static const char* symbol() { return "a"; } };
+    second, second_tag, Exponent> { static const char* symbol() { return "s"; } };
   template<intmax_t Exponent> struct ampere : basic_physical_dimension<
     ampere, ampere_tag, Exponent> { static const char* symbol() { return "A"; } };
   template<intmax_t Exponent> struct kelvin : basic_physical_dimension<
