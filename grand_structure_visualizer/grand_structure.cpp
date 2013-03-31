@@ -493,8 +493,8 @@ class grand_structure_of_lasercake {
     const face  f =  f_old.updated_to_time(t);
     
     // we prefer to eliminate the face that's most foreshortened, i.e. the one for which the normal's value is biggest
-    which_dimension_type dim1 = ((f.ABC(X) > f.ABC(Y)) && (f.ABC(X) > f.ABC(Z))) ? Y : X;
-    which_dimension_type dim2 = ((f.ABC(Z) > f.ABC(Y)) && (f.ABC(Z) > f.ABC(X))) ? Y : Z;
+    which_dimension_type dim1 = ((abs(f.ABC(X)) > abs(f.ABC(Y))) && (abs(f.ABC(X)) > abs(f.ABC(Z)))) ? Y : X;
+    which_dimension_type dim2 = ((abs(f.ABC(Z)) > abs(f.ABC(Y))) && (abs(f.ABC(Z)) > abs(f.ABC(X)))) ? Y : Z;
 
     const vector3<distance> v = approx_loc_of_triple_intersection_of_up_to_date_faces(v1, v2, v3);
 
