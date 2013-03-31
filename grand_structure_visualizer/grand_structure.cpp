@@ -587,6 +587,14 @@ class grand_structure_of_lasercake {
       const vector3<distance> end2 = approx_loc_of_triple_intersection_of_up_to_date_faces(
         e1, e2, faces_[e1.neighboring_faces_[next_neighbor_idx]].updated_to_time(t));
 
+      // Hack - sometimes the line can read as right in some dimensions and wrong in others.
+      // This mostly happens if a face is very nearly parallel to one of the lines.
+      // If it does, eliminate it rather than including it, because it might be wrong and isn't super important if it's right.
+      if ((((end1.x-approx_cross_location.x) * (end2.x-approx_cross_location.x)) > 0)
+        || (((end1.y-approx_cross_location.y) * (end2.y-approx_cross_location.y)) > 0)
+        || (((end1.z-approx_cross_location.z) * (end2.z-approx_cross_location.z)) > 0)) {
+        return false;
+      }
       // This edge is okay if the intersection point is between the two ends of the edge.
       // We would normally have to check only one dimension. Do it for all because sometimes
       // the edge is parallel to an axis.
