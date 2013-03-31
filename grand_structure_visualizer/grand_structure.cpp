@@ -879,25 +879,38 @@ public:
     }
     present_time_ = when;
   }
-  gl_triangles display(vector3<distance> where) {
+
+  void display_face(face const& f, gl_triangles& triangles, gl_data_format::color c, float width) {
+    gl_polygon polygon;
+    const face present_face = f.updated_to_time(present_time_);
+    for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
+      const size_t j = (i+1)%f.neighboring_faces_.size();
+      const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(present_time_);
+      const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(present_time_);
+      const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
+      polygon.vertices_.push_back(gl_data_format::vertex_with_color(
+        get_primitive_float(loc.x/distance_units),
+        get_primitive_float(loc.y/distance_units),
+        get_primitive_float(loc.z/distance_units),
+        c));
+      //std::cerr << vertices[i] << '\n';
+    }
+    push_wireframe_polygon(triangles, width, polygon);
+  }
+  
+  gl_triangles display(vector3<distance> where, shared_ptr<event> current_event) {
     //assert(when < next_event_time)
     gl_triangles triangles;
-    for(face const& f : faces_) {
-      gl_polygon polygon;
-      const face present_face = f.updated_to_time(present_time_);
-      for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
-        const size_t j = (i+1)%f.neighboring_faces_.size();
-        const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(present_time_);
-        const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(present_time_);
-        const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
-        polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-          get_primitive_float(loc.x/distance_units),
-          get_primitive_float(loc.y/distance_units),
-          get_primitive_float(loc.z/distance_units),
-          gl_data_format::color(0xffff0080)));
-        //std::cerr << vertices[i] << '\n';
+    for (face const& f : faces_) {
+      display_face(f, triangles, gl_data_format::color(0xffff0080), 1e9);
+    }
+    if (current_event) {
+      if (const shared_ptr<collision> c = dynamic_pointer_cast<collision>(current_event)) {
+        display_face(faces_[c->f1_], triangles, gl_data_format::color(0xff000080), 3e9);
+        display_face(faces_[c->f2_], triangles, gl_data_format::color(0xff008080), 3e9);
+        display_face(faces_[c->f3_], triangles, gl_data_format::color(0x8000ff80), 3e9);
+        display_face(faces_[c->f4_], triangles, gl_data_format::color(0x0000ff80), 3e9);
       }
-      push_wireframe_polygon(triangles, 1e9, polygon);
     }
     sort_gl_triangles_far_to_near(
       glm::vec3(where.x/distance_units, where.y/distance_units, where.z/distance_units),
@@ -909,12 +922,12 @@ public:
     if (next_events_.empty()) return 0;
     return next_events_.top()->when_event_occurs_;
   }
-  time_type advance_to_next_real_event() {
+  shared_ptr<event> advance_to_next_real_event() {
     while(!next_events_.empty()) {
-      time_type t = next_events_.top()->when_event_occurs_;
-      if (do_next_event()) return t;
+      const shared_ptr<event> e = next_events_.top();
+      if (do_next_event()) return e;
     }
-    return present_time_;
+    return shared_ptr<event>();
   }
 private:
 
@@ -975,7 +988,7 @@ private:
 
 
 
-void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame) {
+void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, shared_ptr<event> current_event) {
   //std::cerr<<"hi.\n";
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -990,7 +1003,7 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame) {
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
             0,0,0, 0,0,1);
 
-  gl_triangles data = simulated_world.display(vector3<distance>(viewcenter*distance_units));
+  gl_triangles data = simulated_world.display(vector3<distance>(viewcenter*distance_units), current_event);
   if(const size_t count = data.size()*3) {
     GLuint triangles_VBO_name;
     glGenBuffersARB(1, &triangles_VBO_name);
@@ -1094,7 +1107,7 @@ static void createSurface (int fullscreen)
 
 static void mainLoop (std::string /*scenario*/)
 {
-  SDL_Event event;
+  SDL_Event sdle;
   int done = 0;
   int p_mode = 0;
   bool moving = false;
@@ -1104,14 +1117,15 @@ large_fast_noncrypto_rng rng(time(NULL));
   
 int frame = 0;
 time_type when = 0;
+shared_ptr<event> current_event;
 
   grand_structure_of_lasercake simulated_world;
   
   while ( !done ) {
 
     /* Check for events */
-    while ( SDL_PollEvent (&event) ) {
-      switch (event.type) {
+    while ( SDL_PollEvent (&sdle) ) {
+      switch (sdle.type) {
         case SDL_MOUSEMOTION:
           break;
           
@@ -1119,13 +1133,16 @@ time_type when = 0;
           break;
           
         case SDL_KEYDOWN:
-          if(event.key.keysym.sym == SDLK_p) ++p_mode;
-          if(event.key.keysym.sym == SDLK_m) moving = !moving;
-          if(event.key.keysym.sym == SDLK_e) when = simulated_world.time_of_next_event();
-          if(event.key.keysym.sym == SDLK_r) when = simulated_world.advance_to_next_real_event();
-          //if(event.key.keysym.sym == SDLK_r) ++view_dist;
-          //if(event.key.keysym.sym == SDLK_f) --view_dist;
-          if(event.key.keysym.sym != SDLK_ESCAPE)break;
+          if(sdle.key.keysym.sym == SDLK_p) ++p_mode;
+          if(sdle.key.keysym.sym == SDLK_m) moving = !moving;
+          if(sdle.key.keysym.sym == SDLK_e) when = simulated_world.time_of_next_event();
+          if(sdle.key.keysym.sym == SDLK_r) {
+            current_event = simulated_world.advance_to_next_real_event();
+            if (current_event) when = current_event->when_event_occurs_;
+          }
+          //if(sdle.key.keysym.sym == SDLK_r) ++view_dist;
+          //if(sdle.key.keysym.sym == SDLK_f) --view_dist;
+          if(sdle.key.keysym.sym != SDLK_ESCAPE)break;
           
         case SDL_QUIT:
           done = 1;
@@ -1143,7 +1160,7 @@ time_type when = 0;
     __attribute__((unused)) int before_GL = SDL_GetTicks();
 
     simulated_world.update_to_time(when);
-    do_gl(simulated_world, frame);
+    do_gl(simulated_world, frame, current_event);
     glFinish();	
     SDL_GL_SwapBuffers();
    
