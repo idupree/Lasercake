@@ -120,13 +120,204 @@ static void bignum_compile_test() {
   dist*dist*dist;
 }
 
+template<typename BigInt>
+static void nonnegative_tests() {
+  //LOG << __PRETTY_FUNCTION__ << '\n';
+  BOOST_CHECK_EQUAL(BigInt(15) >> 2, BigInt(3));
+  BOOST_CHECK_EQUAL(BigInt(16) >> 2, BigInt(4));
+  BOOST_CHECK_EQUAL(BigInt(17) >> 2, BigInt(4));
+  BOOST_CHECK_EQUAL(BigInt(13) << 2, BigInt(52));
+
+  BOOST_CHECK_EQUAL(BigInt(15) >> 0, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 0, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) >> 32, BigInt(0));
+  BOOST_CHECK_EQUAL(BigInt(15) >> 64, BigInt(0));
+  BOOST_CHECK_GT(BigInt(15) << 32, BigInt(999999));
+  BOOST_CHECK_GT(BigInt(15) << 64, BigInt(999999));
+
+  BOOST_CHECK_EQUAL(BigInt(15) << 32 >> 32, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 64 >> 64, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 64 >> 32 >> 32, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 64 >> 21 >> 21 >> 22, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 64 >> 40 >> 24, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 64 >> 24 >> 40, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 21 << 21 << 22 >> 64, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 40 << 24 >> 64, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 24 << 40 >> 64, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 66 >> 22 >> 22 >> 22, BigInt(15));
+  BOOST_CHECK_EQUAL(BigInt(15) << 22 << 22 << 22 >> 66, BigInt(15));
+  
+  BOOST_CHECK_EQUAL(BigInt(15) * 3, BigInt(45));
+  BOOST_CHECK_EQUAL(BigInt(0x100000000) * 0x100000000, BigInt(0x100000000) << 32);
+  BOOST_CHECK_EQUAL(BigInt(0x100000001) * 0x100000001, (BigInt(0x100000000) << 32) + BigInt(0x200000001));
+
+  BOOST_CHECK_GT(BigInt(1e20), BigInt(1) << 66);
+  BOOST_CHECK_LT(BigInt(1e20), BigInt(1) << 67);
+  BOOST_CHECK_GT(BigInt(1e20f), BigInt(1) << 66);
+  BOOST_CHECK_LT(BigInt(1e20f), BigInt(1) << 67);
+}
+
+
+
 BOOST_AUTO_TEST_CASE(bignum_runtests) {
   //bigint<128> aa = bigint<64>(1000000000LL);
   //aa = aa*aa*aa*(aa*(aa*aa));
-  bigint<512> aa = bigint<64>(1000000000LL);
-  aa = aa*aa*aa*(aa*(aa*aa));
+  bigint<512> a1 = bigint<64>(int64_t(1000000000LL));
+  bigint<512> aa = a1*a1*a1*(a1*(a1*a1));
   //LOG << aa << "\n";
   //LOG << decltype(aa)(2) << "\n";
+  
+  nonnegative_tests<biguint<128>>();
+  nonnegative_tests<bigint<128>>();
+  nonnegative_tests<biguint<192>>();
+  nonnegative_tests<bigint<192>>();
+
+  BOOST_CHECK_EQUAL(bigint<128>(-1) >> 1, bigint<128>(-1));
+  BOOST_CHECK_EQUAL(bigint<128>(-2) >> 1, bigint<128>(-1));
+  BOOST_CHECK_EQUAL(bigint<128>(-3) >> 1, bigint<128>(-2));
+  BOOST_CHECK_EQUAL(bigint<128>(-4) >> 1, bigint<128>(-2));
+  BOOST_CHECK_EQUAL(bigint<128>(-5) >> 1, bigint<128>(-3));
+  BOOST_CHECK_EQUAL(bigint<128>(-5) << 66 >> 22 >> 22 >> 22, bigint<128>(-5));
+  BOOST_CHECK_EQUAL(bigint<128>(-5) << 64 >> 21 >> 21 >> 22, bigint<128>(-5));
+  BOOST_CHECK_EQUAL(bigint<128>(-5) << 22 << 22 << 22 >> 66, bigint<128>(-5));
+  BOOST_CHECK_EQUAL(bigint<128>(-5) << 22 << 21 << 21 >> 64, bigint<128>(-5));
+  
+  BOOST_CHECK_GT(double(aa), 1e53);
+  BOOST_CHECK_LT(double(aa), 1e55);
+  // it exceeds range of float, so +Inf
+  BOOST_CHECK_EQUAL(float(aa), 1.0f/0.0f);
+  
+  BOOST_CHECK_LT(double(-aa), -1e53);
+  BOOST_CHECK_GT(double(-aa), -1e55);
+  BOOST_CHECK_EQUAL(float(-aa), -1.0f/0.0f);
+  
+  BOOST_CHECK_EQUAL(biguint<128>(-1e20), biguint<128>(0));
+  BOOST_CHECK_EQUAL(biguint<128>(-1.0), biguint<128>(0));
+  BOOST_CHECK_EQUAL(biguint<128>(-0.0), biguint<128>(0));
+  BOOST_CHECK_LT(bigint<128>(-1e20), bigint<128>(-1) << 66);
+  BOOST_CHECK_GT(bigint<128>(-1e20), bigint<128>(-1) << 67);
+  BOOST_CHECK_LT(bigint<128>(-1e20f), bigint<128>(-1) << 66);
+  BOOST_CHECK_GT(bigint<128>(-1e20f), bigint<128>(-1) << 67);
+  
+  BOOST_CHECK_EQUAL(isqrt(aa), a1*a1*a1);
+  BOOST_CHECK_EQUAL(isqrt(aa+1), a1*a1*a1);
+  BOOST_CHECK_EQUAL(isqrt(aa-1), a1*a1*a1 - 1);
+  BOOST_CHECK_EQUAL(isqrt(aa + a1*a1*a1*2), a1*a1*a1);
+  BOOST_CHECK_EQUAL(isqrt(aa + a1*a1*a1*2 + 1), a1*a1*a1 + 1);
+  BOOST_CHECK_EQUAL(isqrt(aa + a1*a1*a1*2 + 2), a1*a1*a1 + 1);
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(0)), biguint<128>(0));
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(1)), biguint<128>(1));
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(2)), biguint<128>(1));
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(3)), biguint<128>(1));
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(4)), biguint<128>(2));
+  BOOST_CHECK_EQUAL(isqrt(biguint<128>(5)), biguint<128>(2));
+
+  BOOST_CHECK_EQUAL(ilog2(biguint<128>(1)), biguint<128>(0));
+  BOOST_CHECK_EQUAL(ilog2(biguint<128>(2)), biguint<128>(1));
+  BOOST_CHECK_EQUAL(ilog2(biguint<128>(3)), biguint<128>(1));
+  BOOST_CHECK_EQUAL(ilog2(biguint<128>(4)), biguint<128>(2));
+  BOOST_CHECK_EQUAL(ilog2(biguint<128>(5)), biguint<128>(2));
+  BOOST_CHECK_EQUAL(ilog2(aa), 179);
+  
+  //BOOST_CHECK(biguint<128>(reciprocal_unsigned(biguint<128>(13)).reciprocal));
+  BOOST_CHECK_EQUAL(biguint<128>(37) / biguint<128>(13), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(38) / biguint<128>(13), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(39) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(40) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(41) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(42) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(43) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(44) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(45) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(46) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(47) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(48) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(49) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(50) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(51) / biguint<128>(13), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(52) / biguint<128>(13), 4);
+  BOOST_CHECK_EQUAL(biguint<128>(53) / biguint<128>(13), 4);
+  BOOST_CHECK_EQUAL(biguint<128>(54) / biguint<128>(13), 4);
+
+  BOOST_CHECK_EQUAL(biguint<128>(0) / biguint<128>(3), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(1) / biguint<128>(3), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(2) / biguint<128>(3), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(3) / biguint<128>(3), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(4) / biguint<128>(3), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(5) / biguint<128>(3), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(6) / biguint<128>(3), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(7) / biguint<128>(3), 2);
+
+  BOOST_CHECK_EQUAL(biguint<128>(0) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(1) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(2) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(3) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(4) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(5) / biguint<128>(6), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(6) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(7) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(8) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(9) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(10) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(11) / biguint<128>(6), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(12) / biguint<128>(6), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(13) / biguint<128>(6), 2);
+
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 32) / biguint<128>(3), 0x55555555);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 31) / biguint<128>(3), 0x2aaaaaaa);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 64) / biguint<128>(3), 0x5555555555555555);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 124) / biguint<128>(3), (biguint<128>(0x0555555555555555)<<64) + 0x5555555555555555);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 125) / biguint<128>(3), (biguint<128>(0x0aaaaaaaaaaaaaaa)<<64) + 0xaaaaaaaaaaaaaaaa);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 126) / biguint<128>(3), (biguint<128>(0x1555555555555555)<<64) + 0x5555555555555555);
+  BOOST_CHECK_EQUAL((biguint<128>(1) << 127) / biguint<128>(3), (biguint<128>(0x2aaaaaaaaaaaaaaa)<<64) + 0xaaaaaaaaaaaaaaaa);//
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) - 0) / ((biguint<128>(1) << 32) - 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) - 1) / ((biguint<128>(1) << 32) - 0), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) - 1) / ((biguint<128>(1) << 32) - 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) - 2) / ((biguint<128>(1) << 32) - 1), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) + 0) / ((biguint<128>(1) << 32) + 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) + 0) / ((biguint<128>(1) << 32) + 1), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) + 1) / ((biguint<128>(1) << 32) + 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 32) + 1) / ((biguint<128>(1) << 32) + 2), 0);
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) - 0) / ((biguint<128>(1) << 63) - 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) - 1) / ((biguint<128>(1) << 63) - 0), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) - 1) / ((biguint<128>(1) << 63) - 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) - 2) / ((biguint<128>(1) << 63) - 1), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) + 0) / ((biguint<128>(1) << 63) + 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) + 0) / ((biguint<128>(1) << 63) + 1), 0);//
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) + 1) / ((biguint<128>(1) << 63) + 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 63) + 1) / ((biguint<128>(1) << 63) + 2), 0);
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) - 0) / ((biguint<128>(1) << 64) - 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) - 1) / ((biguint<128>(1) << 64) - 0), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) - 1) / ((biguint<128>(1) << 64) - 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) - 2) / ((biguint<128>(1) << 64) - 1), 0);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) + 0) / ((biguint<128>(1) << 64) + 0), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) + 0) / ((biguint<128>(1) << 64) + 1), 0);//
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) + 1) / ((biguint<128>(1) << 64) + 1), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 64) + 1) / ((biguint<128>(1) << 64) + 2), 0);
+
+  BOOST_CHECK_EQUAL(biguint<128>(0) / biguint<128>(2), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(1) / biguint<128>(2), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(2) / biguint<128>(2), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(3) / biguint<128>(2), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(4) / biguint<128>(2), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(5) / biguint<128>(2), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(6) / biguint<128>(2), 3);
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 1) / ((biguint<128>(1) << 120) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 3) / ((biguint<128>(1) << 120) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 4) / ((biguint<128>(1) << 120) - 3), 0);
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 127) - 1) / ((biguint<128>(1) << 127) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 127) - 3) / ((biguint<128>(1) << 127) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 127) - 4) / ((biguint<128>(1) << 127) - 3), 0);
+
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 128) - 1) / ((biguint<128>(1) << 128) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 128) - 3) / ((biguint<128>(1) << 128) - 3), 1);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 128) - 4) / ((biguint<128>(1) << 128) - 3), 0);
+
   BOOST_CHECK(+aa);
   BOOST_CHECK(-aa);
   BOOST_CHECK_EQUAL(-(-aa), aa);

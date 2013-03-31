@@ -29,10 +29,31 @@
 // With -O3, most operations unroll to straight-line code with no
 // loops or branches.
 
+// Another implementation: http://www.ttmath.org/
+//   (which we might have used if I'd heard of it sooner,
+//    although it claims to *require* x86 or x86_64, which is bad;
+//    "Which hardware platforms are supported?
+//    "At the moment Intel i386 and Amd64 are supported. Intel 64bit
+//     platforms should be working too but I don't have such platform
+//     to make tests on it."
+//      -http://www.ttmath.org/faq
+//    but
+//    "TTmath should work on any little endian platform,
+//     in the future a big endian should be added too."
+//      --http://www.ttmath.org/forum/intel_xeon ).
+//    and some recent bugfixes
+//      http://www.ttmath.org/forum/bug_in_ttmath__big_exp,_man___fromdouble%28double%29
+// Division/reciprocal:
+//   Alverson, Robert. "Integer division using reciprocals." Computer
+//   Arithmetic, 1991. Proceedings., 10th IEEE Symposium on. IEEE, 1991.
+
 #include "../config.hpp"
 #include <boost/utility/enable_if.hpp>
 #include <ostream>
+//#include <iomanip>
+//#include <ios>
 #include <cmath>
+#include <boost/type_traits/conditional.hpp>
 #include "../cxx11/hash.hpp"
 #include <boost/functional/hash.hpp>
 #include "numbers.hpp"
@@ -64,46 +85,39 @@ struct bignum_with_overflow {
   bignum<Limbs> num;
   bool overflow;
 };
-template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
-inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
-  bignum<LimbsOut> result = {{}};
-  for(size_t ia = 0; ia != LimbsA; ++ia) {
-    uint32_t carry = 0;
-    for(size_t ib = 0; ib != LimbsB; ++ib) {
-      //short circuit if a1[i] or a2[j] (or their product?) is zero?
-      const size_t ir = ia+ib;
-      if(ir+1 < LimbsOut) {
-        //full_t z = width_doubling_multiply(a1[i], a2[j]);
-        //z[0] z[1]
-        const twice_limb_type subproduct = (twice_limb_type)a.limbs[ia] * b.limbs[ib];
-        const limb_type low = (limb_type)(subproduct);
-        limb_type high = (limb_type)(subproduct >> limb_bits) + carry;
-        const limb_type oldlimb0 = result.limbs[ir];
-        const limb_type newlimb0 = oldlimb0 + low;
-        // Carry.
-        // This can't overflow high because e.g. 9*9 == 81 < 99, 0b11 * 0b11 == 0b1001 < 0b1111,
-        // max uint32 * max uint32 < max uint64.
-        high += (newlimb0 < oldlimb0);
-        result.limbs[ir] = newlimb0;
-        const limb_type oldlimb1 = result.limbs[ir+1];
-        const limb_type newlimb1 = oldlimb1 + high;
-        carry = (newlimb1 < oldlimb1);
-        result.limbs[ir+1] = newlimb1;
-      }
-      else if(ir < LimbsOut) {
-        limb_type low = a.limbs[ia] * b.limbs[ib];
-        result.limbs[ir] += low;
-      }
-    }
-    const size_t ir = ia+LimbsB+1;
-    if(ir < LimbsOut) {
-      // hasn't been touched yet
-      assert(result.limbs[ir] == 0);
-      result.limbs[ir] = carry;
-    }
-  }
-  return result;
+
+template<size_t Limbs>
+struct reciprocal_bignum {
+  // Mathematical value represented: reciprocal/2^shift
+  bignum<Limbs> reciprocal;
+  uint32_t shift;
+};
+
+// user-facing:
+template<size_t Bits> struct bigint;
+template<size_t Bits> struct biguint;
+
+
+template<size_t Limbs> inline std::ostream& operator<<(std::ostream& os, bignum<Limbs> a) {
+  char out[Limbs*(limb_bits/4 + 1)];
+  show_limbs_hex_bigendian(a, out);
+  os << out;
+  return os;
 }
+template<size_t Limbs> inline std::ostream& operator<<(std::ostream& os, bignum_with_overflow<Limbs> a) {
+  os << a.num;
+  os << (a.overflow ? "+" : "=");
+  return os;
+}
+template<size_t Limbs> inline std::ostream& operator<<(std::ostream& os, reciprocal_bignum<Limbs> a) {
+  os << a.reciprocal;
+  os << "*2^-" << a.shift;
+  return os;
+}
+
+
+//#define LASERCAKE_PURELY_FUNCTIONAL_BIGNUM_FUNCTION_ATTRIBUTES
+
 
 //cast_unsigned
 template<size_t LimbsOut, size_t LimbsA>
@@ -231,6 +245,61 @@ inline bignum<Limbs> negate(bignum<Limbs> a) {
   bignum<Limbs> result = negate_overflow(a).num;
   return result;
 }
+
+
+// Looks like gcc 4.6.3 -O3 is willing to unroll up to about 7x8->15 limbs
+// to about 600-700 x86 instructions, and larger than that it
+// keeps one loop for a 150-ish-instruction-long loop.
+// Is it unrolling too aggressively? (Cost of too much code filling up cache)
+// For LimbsOut < LimbsA+LimbsB and LimbsOut>6, gcc -O3 got confused and
+// left around a bunch of tests/loops/branches.
+// I wonder if GCC can identify x*x when this is inlined and remove the redundant
+// computations.
+// At what point does Karatsuba multiplication become more efficient?
+template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
+inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
+  bignum<LimbsOut> result = {{}};
+  // TODO short circuit these for LimbsOut < LimbsA+LimbsB
+  for(size_t ia = 0; ia != LimbsA; ++ia) {
+    uint32_t carry = 0;
+    for(size_t ib = 0; ib != LimbsB; ++ib) {
+      //short circuit if a1[i] or a2[j] (or their product?) is zero?
+      const size_t ir = ia+ib;
+      if(ir+1 < LimbsOut) {
+        //full_t z = width_doubling_multiply(a1[i], a2[j]);
+        //z[0] z[1]
+        const twice_limb_type subproduct = (twice_limb_type)a.limbs[ia] * b.limbs[ib];
+        const limb_type low = (limb_type)(subproduct);
+        limb_type high = (limb_type)(subproduct >> limb_bits) + carry;
+        const limb_type oldlimb0 = result.limbs[ir];
+        const limb_type newlimb0 = oldlimb0 + low;
+        // Carry.
+        // This can't overflow high because e.g. 9*9 == 81 < 99, 0b11 * 0b11 == 0b1001 < 0b1111,
+        // max uint32 * max uint32 < max uint64.
+        high += (newlimb0 < oldlimb0);
+        result.limbs[ir] = newlimb0;
+        const limb_type oldlimb1 = result.limbs[ir+1];
+        const limb_type newlimb1 = oldlimb1 + high;
+        carry = (newlimb1 < oldlimb1);
+        result.limbs[ir+1] = newlimb1;
+      }
+      else if(ir < LimbsOut) {
+        limb_type low = a.limbs[ia] * b.limbs[ib];
+        result.limbs[ir] += low;
+      }
+    }
+    const size_t ir = ia+LimbsB+1;
+    if(ir < LimbsOut) {
+      // hasn't been touched yet
+      assert(result.limbs[ir] == 0);
+      result.limbs[ir] = carry;
+    }
+  }
+  return result;
+}
+
+
+
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
 inline bignum<LimbsOut> long_multiply_signed(bignum<LimbsA> a, bignum<LimbsB> b) {
   static_assert(LimbsA > 0 && LimbsB > 0, "signed ints need a sign bit");
@@ -265,6 +334,8 @@ inline bignum<LimbsOut> long_multiply_signed(bignum<LimbsA> a, bignum<LimbsB> b)
   }
   return result;
 }
+
+
 
 template<size_t Limbs>
 inline bignum<Limbs> add(bignum<Limbs> a, bignum<Limbs> b) {
@@ -442,12 +513,13 @@ inline bignum<LimbsOut> shift_right_zero_extend(bignum<Limbs> a, uint32_t shift)
 }
 #endif
 template<bool SignExtend, size_t LimbsOut, size_t Limbs>
-inline bignum<LimbsOut> shift_impl(bignum<Limbs> a, ptrdiff_t limb_offset, size_t sub_limb_offset_0) {
+inline bignum<LimbsOut> shift_impl(bignum<Limbs> a, ptrdiff_t shift_left_by_limbs, size_t shift_right_by_bits_within_limb) {
+  assert((ptrdiff_t)shift_right_by_bits_within_limb < limb_bits);
   bignum<LimbsOut> result;
-  const size_t sub_limb_offset_1 = limb_bits - sub_limb_offset_0;
+  const ptrdiff_t limb_offset = shift_left_by_limbs;
   const bool neg = is_negative(a);
   const limb_type sign_ext = ((SignExtend && neg) ? (limb_type)(-1) : (limb_type)(0));
-  if(sub_limb_offset_0 == 0) {
+  if(shift_right_by_bits_within_limb == 0) {
     for(ptrdiff_t ir = 0; ir != LimbsOut; ++ir) {
       const size_t ia = (size_t)(ir-limb_offset);
       // size_t is modulo, so this also checks for < 0.
@@ -463,6 +535,8 @@ inline bignum<LimbsOut> shift_impl(bignum<Limbs> a, ptrdiff_t limb_offset, size_
     }
   }
   else {
+    const size_t sub_limb_offset_0 = shift_right_by_bits_within_limb;
+    const size_t sub_limb_offset_1 = limb_bits - sub_limb_offset_0;
     for(ptrdiff_t ir = 0; ir != LimbsOut; ++ir) {
       const size_t ia0 = ir-limb_offset;
       const size_t ia1 = ir-limb_offset+1;
@@ -495,38 +569,296 @@ inline bignum<LimbsOut> shift_impl(bignum<Limbs> a, ptrdiff_t limb_offset, size_
 // TODO is that a good shift argument type?
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> shift_left_zero_extend(bignum<Limbs> a, uint32_t shift) {
-  const size_t limb_offset = shift / limb_bits;
-  const size_t sub_limb_offset_0 = shift % limb_bits;
-  return shift_impl<false, LimbsOut>(a, limb_offset, sub_limb_offset_0);
+  ptrdiff_t limb_offset = shift / limb_bits;
+  ptrdiff_t sub_limb_offset = shift % limb_bits;
+  if(sub_limb_offset != 0) {
+    ++limb_offset;
+    sub_limb_offset = limb_bits - sub_limb_offset;
+  }
+  return shift_impl<false, LimbsOut>(a, limb_offset, sub_limb_offset);
 }
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> shift_right_zero_extend(bignum<Limbs> a, uint32_t shift) {
   ptrdiff_t limb_offset = shift / limb_bits;
-  ptrdiff_t sub_limb_offset_0 = shift % limb_bits;
-  if(sub_limb_offset_0 != 0) {
-    ++limb_offset;
-    sub_limb_offset_0 = limb_bits - sub_limb_offset_0;
-  }
-  return shift_impl<false, LimbsOut>(a, -limb_offset, sub_limb_offset_0);
+  ptrdiff_t sub_limb_offset = shift % limb_bits;
+  return shift_impl<false, LimbsOut>(a, -limb_offset, sub_limb_offset);
 }
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> shift_left_sign_extend(bignum<Limbs> a, uint32_t shift) {
-  const size_t limb_offset = shift / limb_bits;
-  const size_t sub_limb_offset_0 = shift % limb_bits;
-  return shift_impl<false, LimbsOut>(a, limb_offset, sub_limb_offset_0);
+  ptrdiff_t limb_offset = shift / limb_bits;
+  ptrdiff_t sub_limb_offset = shift % limb_bits;
+  if(sub_limb_offset != 0) {
+    ++limb_offset;
+    sub_limb_offset = limb_bits - sub_limb_offset;
+  }
+  return shift_impl<false, LimbsOut>(a, limb_offset, sub_limb_offset);
 }
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> shift_right_sign_extend(bignum<Limbs> a, uint32_t shift) {
   ptrdiff_t limb_offset = shift / limb_bits;
-  ptrdiff_t sub_limb_offset_0 = shift % limb_bits;
-  if(sub_limb_offset_0 != 0) {
-    ++limb_offset;
-    sub_limb_offset_0 = limb_bits - sub_limb_offset_0;
-  }
-  return shift_impl<true, LimbsOut>(a, -limb_offset, sub_limb_offset_0);
+  ptrdiff_t sub_limb_offset = shift % limb_bits;
+  return shift_impl<true, LimbsOut>(a, -limb_offset, sub_limb_offset);
+}
+
+template<size_t LimbsOut, size_t Limbs>
+inline bignum<LimbsOut> shift_left_either_direction_zero_extend(bignum<Limbs> a, int32_t shift) {
+  if(shift < 0) { return shift_right_zero_extend<LimbsOut>(a, -shift); }
+  else { return shift_left_zero_extend<LimbsOut>(a, shift); }
+}
+template<size_t LimbsOut, size_t Limbs>
+inline bignum<LimbsOut> shift_left_either_direction_sign_extend(bignum<Limbs> a, int32_t shift) {
+  if(shift < 0) { return shift_right_sign_extend(a, -shift); }
+  else { return shift_left_sign_extend(a, shift); }
 }
 
 
+
+template<size_t Limbs>
+inline float to_float_unsigned(bignum<Limbs> a) {
+  static_assert(limb_bits >= 32, "bug");
+  int ir;
+  for(ir = Limbs-1; ir > 0; --ir) {
+    if(a.limbs[ir] != 0) {
+      break;
+    }
+  }
+  if(ir == 0) {
+    return (float)(a.limbs[0]);
+  }
+  else {
+    return
+      ldexpf((float)(a.limbs[ir]), ir*limb_bits) +
+      ldexpf((float)(a.limbs[ir-1]), (ir-1)*limb_bits);
+  }
+}
+template<size_t Limbs>
+inline double to_double_unsigned(bignum<Limbs> a) {
+  static_assert(limb_bits >= 64, "bug");
+  int ir;
+  for(ir = Limbs-1; ir > 0; --ir) {
+    if(a.limbs[ir] != 0) {
+      break;
+    }
+  }
+  if(ir == 0) {
+    //LOG << "zer: " << std::hex << (limb_type)(double)(a.limbs[0]) << "\n";
+    return (double)(a.limbs[0]);
+  }
+  else {
+    /*LOG << "rar: " << std::hex << 
+      (limb_type)(ldexp((double)(a.limbs[ir]), ir*limb_bits) +
+      ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits)) << "\n";*/
+    return
+      ldexp((double)(a.limbs[ir]), ir*limb_bits) +
+      ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits);
+  }
+}
+template<size_t Limbs>
+inline long double to_long_double_unsigned(bignum<Limbs> a) {
+  static_assert(Limbs-Limbs, "unimplemented");
+  return to_double_unsigned(a);
+}
+
+template<size_t Limbs>
+inline float to_float_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_float_unsigned(negate(a)); }
+  else { return to_float_unsigned(a); }
+}
+template<size_t Limbs>
+inline double to_double_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_double_unsigned(negate(a)); }
+  else { return to_double_unsigned(a); }
+}
+template<size_t Limbs>
+inline long double to_long_double_signed(bignum<Limbs> a) {
+  if(is_negative(a)) { return -to_long_double_unsigned(negate(a)); }
+  else { return to_long_double_unsigned(a); }
+}
+#if 0
+template<size_t LimbsOut>
+bignum<LimbsOut> from_float_modulo(float f) {
+  static_assert(limb_bits >= 32, "bug");
+  const bool negative = (f < 0);
+  int exp;
+  float value = frexpf(fabsf(f), &exp);
+  bignum<1> plain = {{(limb_type)(ldexpf(value, 32))}};
+  bignum<LimbsOut> result = shift_left_either_direction_zero_extend<LimbsOut>(plain);
+  if(negative) {
+    result = negate(result);
+  }
+  return result;
+}
+#endif
+template<size_t LimbsOut>
+inline bignum<LimbsOut> from_float_saturating_signed(float f) {
+  static_assert(limb_bits >= 32, "bug");
+  const bool negative = (f < 0);
+  int exp;
+  float value = frexpf(fabsf(f), &exp);
+  bignum<LimbsOut> result;
+  //max representable is e.g. 2^63-1; |value| is in [0.5, 1);
+  //2^63*value fits; 2^64*value doesn't.
+  if(exp >= (ptrdiff_t)(LimbsOut*limb_bits)) {
+    if(negative) {
+      result = min_signed<LimbsOut>();
+    }
+    else {
+      result = max_signed<LimbsOut>();
+    }
+  }
+  else {
+    bignum<1> plain = {{(limb_type)(ldexpf(value, 32))}};
+    result = shift_left_either_direction_zero_extend<LimbsOut>(plain, exp-32);
+    if(negative) {
+      result = negate(result);
+    }
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> from_double_saturating_signed(double f) {
+  static_assert(limb_bits >= 64, "bug");
+  const bool negative = (f < 0);
+  int exp;
+  double value = frexp(fabs(f), &exp);
+  bignum<LimbsOut> result;
+  //max representable is e.g. 2^63-1; |value| is in [0.5, 1);
+  //2^63*value fits; 2^64*value doesn't.
+  if(exp >= (ptrdiff_t)(LimbsOut*limb_bits)) {
+    if(negative) {
+      result = min_signed<LimbsOut>();
+    }
+    else {
+      result = max_signed<LimbsOut>();
+    }
+  }
+  else {
+    bignum<1> plain = {{(limb_type)(ldexp(value, 64))}};
+    result = shift_left_either_direction_zero_extend<LimbsOut>(plain, exp-64);
+    if(negative) {
+      result = negate(result);
+    }
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> from_float_saturating_unsigned(float f) {
+  static_assert(limb_bits >= 32, "bug");
+  bignum<LimbsOut> result;
+  if(f < 0) {
+    result = zero<LimbsOut>();
+  }
+  else {
+    int exp;
+    float value = frexpf(fabsf(f), &exp);
+    //max representable is e.g. 2^64-1; |value| is in [0.5, 1);
+    //2^64*value fits; 2^65*value doesn't.
+    if(exp > (ptrdiff_t)(LimbsOut*limb_bits)) {
+      result = max_unsigned<LimbsOut>();
+    }
+    else {
+      bignum<1> plain = {{(limb_type)(ldexpf(value, 32))}};
+      result = shift_left_either_direction_zero_extend<LimbsOut>(plain, exp-32);
+    }
+  }
+  return result;
+}
+template<size_t LimbsOut>
+inline bignum<LimbsOut> from_double_saturating_unsigned(double f) {
+  static_assert(limb_bits >= 64, "bug");
+  bignum<LimbsOut> result;
+  if(f < 0) {
+    result = zero<LimbsOut>();
+  }
+  else {
+    int exp;
+    double value = frexp(fabs(f), &exp);
+    //max representable is e.g. 2^64-1; |value| is in [0.5, 1);
+    //2^64*value fits; 2^65*value doesn't.
+    //LOG << "SO IT HAS COME TO THIS: " << f << " -> " << std::hex << value << "^^" << std::dec << exp << " ";
+    if(exp > (ptrdiff_t)(LimbsOut*limb_bits)) {
+      //LOG << "WHAT.\n";
+      result = max_unsigned<LimbsOut>();
+    }
+    else {
+      bignum<1> plain = {{(limb_type)(ldexp(value, 64))}};
+      //LOG << "OKAY. " << plain << "\n";
+      result = shift_left_either_direction_zero_extend<LimbsOut>(plain, exp-64);
+    }
+  }
+  return result;
+}
+
+
+
+//TODO is the intermediate multiply result clipping to LimbsOut correct?
+template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
+inline bignum<LimbsOut> long_multiply_by_reciprocal_unsigned(bignum<LimbsA> a, reciprocal_bignum<LimbsB> b) {
+  //LOG << a << " * " << b << ":\n\t" << long_multiply_unsigned<LimbsA+LimbsB>(a, b.reciprocal) << "\n\t"
+  //  << shift_right_zero_extend<LimbsOut>(long_multiply_unsigned<LimbsA+LimbsB>(a, b.reciprocal), b.shift) << "\n";
+  return shift_right_zero_extend<LimbsOut>(long_multiply_unsigned<LimbsA+LimbsB>(a, b.reciprocal), b.shift);
+}
+template<size_t Limbs>
+/*GCC can probably infer that the function does not read or write memory,
+  but make doubly sure it knows this is CSEable (common subexpression elimination).
+  Prevent inlining to increase chances of CSE, since reciprocal is not fast
+  enough to make inlining worth it anyway.*/
+#ifdef __GNUC__
+__attribute__((const,noinline))
+#endif
+// TODO avoid double's exponent-overflow (roughly +-2^1000)
+inline reciprocal_bignum<Limbs> reciprocal_unsigned(bignum<Limbs> a) {
+//  LOG << "recip of " << biguint<Limbs*limb_bits>(a) << "\n";
+  reciprocal_bignum<Limbs> result = {{{}}, 0};
+  // log2 with exact answers rounding down by 1
+  // TODO test divisors of 1
+  int32_t log = (equal(a, bignum<Limbs>{{1}}) ? -1 : log2_unsigned(subtract(a, bignum<Limbs>{{1}})));
+  //int32_t log = log2_unsigned(a);//+1;//or ceil, or special for shifts
+  result.shift = Limbs*limb_bits + log;//+log-2;
+//  LOG << "log: " << log << "\n";
+  // Newton-Raphson iteration, according to 
+  // https://en.wikipedia.org/wiki/Division_algorithm#Newton.E2.80.93Raphson_division
+//  result.reciprocal.limbs[0] = 408940934; //stupid initial guess for the moment
+  //LOG << "So... " << std::hexfloat << ldexp(1.0, Limbs*limb_bits)/to_double_unsigned(a) << "\n";
+//  LOG << "So... ";
+//  fprintf(stderr, "%a\n", ldexp(1.0, result.shift)/to_double_unsigned(a));
+//  LOG << "\n";
+  result.reciprocal = from_double_saturating_unsigned<Limbs>(ldexp(1.0, result.shift)/to_double_unsigned(a));
+  //TODO use double estimates to get initial
+  //TODO faster for single limb
+    LOG<<result<<'\n';
+  // TODO less iterations!
+  for(int i = 0; i < 100; ++i) {
+    static const size_t L = Limbs*4;
+    int32_t s = result.shift;
+    const bignum<L> should_represent_unity = long_multiply_unsigned<L>(result.reciprocal, a);
+    const bignum<L> error = subtract(shift_left_zero_extend<L>(bignum<L>{{1}}, s), should_represent_unity);///* 1 - should_be_unity */ bitwise_complement(should_represent_unity);
+    const bignum<L> reerror = long_multiply_unsigned<L>(result.reciprocal, error);
+    const bignum<Limbs> adjust = shift_right_zero_extend<Limbs>(reerror, s);
+    result.reciprocal = add(result.reciprocal, adjust);
+//    LOG<<result/*<<"<<<<" <<should_represent_unity<<">>>>"<<error<<"!!!!"<<reerror*/<<'\n';
+  }
+    //result.reciprocal = shift_right_zero_extend<Limbs>(result.reciprocal, log+1);
+    //LOG<<result<<'\n';
+  //LOG << "testmult " << biguint<Limbs*limb_bits>(long_multiply_by_reciprocal_unsigned<Limbs>(a, result)) << "\n";
+  if(long_multiply_by_reciprocal_unsigned<1>(a, result).limbs[0] != 1) {
+    LOG << "bumped ";
+    result.reciprocal = add(result.reciprocal, bignum<Limbs>{{1}});
+  }//else{LOG << "n ";}
+  //LOG << "shift: " << result.shift << " res:" << biguint<Limbs*limb_bits>(result.reciprocal) << "\n";
+  //LOG << "?: " << biguint<Limbs*limb_bits>(long_multiply_by_reciprocal_unsigned<Limbs>(a, result)) << "\n";
+  LOG << "reciprocal " << result << " of " << a << "\n";
+  if(!equal(long_multiply_by_reciprocal_unsigned<Limbs>(a, result), bignum<Limbs>{{1}})){LOG << "ASSERTION FAILURE NOT SELFDIV TO 1\n";}
+  return result;
+}
+template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
+/* priority force-inline this so that compilers are more likely
+   to CSE (common subexpression elimination) reciprocal_unsigned if the user
+   divides by the same value multiple times in the same function (which is common) */
+BOOST_FORCEINLINE
+bignum<LimbsOut> divide_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
+  return long_multiply_by_reciprocal_unsigned<LimbsOut>(a, reciprocal_unsigned<LimbsB>(zero_extend<LimbsB>(b)));
+}
 
 template<size_t LimbsOut, size_t Limbs, size_t OperationLimbs = Limbs/2+1>
 inline bignum<LimbsOut> sqrt_unsigned(bignum<Limbs> radicand) {
@@ -558,7 +890,8 @@ inline bignum<LimbsOut> sqrt_unsigned(bignum<Limbs> radicand) {
   /* while(lower_bound < upper_bound - 1) */
   while(less_than_unsigned(lower_bound, add(upper_bound, max_unsigned<OperationLimbs>())))
   {
-    const operation_t mid = shift_impl<false, OperationLimbs>(add(upper_bound, lower_bound), -1, limb_bits-1) /* >> 1 */;
+     /* mid = ((upper_bound + lower_bound) >> 1); */
+    const operation_t mid = shift_impl<false, OperationLimbs>(add(upper_bound, lower_bound), 0, 1);
     if(less_than_unsigned(radicand, long_multiply_unsigned<Limbs>(mid, mid))) {
       upper_bound = mid;
     }
@@ -607,68 +940,14 @@ inline bignum<LimbsOut> add(bignum<LimbsA> a, bignum<LimbsB> b) {
 //TODO subtract, bitwise
 
 
-template<size_t Limbs>
-float to_float_unsigned(bignum<Limbs> a) {
-  static_assert(limb_bits >= 32, "bug");
-  int ir;
-  for(ir = Limbs-1; ir > 0; --ir) {
-    if(a.limbs[ir] != 0) {
-      break;
-    }
-  }
-  if(ir == 0) {
-    return (float)(a.limbs[0]);
-  }
-  else {
-    return
-      ldexpf((float)(a.limbs[ir]), ir*limb_bits) +
-      ldexpf((float)(a.limbs[ir-1]), (ir-1)*limb_bits);
-  }
-}
-template<size_t Limbs>
-double to_double_unsigned(bignum<Limbs> a) {
-  static_assert(limb_bits >= 64, "bug");
-  int ir;
-  for(ir = Limbs-1; ir > 0; --ir) {
-    if(a.limbs[ir] != 0) {
-      break;
-    }
-  }
-  if(ir == 0) {
-    return (double)(a.limbs[0]);
-  }
-  else {
-    return
-      ldexp((double)(a.limbs[ir]), ir*limb_bits) +
-      ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits);
-  }
-}
-template<size_t Limbs>
-long double to_long_double_unsigned(bignum<Limbs> a) {
-  static_assert(Limbs-Limbs, "unimplemented");
-  return to_double_unsigned(a);
-}
 
-template<size_t Limbs>
-float to_float_signed(bignum<Limbs> a) {
-  if(is_negative(a)) { return -to_float_unsigned(negate(a)); }
-  else { return to_float_unsigned(a); }
-}
-template<size_t Limbs>
-double to_double_signed(bignum<Limbs> a) {
-  if(is_negative(a)) { return -to_double_unsigned(negate(a)); }
-  else { return to_double_unsigned(a); }
-}
-template<size_t Limbs>
-long double to_long_double_signed(bignum<Limbs> a) {
-  if(is_negative(a)) { return -to_long_double_unsigned(negate(a)); }
-  else { return to_long_double_unsigned(a); }
-}
 
-template<size_t LimbsOut, size_t Limbs>
+
+
+/*template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> divide_by_limb_unsigned(bignum<Limbs> a, limb_type b) {
   
-}
+}*/
 template<size_t Limbs>
 inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/4 + 1)]) {
   size_t i = 0;
@@ -690,9 +969,6 @@ inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/
 
 //TODO increment could be made faster
 
-template<size_t Bits> struct bigint;
-template<size_t Bits> struct biguint;
-
 
 template<size_t Limbs> inline size_t hash_value(bignum<Limbs> a) {
   size_t seed = 0;
@@ -711,6 +987,15 @@ struct biguint : bignum<(Bits/limb_bits)> {
   biguint() {}
 
   biguint(uint64_t i) : bignum_type(zero_extend_from_uint64<bignum_limbs>(i)) {}
+  biguint(uint32_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
+  biguint(uint16_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
+  biguint(uint8_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
+  biguint(int64_t i) : bignum_type(sign_extend_from_int64<bignum_limbs>(i)) {}
+  biguint(int32_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  biguint(int16_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  biguint(int8_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  explicit biguint(float f) : bignum_type(from_float_saturating_unsigned<bignum_limbs>(f)) {}
+  explicit biguint(double f) : bignum_type(from_double_saturating_unsigned<bignum_limbs>(f)) {}
 
   explicit biguint(bignum_type i) : bignum_type(i) {}
 
@@ -734,6 +1019,10 @@ struct biguint : bignum<(Bits/limb_bits)> {
 
 friend inline biguint<Bits> operator*(biguint<Bits> a, biguint<Bits> b)
 { return biguint<Bits>(long_multiply_unsigned<biguint<Bits>::bignum_limbs>(a, b)); }
+
+// TODO hm
+friend inline biguint<Bits> operator/(biguint<Bits> a, biguint<Bits> b)
+{ return biguint<Bits>(divide_unsigned<biguint<Bits>::bignum_limbs>(a, b)); }
 
 friend inline biguint<Bits> operator+(biguint<Bits> a) { return a; }
 friend inline biguint<Bits> operator-(biguint<Bits> a) { return biguint<Bits>(negate(a)); }
@@ -777,8 +1066,14 @@ friend inline biguint<((bigint<Bits>::bignum_limbs+1)/2)*limb_bits> isqrt(biguin
 { return biguint<((bigint<Bits>::bignum_limbs+1)/2)*limb_bits>(sqrt_unsigned<((bigint<Bits>::bignum_limbs+1)/2)>(a)); }
 friend inline int32_t ilog2(biguint<Bits> a) { return log2_unsigned(a); }
 
-friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) { return os; }
+friend std::ostream& operator<<(std::ostream& os, biguint<Bits> a) {
+  char out[bigint<Bits>::bignum_limbs*(limb_bits/4 + 1)];
+  show_limbs_hex_bigendian(a, out);
+  os << out;
+  return os;
+}
 };
+
 
 
 
@@ -790,7 +1085,16 @@ struct bigint : bignum<(Bits/limb_bits)> {
 
   bigint() {}
 
+  bigint(uint64_t i) : bignum_type(zero_extend_from_uint64<bignum_limbs>(i)) {}
+  bigint(uint32_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
+  bigint(uint16_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
+  bigint(uint8_t i) : bignum_type(zero_extend_from_uint32<bignum_limbs>(i)) {}
   bigint(int64_t i) : bignum_type(sign_extend_from_int64<bignum_limbs>(i)) {}
+  bigint(int32_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  bigint(int16_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  bigint(int8_t i) : bignum_type(sign_extend_from_int32<bignum_limbs>(i)) {}
+  explicit bigint(float f) : bignum_type(from_float_saturating_signed<bignum_limbs>(f)) {}
+  explicit bigint(double f) : bignum_type(from_double_saturating_signed<bignum_limbs>(f)) {}
 
   explicit bigint(bignum_type i) : bignum_type(i) {}
 
@@ -808,6 +1112,7 @@ struct bigint : bignum<(Bits/limb_bits)> {
   explicit operator float()const { return to_float_signed(*this); }
   explicit operator double()const { return to_double_signed(*this); }
   explicit operator long double()const { return to_long_double_signed(*this); }
+  
 
 friend inline bigint<Bits> operator*(bigint<Bits> a, bigint<Bits> b)
 { return bigint<Bits>(long_multiply_signed<bigint<Bits>::bignum_limbs>(a, b)); }
@@ -963,10 +1268,15 @@ namespace HASH_NAMESPACE {
   };
 }
 
+
+
+
+
 #if 0
 // gcc explorer tests
 #include <stdint.h>
 #include <stdlib.h>
+#include <math.h>
 using namespace std;
 typedef __uint128_t DETECTED_uint128_t;
 
