@@ -1194,7 +1194,7 @@ shared_ptr<event> current_event;
     //doing stuff code here
     
     ++frame;
-    if (moving) when += int64_t(1000000000LL)*pico*seconds;
+    if (moving) when += int64_t(10000000000LL)*pico*seconds;
     //std::cerr << when << "\n";
     
     
