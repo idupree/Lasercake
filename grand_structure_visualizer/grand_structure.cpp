@@ -910,6 +910,21 @@ public:
         display_face(faces_[c->f2_], triangles, gl_data_format::color(0xff008080), 3e9);
         display_face(faces_[c->f3_], triangles, gl_data_format::color(0x8000ff80), 3e9);
         display_face(faces_[c->f4_], triangles, gl_data_format::color(0x0000ff80), 3e9);
+        const face f1 = faces_[c->f1_].updated_to_time(present_time_);
+        const face f2 = faces_[c->f2_].updated_to_time(present_time_);
+        const face f3 = faces_[c->f3_].updated_to_time(present_time_);
+        const face f4 = faces_[c->f4_].updated_to_time(present_time_);
+        const vector3<mpz> v1 = approx_loc_of_triple_intersection_of_up_to_date_faces(f2,f3,f4)/distance_units;
+        const vector3<mpz> v2 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f3,f4)/distance_units;
+        const vector3<mpz> v3 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f2,f4)/distance_units;
+        const vector3<mpz> v4 = approx_loc_of_triple_intersection_of_up_to_date_faces(f1,f2,f3)/distance_units;
+        /// haaaaaack
+        glBegin(GL_POINTS);
+          glVertex3f((float)v1.x, (float)v1.y, (float)v1.z);
+          glVertex3f((float)v2.x, (float)v2.y, (float)v2.z);
+          glVertex3f((float)v3.x, (float)v3.y, (float)v3.z);
+          glVertex3f((float)v4.x, (float)v4.y, (float)v4.z);
+        glEnd();
       }
     }
     sort_gl_triangles_far_to_near(
