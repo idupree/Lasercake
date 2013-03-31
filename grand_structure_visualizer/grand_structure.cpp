@@ -343,6 +343,10 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   const mpz t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
   const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
   const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  if ((t1 == 0) || (t2 == 0) || (t3 == 0) || (t4 == 0)) {
+    std::cerr << "Warning: Linearly dependent normals passed to how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point()\n";
+    return boost::none;
+  }
   // in at^2 + bt + c = 0
   acceleration1d a_times_2 = f1.D_acceleration*t1 - f2.D_acceleration*t2 + f3.D_acceleration*t3 - f4.D_acceleration*t4;
   velocity1d     b         = f1.D_velocity    *t1 - f2.D_velocity    *t2 + f3.D_velocity    *t3 - f4.D_velocity    *t4;
@@ -870,6 +874,7 @@ private:
           face& vf3 = faces_[vfc->vertex_face_3()];
           face& sf  = faces_[vfc->struck_face()];
           if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
+            std::cerr << "vfc.\n";
             //stuff
             return true;
           }
@@ -894,6 +899,7 @@ private:
             }
           }
           if (bounded_edges_cross__hack(eec->when_event_occurs_, e11, e12, n1, e21, e22, n2)) {
+            std::cerr << "eec.\n";
             //stuff
             return true;
           }
@@ -1085,7 +1091,7 @@ time_type when = 0;
     
     ++frame;
     if (moving) when += int64_t(1000000000LL)*pico*seconds;
-    std::cerr << when << "\n";
+    //std::cerr << when << "\n";
     
     
     __attribute__((unused)) int after = SDL_GetTicks();
