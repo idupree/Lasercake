@@ -177,6 +177,7 @@ static_assert(get_units<mpz>::is_nonunit_scalar, "erejrqrq");
 
 namespace YO {
 using boost::shared_ptr;
+using boost::dynamic_pointer_cast;
 
 
 struct gl_polygon {
@@ -272,6 +273,7 @@ const vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_m
 typedef uint32_t region_idx_type;
 typedef uint32_t face_idx_type;
 typedef uint32_t vertex_idx_type;
+typedef uint64_t revision_number_type;
 //constexpr region_idx_type no_region_idx = std::numeric_limits<region_idx_type>::max();
 //constexpr face_idx_type no_face_idx = std::numeric_limits<region_idx_type>::max();
 //constexpr vertex_idx_type no_vertex_idx = std::numeric_limits<vertex_idx_type>::max();
@@ -290,7 +292,9 @@ struct edge {
 };
 // All faces are triangles.
 struct face {
+  face():base_time_(0),revision_number_(0),ABC(0),D(0),D_velocity(0),D_acceleration(0){}
   time_type base_time_;
+  revision_number_type revision_number_;
   vector3<mpz> ABC;
   distance D;
   velocity1d D_velocity;
@@ -298,6 +302,7 @@ struct face {
   std::vector<face_idx_type> neighboring_faces_;
   std::vector<region_idx_type> neighboring_regions_;
   face updated_to_time(time_type t)const {
+    assert(t >= base_time_);
     face result(*this);
     const time_type relative_time = t - base_time_;
     const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
@@ -305,6 +310,8 @@ struct face {
     result.D          += D_velocity    *relative_timem                / identity(units_factor<1,    1000>())
                        + D_acceleration*relative_timem*relative_timem / identity(units_factor<1, 1000000>())/2;
     result.D_velocity += D_acceleration*relative_timem                / identity(units_factor<1,    1000>());
+    result.base_time_ = t;
+    ++result.revision_number_;
     return result;
   }
 };
@@ -446,24 +453,41 @@ struct collision : public event {
   face_idx_type f2_;
   face_idx_type f3_;
   face_idx_type f4_;
-  collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
-  event(t),f1_(f1),f2_(f2),f3_(f3),f4_(f4){}
+  revision_number_type r1_;
+  revision_number_type r2_;
+  revision_number_type r3_;
+  revision_number_type r4_;
+  
+  collision(time_type t,
+            face_idx_type f1, revision_number_type r1,
+            face_idx_type f2, revision_number_type r2,
+            face_idx_type f3, revision_number_type r3,
+            face_idx_type f4, revision_number_type r4):
+  event(t),f1_(f1),f2_(f2),f3_(f3),f4_(f4),r1_(r1),r2_(r2),r3_(r3),r4_(r4){}
 };
 struct vertex_face_collision : public collision {
   face_idx_type vertex_face_1()const { return f1_; }
   face_idx_type vertex_face_2()const { return f2_; }
   face_idx_type vertex_face_3()const { return f3_; }
   face_idx_type struck_face  ()const { return f4_; }
-  vertex_face_collision(time_type t, face_idx_type vf1, face_idx_type vf2, face_idx_type vf3, face_idx_type sf):
-    collision(t, vf1, vf2, vf3, sf){}
+  vertex_face_collision(time_type t,
+                        face_idx_type vf1, revision_number_type vf1r,
+                        face_idx_type vf2, revision_number_type vf2r,
+                        face_idx_type vf3, revision_number_type vf3r,
+                        face_idx_type sf , revision_number_type sfr):
+    collision(t, vf1, vf1r, vf2, vf2r, vf3, vf3r, sf, sfr){}
 };
 struct edge_edge_collision : public collision {
   face_idx_type edge_1_face_1()const { return f1_; }
   face_idx_type edge_1_face_2()const { return f2_; }
   face_idx_type edge_2_face_1()const { return f3_; }
   face_idx_type edge_2_face_2()const { return f4_; }
-  edge_edge_collision(time_type t, face_idx_type e11, face_idx_type e12, face_idx_type e21, face_idx_type e22):
-    collision(t, e11, e12, e21, e22){}
+  edge_edge_collision(time_type t,
+                      face_idx_type e11, revision_number_type e11r,
+                      face_idx_type e12, revision_number_type e12r,
+                      face_idx_type e21, revision_number_type e21r,
+                      face_idx_type e22, revision_number_type e22r):
+    collision(t, e11, e11r, e12, e12r, e21, e21r, e22, e22r){}
 };
 
 
@@ -553,21 +577,29 @@ class grand_structure_of_lasercake {
     for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
       const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
       const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
-      const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
-      const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+      face const& old_neighbor_1 = faces_[neighbor_id_1];
+      face const& old_neighbor_2 = faces_[neighbor_id_2];
+      const face present_neighbor_1 = old_neighbor_1.updated_to_time(f.base_time_);
+      const face present_neighbor_2 = old_neighbor_2.updated_to_time(f.base_time_);
 
       for (region_idx_type ri : f.neighboring_regions_) {
         region const& r = regions_[ri];
         for (face_idx_type fi2 : r.faces_) {
           // A vertex doesn't collide with one of its own faces
           if ((fi2 != fi) && (fi2 != neighbor_id_1)) {
-            face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+            face const& old_other_face = faces_[fi2];
+            const face present_other_face = old_other_face.updated_to_time(f.base_time_);
             if (fi2 != neighbor_id_2) {
               if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                 f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                 if (vertex_is_in_bounded_face__hack(*collision_time, f, present_neighbor_1, present_neighbor_2, present_other_face)) {
                   if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                    soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi, neighbor_id_1, neighbor_id_2, fi2));
+                    soonest_event = shared_ptr<event>(new vertex_face_collision(
+                        *collision_time,
+                                   fi,              f.revision_number_,
+                        neighbor_id_1, old_neighbor_1.revision_number_,
+                        neighbor_id_2, old_neighbor_2.revision_number_,
+                                  fi2, old_other_face.revision_number_));
                   }
                 }
               }
@@ -579,12 +611,18 @@ class grand_structure_of_lasercake {
               if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
                 // only consider each edge once. (without this if, each one would be considered twice...)
                 if (other_neighbor_id > fi2) {
-                  face const& present_other_neighbor = faces_[other_neighbor_id].updated_to_time(f.base_time_);
+                  face const& old_other_neighbor = faces_[other_neighbor_id];
+                  const face present_other_neighbor = old_other_neighbor.updated_to_time(f.base_time_);
                   if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                     f, present_neighbor_1, present_other_face, present_other_neighbor)) {
                     if (bounded_edges_cross__hack(*collision_time, f, present_neighbor_1, i, present_other_face, present_other_neighbor, j)) {
                       if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                        soonest_event = shared_ptr<event>(new edge_edge_collision(*collision_time, fi, neighbor_id_1, fi2, other_neighbor_id));
+                        soonest_event = shared_ptr<event>(new edge_edge_collision(
+                            *collision_time,
+                                           fi,                  f.revision_number_,
+                                neighbor_id_1,     old_neighbor_1.revision_number_,
+                                          fi2,     old_other_face.revision_number_,
+                            other_neighbor_id, old_other_neighbor.revision_number_));
                       }
                     }
                   }
@@ -599,7 +637,8 @@ class grand_structure_of_lasercake {
       region const& r = regions_[ri];
       for (face_idx_type fi2 : r.faces_) {
         if (fi2 != fi) {
-          face const& present_other_face = faces_[fi2].updated_to_time(f.base_time_);
+          face const& old_other_face = faces_[fi2];
+          const face present_other_face = old_other_face.updated_to_time(f.base_time_);
           for (size_t i = 0; i < present_other_face.neighboring_faces_.size(); ++i) {
             const face_idx_type neighbor_id_1 = present_other_face.neighboring_faces_[i];
             const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%present_other_face.neighboring_faces_.size()];
@@ -607,13 +646,20 @@ class grand_structure_of_lasercake {
             if ((neighbor_id_1 != fi) && (neighbor_id_2 != fi)) {
               // only consider each vertex once. (without this if, each one would be considered three times...)
               if ((neighbor_id_1 > fi2) && (neighbor_id_2 > fi2)) {
-                const face present_neighbor_1 = faces_[neighbor_id_1].updated_to_time(f.base_time_);
-                const face present_neighbor_2 = faces_[neighbor_id_2].updated_to_time(f.base_time_);
+                face const& old_neighbor_1 = faces_[neighbor_id_1];
+                face const& old_neighbor_2 = faces_[neighbor_id_2];
+                const face present_neighbor_1 = old_neighbor_1.updated_to_time(f.base_time_);
+                const face present_neighbor_2 = old_neighbor_2.updated_to_time(f.base_time_);
                 if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
                   present_other_face, present_neighbor_1, present_neighbor_2, f)) {
                   if (vertex_is_in_bounded_face__hack(*collision_time, present_other_face, present_neighbor_1, present_neighbor_2, f)) {
                     if ((!soonest_event) || (*collision_time < soonest_event->when_event_occurs_)) { // TODO: What if they're the same? Arbitrary ordering?
-                      soonest_event = shared_ptr<event>(new vertex_face_collision(*collision_time, fi2, neighbor_id_1, neighbor_id_2, fi));
+                      soonest_event = shared_ptr<event>(new vertex_face_collision(
+                          *collision_time,
+                                    fi2, old_other_face.revision_number_,
+                          neighbor_id_1, old_neighbor_1.revision_number_,
+                          neighbor_id_2, old_neighbor_2.revision_number_,
+                                     fi,              f.revision_number_));
                     }
                   }
                 }
@@ -794,23 +840,32 @@ public:
     return next_events_.top()->when_event_occurs_;
   }
 private:
-  /*
+  
   void do_next_event() {
-    const shared_ptr<event> ev = next_events.top();
-    next_events.pop();
-    if(const shared_ptr<vertex_face_collision> vfc = dynamic_pointer_cast<vertex_face_collision>(ev)) {
-      // The vertex stays existent; N new vertices also appear where it is,
-      // where N is the number of edges connected to that vertex.
-      // This requires us to split the faces incident to this vertex into
-      // triangles (N more faces).
-      // The face (which is a triangle) disappears and is replaced with
-      // 3+N faces (triangles), plus N faces inside the ring of new vertices.
+    const shared_ptr<event> ev = next_events_.top();
+    next_events_.pop();
+    if (const shared_ptr<collision> c = dynamic_pointer_cast<collision>(ev)) {
+      if (
+        (faces_[c->f1_].revision_number_ == c->r1_) &&
+        (faces_[c->f2_].revision_number_ == c->r2_) &&
+        (faces_[c->f3_].revision_number_ == c->r3_) &&
+        (faces_[c->f4_].revision_number_ == c->r4_)
+      ) {
+        if (const shared_ptr<vertex_face_collision> vfc = dynamic_pointer_cast<vertex_face_collision>(c)) {
+          // The vertex stays existent; N new vertices also appear where it is,
+          // where N is the number of edges connected to that vertex.
+          // This requires us to split the faces incident to this vertex into
+          // triangles (N more faces).
+          // The face (which is a triangle) disappears and is replaced with
+          // 3+N faces (triangles), plus N faces inside the ring of new vertices.
+        }
+        if (const shared_ptr<edge_edge_collision> eec = dynamic_pointer_cast<edge_edge_collision>(c)) {
+          // The two edges do not share a vertex, because we make sure to
+          // generate only a vertex--face collision in that case.
+        }
+      }
     }
-    if(const shared_ptr<edge_edge_collision> eec = dynamic_pointer_cast<edge_edge_collision>(ev)) {
-      // The two edges do not share a vertex, because we make sure to
-      // generate only a vertex--face collision in that case.
-    }
-  }*/
+  }
   
 };
 
