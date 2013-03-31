@@ -368,7 +368,9 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
       // return divide(-c * identity(time_units / seconds), b, strat);
       // but overflow stuff
       // also see below
-      return divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+      const time_type zero = divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+      //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
+      return zero;
     }
     else {
       if (a_times_2 < 0) {
@@ -379,9 +381,23 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = isqrt(discriminant);
       const velocity1d  lesser_numerator = -b - sqrt_disc;
-      if ( lesser_numerator >= 0) return divide(lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if ( lesser_numerator >= 0)  {
+        const time_type zero = divide(
+            lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units),
+            a_times_2,
+            strat)*time_units/seconds;
+        //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
+        return zero;
+      }
       const velocity1d greater_numerator = -b + sqrt_disc;
-      if (greater_numerator >= 0) return divide(greater_numerator * mpz(identity(time_units / seconds)*seconds/time_units), a_times_2, strat)*time_units/seconds;
+      if (greater_numerator >= 0) {
+        const time_type zero = divide(
+            greater_numerator * mpz(identity(time_units / seconds)*seconds/time_units),
+            a_times_2,
+            strat)*time_units/seconds;
+        //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
+        return zero;
+      }
       return boost::none;
     }
   }
@@ -659,7 +675,7 @@ public:
     hack_insert_rock(vector3<mpz>(2, 7, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(2, 14, 11)*meters*identity(distance_units/meters));
     hack_insert_rock(vector3<mpz>(15, 14, 21)*meters*identity(distance_units/meters));
-    hack_insert_fixed_cube(vector3<mpz>(15, 14, -10)*meters*identity(distance_units/meters));
+    hack_insert_fixed_cube(vector3<mpz>(8, 10, -11)*meters*identity(distance_units/meters));
 
     // TODO don't duplicate events here.
     for (face_idx_type fi = 0; fi < faces_.size(); ++fi) {
