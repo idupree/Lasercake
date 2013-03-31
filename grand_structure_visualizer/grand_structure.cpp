@@ -577,8 +577,8 @@ class grand_structure_of_lasercake {
           }
         }
         else {
-          const mpz sign_correction = (pv1_to_v(dim1)*pv1_to_pv2(dim1) > 0) ? 1 : -1;
-          if (pv1_to_v(dim2)*pv1_to_pv2(dim1)*sign_correction >= pv1_to_pv2(dim2)*pv1_to_v(dim1)*sign_correction) {
+          const mpz sign_correction = (pv1_to_v(dim1) > 0) ? 1 : -1;
+          if (pv1_to_pv2(dim2)*pv1_to_v(dim1)*sign_correction >= pv1_to_v(dim2)*pv1_to_pv2(dim1)*sign_correction) {
             ++crosses;
           }
         }
