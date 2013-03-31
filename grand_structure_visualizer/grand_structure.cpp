@@ -290,11 +290,13 @@ struct face {
     assert(t >= base_time_);
     face result(*this);
     const time_type relative_time = t - base_time_;
-    const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
+    //const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
     //TODO deal with times somehow more correctly
-    result.D          += D_velocity    *relative_timem                / identity(units_factor<1,    1000>())
-                       + D_acceleration*relative_timem*relative_timem / identity(units_factor<1, 1000000>())/2;
-    result.D_velocity += D_acceleration*relative_timem                / identity(units_factor<1,    1000>());
+    const mpz trillion = 1000000000000;
+    result.D          += ((D_velocity    *seconds/distance_units) * (relative_time/time_units) / trillion *distance_units)
+                       + (D_acceleration*seconds*seconds/distance_units)*(relative_time/time_units)*(relative_time/time_units) / 2
+                       / (trillion*trillion) * distance_units;
+    result.D_velocity += (D_acceleration*seconds/distance_units)*(relative_time/time_units)/ trillion * distance_units;
     result.base_time_ = t;
     ++result.revision_number_;
     return result;
