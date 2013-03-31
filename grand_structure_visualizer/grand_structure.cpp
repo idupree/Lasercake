@@ -151,7 +151,7 @@ friend inline mpz isqrt(mpz a)
 //friend inline int32_t ilog2(mpz a) { return ; }
 
 friend std::ostream& operator<<(std::ostream& os, mpz a) {
-  return os << a;
+  return os << a.data_;
 }
 friend float get_primitive_float(mpz a) {
   return a.data_.get_d();
