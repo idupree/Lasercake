@@ -490,6 +490,9 @@ struct edge_edge_collision : public collision {
     collision(t, e11, e11r, e12, e12r, e21, e21r, e22, e22r){}
 };
 
+struct event_ptr_compare {
+  bool operator()(shared_ptr<event> const& a, shared_ptr<event> const& b)const { return a->when_event_occurs_ > b->when_event_occurs_; }
+};
 
 // Maybe the structures should be required to follow some kind of right-hand-rule
 // order? Then asserts could check that it is still correct, and OpenGL would
@@ -497,7 +500,7 @@ struct edge_edge_collision : public collision {
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
-  std::priority_queue<shared_ptr<event>> next_events_;
+  std::priority_queue<shared_ptr<event>, std::vector<shared_ptr<event>>, event_ptr_compare> next_events_;
 
   bool bounded_edges_cross__hack(time_type t, face const& e11_old, face const& e12_old, size_t neighbor_idx_in_e11, face const& e21_old, face const& e22_old, size_t neighbor_idx_in_e21)const {
     const face e11 = e11_old.updated_to_time(t);
