@@ -500,6 +500,7 @@ struct event_ptr_compare {
 class grand_structure_of_lasercake {
   std::vector<region> regions_;
   std::vector<face> faces_;
+  time_type present_time_;
   std::priority_queue<shared_ptr<event>, std::vector<shared_ptr<event>>, event_ptr_compare> next_events_;
 
   bool bounded_edges_cross__hack(time_type t, face const& e11_old, face const& e12_old, size_t neighbor_idx_in_e11, face const& e21_old, face const& e22_old, size_t neighbor_idx_in_e21)const {
@@ -805,16 +806,23 @@ public:
   // TODO thing-ness e.g. robots
   //void player_input_becomes(time_type when, );
   //void insert_event(time_type when, );
-  gl_triangles display(time_type when, vector3<distance> where) {
+  void update_to_time(time_type when) {
+    assert(when >= present_time_);
+    while(!next_events_.empty() && next_events_.top()->when_event_occurs_ < when) {
+      do_next_event();
+    }
+    present_time_ = when;
+  }
+  gl_triangles display(vector3<distance> where) {
     //assert(when < next_event_time)
     gl_triangles triangles;
     for(face const& f : faces_) {
       gl_polygon polygon;
-      const face present_face = f.updated_to_time(when);
+      const face present_face = f.updated_to_time(present_time_);
       for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
         const size_t j = (i+1)%f.neighboring_faces_.size();
-        const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(when);
-        const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(when);
+        const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(present_time_);
+        const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(present_time_);
         const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
         polygon.vertices_.push_back(gl_data_format::vertex_with_color(
           get_primitive_float(loc.x/distance_units),
@@ -835,9 +843,18 @@ public:
     if (next_events_.empty()) return 0;
     return next_events_.top()->when_event_occurs_;
   }
+  time_type advance_to_next_real_event() {
+    while(!next_events_.empty()) {
+      time_type t = next_events_.top()->when_event_occurs_;
+      if (do_next_event()) return t;
+    }
+    return present_time_;
+  }
 private:
-  
-  void do_next_event() {
+
+  // Returns true if an event happened, false if the event was invalid for one reason or another.
+  // I can't think of a real reason for it to do that, it's just that way for debugging purposes.
+  bool do_next_event() {
     const shared_ptr<event> ev = next_events_.top();
     next_events_.pop();
     if (const shared_ptr<collision> c = dynamic_pointer_cast<collision>(ev)) {
@@ -854,6 +871,7 @@ private:
           face& sf  = faces_[vfc->struck_face()];
           if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
             //stuff
+            return true;
           }
         }
         if (const shared_ptr<edge_edge_collision> eec = dynamic_pointer_cast<edge_edge_collision>(c)) {
@@ -877,17 +895,19 @@ private:
           }
           if (bounded_edges_cross__hack(eec->when_event_occurs_, e11, e12, n1, e21, e22, n2)) {
             //stuff
+            return true;
           }
         }
       }
     }
+    return false;
   }
   
 };
 
 
 
-void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, time_type when) {
+void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame) {
   //std::cerr<<"hi.\n";
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -902,7 +922,7 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, time_t
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
             0,0,0, 0,0,1);
 
-  gl_triangles data = simulated_world.display(when, vector3<distance>(viewcenter*distance_units));
+  gl_triangles data = simulated_world.display(vector3<distance>(viewcenter*distance_units));
   if(const size_t count = data.size()*3) {
     GLuint triangles_VBO_name;
     glGenBuffersARB(1, &triangles_VBO_name);
@@ -1034,6 +1054,7 @@ time_type when = 0;
           if(event.key.keysym.sym == SDLK_p) ++p_mode;
           if(event.key.keysym.sym == SDLK_m) moving = !moving;
           if(event.key.keysym.sym == SDLK_e) when = simulated_world.time_of_next_event();
+          if(event.key.keysym.sym == SDLK_r) when = simulated_world.advance_to_next_real_event();
           //if(event.key.keysym.sym == SDLK_r) ++view_dist;
           //if(event.key.keysym.sym == SDLK_f) --view_dist;
           if(event.key.keysym.sym != SDLK_ESCAPE)break;
@@ -1052,8 +1073,9 @@ time_type when = 0;
 
     
     __attribute__((unused)) int before_GL = SDL_GetTicks();
-    
-    do_gl(simulated_world, frame, when);
+
+    simulated_world.update_to_time(when);
+    do_gl(simulated_world, frame);
     glFinish();	
     SDL_GL_SwapBuffers();
    
