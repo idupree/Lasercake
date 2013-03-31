@@ -340,6 +340,23 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   acceleration1d a_times_2 = f1.D_acceleration*t1 - f2.D_acceleration*t2 + f3.D_acceleration*t3 - f4.D_acceleration*t4;
   velocity1d     b         = f1.D_velocity    *t1 - f2.D_velocity    *t2 + f3.D_velocity    *t3 - f4.D_velocity    *t4;
   distance       c         = f1.D             *t1 - f2.D             *t2 + f3.D             *t3 - f4.D             *t4;
+
+#if 0
+if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
+
+  std::cerr << f1.ABC << "\n";
+  std::cerr << f2.ABC << "\n";
+  std::cerr << f3.ABC << "\n";
+  std::cerr << f4.ABC << "\n\n";
+  std::cerr << t1 << "\n";
+  std::cerr << t2 << "\n";
+  std::cerr << t3 << "\n";
+  std::cerr << t4 << "\n\n";
+  std::cerr << a_times_2 << "\n";
+  std::cerr << b << "\n";
+  std::cerr << c << "\n\n";
+}
+#endif
   
   // (-b +/- sqrt(b^2 - 2(a_times_2)c)) / a_times_2
   const auto discriminant = b*b - a_times_2*2*c;
