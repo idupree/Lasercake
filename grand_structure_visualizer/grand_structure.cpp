@@ -442,23 +442,28 @@ struct event {
   event(time_type t):when_event_occurs_(t){}
 };
 struct collision : public event {
-  collision(time_type t):event(t){}
+  face_idx_type f1_;
+  face_idx_type f2_;
+  face_idx_type f3_;
+  face_idx_type f4_;
+  collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
+  event(t),f1_(f1),f2_(f2),f3_(f3),f4_(f4){}
 };
 struct vertex_face_collision : public collision {
-  face_idx_type vertex_face_1_;
-  face_idx_type vertex_face_2_;
-  face_idx_type vertex_face_3_;
-  face_idx_type struck_face_;
-  vertex_face_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
-    collision(t),vertex_face_1_(f1),vertex_face_2_(f2),vertex_face_3_(f3),struck_face_(f4){}
+  face_idx_type vertex_face_1()const { return f1_; }
+  face_idx_type vertex_face_2()const { return f2_; }
+  face_idx_type vertex_face_3()const { return f3_; }
+  face_idx_type struck_face  ()const { return f4_; }
+  vertex_face_collision(time_type t, face_idx_type vf1, face_idx_type vf2, face_idx_type vf3, face_idx_type sf):
+    collision(t, vf1, vf2, vf3, sf){}
 };
 struct edge_edge_collision : public collision {
-  face_idx_type edge_1_face_1_;
-  face_idx_type edge_1_face_2_;
-  face_idx_type edge_2_face_1_;
-  face_idx_type edge_2_face_2_;
-  edge_edge_collision(time_type t, face_idx_type f1, face_idx_type f2, face_idx_type f3, face_idx_type f4):
-    collision(t),edge_1_face_1_(f1),edge_1_face_2_(f2),edge_2_face_1_(f3),edge_2_face_2_(f4){}
+  face_idx_type edge_1_face_1()const { return f1_; }
+  face_idx_type edge_1_face_2()const { return f2_; }
+  face_idx_type edge_2_face_1()const { return f3_; }
+  face_idx_type edge_2_face_2()const { return f4_; }
+  edge_edge_collision(time_type t, face_idx_type e11, face_idx_type e12, face_idx_type e21, face_idx_type e22):
+    collision(t, e11, e12, e21, e22){}
 };
 
 
