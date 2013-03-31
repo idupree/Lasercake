@@ -306,6 +306,19 @@ BOOST_AUTO_TEST_CASE(bignum_runtests) {
   BOOST_CHECK_EQUAL(biguint<128>(5) / biguint<128>(2), 2);
   BOOST_CHECK_EQUAL(biguint<128>(6) / biguint<128>(2), 3);
 
+  BOOST_CHECK_THROW(biguint<128>(0) / biguint<128>(0), std::logic_error);
+  BOOST_CHECK_THROW(biguint<128>(1) / biguint<128>(0), std::logic_error);
+
+  BOOST_CHECK_EQUAL(biguint<128>(0) / biguint<128>(1), 0);
+  BOOST_CHECK_EQUAL(biguint<128>(1) / biguint<128>(1), 1);
+  BOOST_CHECK_EQUAL(biguint<128>(2) / biguint<128>(1), 2);
+  BOOST_CHECK_EQUAL(biguint<128>(3) / biguint<128>(1), 3);
+  BOOST_CHECK_EQUAL(biguint<128>(4) / biguint<128>(1), 4);
+  BOOST_CHECK_EQUAL(biguint<128>(5) / biguint<128>(1), 5);
+  BOOST_CHECK_EQUAL(biguint<128>(6) / biguint<128>(1), 6);
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 128) - 1) / biguint<128>(1), ((biguint<128>(1) << 128) - 1));
+  BOOST_CHECK_EQUAL(((biguint<128>(1) << 128) - 2) / biguint<128>(1), ((biguint<128>(1) << 128) - 2));
+
   BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 1) / ((biguint<128>(1) << 120) - 3), 1);
   BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 3) / ((biguint<128>(1) << 120) - 3), 1);
   BOOST_CHECK_EQUAL(((biguint<128>(1) << 120) - 4) / ((biguint<128>(1) << 120) - 3), 0);

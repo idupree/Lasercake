@@ -807,48 +807,38 @@ template<size_t Limbs>
 __attribute__((const,noinline))
 #endif
 // TODO avoid double's exponent-overflow (roughly +-2^1000)
+// TODO do something faster for single limb
 inline reciprocal_bignum<Limbs> reciprocal_unsigned(bignum<Limbs> a) {
-//  LOG << "recip of " << biguint<Limbs*limb_bits>(a) << "\n";
+  caller_correct_if(nonzero(a), "division by or reciprocal of zero");
   reciprocal_bignum<Limbs> result = {{{}}, 0};
-  // log2 with exact answers rounding down by 1
-  // TODO test divisors of 1
-  int32_t log = (equal(a, bignum<Limbs>{{1}}) ? -1 : log2_unsigned(subtract(a, bignum<Limbs>{{1}})));
-  //int32_t log = log2_unsigned(a);//+1;//or ceil, or special for shifts
+  // log2 with exact powers-of-2 rounding down by 1:
+  const int32_t log = (equal(a, bignum<Limbs>{{1}}) ? -1 : log2_unsigned(subtract(a, bignum<Limbs>{{1}})));
   result.shift = Limbs*limb_bits + log;//+log-2;
-//  LOG << "log: " << log << "\n";
   // Newton-Raphson iteration, according to 
   // https://en.wikipedia.org/wiki/Division_algorithm#Newton.E2.80.93Raphson_division
-//  result.reciprocal.limbs[0] = 408940934; //stupid initial guess for the moment
+//  LOG << "log: " << log << "\n";
   //LOG << "So... " << std::hexfloat << ldexp(1.0, Limbs*limb_bits)/to_double_unsigned(a) << "\n";
 //  LOG << "So... ";
 //  fprintf(stderr, "%a\n", ldexp(1.0, result.shift)/to_double_unsigned(a));
 //  LOG << "\n";
   result.reciprocal = from_double_saturating_unsigned<Limbs>(ldexp(1.0, result.shift)/to_double_unsigned(a));
-  //TODO use double estimates to get initial
-  //TODO faster for single limb
-    LOG<<result<<'\n';
-  // TODO less iterations!
-  for(int i = 0; i < 100; ++i) {
-    static const size_t L = Limbs*4;
-    int32_t s = result.shift;
+  //  LOG<<result<<'\n';
+  while(true) {
+    static const size_t L = Limbs*2+1;
     const bignum<L> should_represent_unity = long_multiply_unsigned<L>(result.reciprocal, a);
-    const bignum<L> error = subtract(shift_left_zero_extend<L>(bignum<L>{{1}}, s), should_represent_unity);///* 1 - should_be_unity */ bitwise_complement(should_represent_unity);
+    const bignum<L> error = subtract(shift_left_zero_extend<L>(bignum<L>{{1}}, result.shift), should_represent_unity);
     const bignum<L> reerror = long_multiply_unsigned<L>(result.reciprocal, error);
-    const bignum<Limbs> adjust = shift_right_zero_extend<Limbs>(reerror, s);
+    const bignum<Limbs> adjust = shift_right_zero_extend<Limbs>(reerror, result.shift);
+    if(!nonzero(adjust)) { break; }
     result.reciprocal = add(result.reciprocal, adjust);
 //    LOG<<result/*<<"<<<<" <<should_represent_unity<<">>>>"<<error<<"!!!!"<<reerror*/<<'\n';
   }
-    //result.reciprocal = shift_right_zero_extend<Limbs>(result.reciprocal, log+1);
-    //LOG<<result<<'\n';
-  //LOG << "testmult " << biguint<Limbs*limb_bits>(long_multiply_by_reciprocal_unsigned<Limbs>(a, result)) << "\n";
   if(long_multiply_by_reciprocal_unsigned<1>(a, result).limbs[0] != 1) {
-    LOG << "bumped ";
+//    LOG << "bumped ";
     result.reciprocal = add(result.reciprocal, bignum<Limbs>{{1}});
-  }//else{LOG << "n ";}
-  //LOG << "shift: " << result.shift << " res:" << biguint<Limbs*limb_bits>(result.reciprocal) << "\n";
-  //LOG << "?: " << biguint<Limbs*limb_bits>(long_multiply_by_reciprocal_unsigned<Limbs>(a, result)) << "\n";
-  LOG << "reciprocal " << result << " of " << a << "\n";
-  if(!equal(long_multiply_by_reciprocal_unsigned<Limbs>(a, result), bignum<Limbs>{{1}})){LOG << "ASSERTION FAILURE NOT SELFDIV TO 1\n";}
+  }
+//  LOG << "reciprocal " << result << " of " << a << "\n";
+  assert(equal(long_multiply_by_reciprocal_unsigned<Limbs>(a, result), bignum<Limbs>{{1}}));//{LOG << "ASSERTION FAILURE NOT SELFDIV TO 1\n";}
   return result;
 }
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
