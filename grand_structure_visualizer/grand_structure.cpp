@@ -315,6 +315,17 @@ vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face con
     f1.D * (f2.ABC(0)*f3.ABC(1) - f3.ABC(0)*f2.ABC(1)) + f2.D * (f3.ABC(0)*f1.ABC(1) - f1.ABC(0)*f3.ABC(1)) + f3.D * (f1.ABC(0)*f2.ABC(1) - f2.ABC(0)*f1.ABC(1))
                  ) / p;
 }
+// Note: This function will need to change a LOT more than the above function if the change stuff gets more complicated.
+// Perhaps it should just be approximated experimentally (dv/dt for very small t).
+vector3<velocity1d> approx_velocity_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
+  mpz p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
+  assert(p != 0);
+  return vector3<velocity1d>(
+    f1.D_velocity * (f2.ABC(1)*f3.ABC(2) - f3.ABC(1)*f2.ABC(2)) + f2.D_velocity * (f3.ABC(1)*f1.ABC(2) - f1.ABC(1)*f3.ABC(2)) + f3.D_velocity * (f1.ABC(1)*f2.ABC(2) - f2.ABC(1)*f1.ABC(2)),
+    f1.D_velocity * (f2.ABC(2)*f3.ABC(0) - f3.ABC(2)*f2.ABC(0)) + f2.D_velocity * (f3.ABC(2)*f1.ABC(0) - f1.ABC(2)*f3.ABC(0)) + f3.D_velocity * (f1.ABC(2)*f2.ABC(0) - f2.ABC(2)*f1.ABC(0)),
+    f1.D_velocity * (f2.ABC(0)*f3.ABC(1) - f3.ABC(0)*f2.ABC(1)) + f2.D_velocity * (f3.ABC(0)*f1.ABC(1) - f1.ABC(0)*f3.ABC(1)) + f3.D_velocity * (f1.ABC(0)*f2.ABC(1) - f2.ABC(0)*f1.ABC(1))
+                 ) / p;
+}
 
 // TODO : What about the cases where two of the planes are parallel? That's legit (handle them separately? they're easier)
 faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4/*, bool hack_recurse_test = true*/) {
@@ -996,16 +1007,19 @@ private:
             region& r1 = regions_[ri1];
             region& r2 = regions_[ri2];
             assert(r1.contents = ROCK); assert(r2.contents = ROCK);
-            vector3<mpz> normal = sf.ABC;
-            // Hack, this is COMPLETELY wrong
-            vector3<velocity1d> vel_thing = normal * (mpz(1000000000)*distance_units/seconds) / normal.magnitude_using<mpz>();
             for (face_idx_type fi : r1.faces_) {
               faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
-              faces_[fi].D_velocity *= -1; //= faces_[fi].ABC.dot<mpz>(vel_thing);
             }
             for (face_idx_type fi : r2.faces_) {
               faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
-              faces_[fi].D_velocity *= -1; // = -faces_[fi].ABC.dot<mpz>(vel_thing);
+            }
+            vector3<mpz> normal = sf.ABC;
+            vector3<velocity1d> problem_velocity = normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1, vf2, vf3).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
+            for (face_idx_type fi : r1.faces_) {
+              faces_[fi].D_velocity -= problem_velocity.dot<mpz>(faces_[fi].ABC);
+            }
+            for (face_idx_type fi : r2.faces_) {
+              faces_[fi].D_velocity += problem_velocity.dot<mpz>(faces_[fi].ABC);
             }
             // TODO : have the recomputation be automated somehow
             for (face_idx_type fi : r1.faces_) {
