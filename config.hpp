@@ -111,6 +111,8 @@
 
   #if LASERCAKE_GCC_LESS_THAN_4_7
     #define override
+  #else
+    #define LASERCAKE_HAVE_USER_DEFINED_LITERALS 1
   #endif
 
   /*#if defined(__GNUC__)
