@@ -24,7 +24,88 @@
 
 #include <boost/type_traits/conditional.hpp>
 
-// Compile-time arbitrary-precision naturals, integers, and rational numbers.
+// Compile-time arbitrary-precision naturals, integers, and rational numbers
+// whose value is represented in their type (specifically, in their template
+// arguments).  Equal values are guaranteed to have identical types.
+//
+//  Example:
+//      INT(10000000000000000000000000000000000000000) * RAT(2/3)
+//  represents exactly 20000000000000000000000000000000000000000/3
+//
+//  Example:
+//    constexpr auto atto_value = pow(INT(10), INT(-18));
+//    typedef decltype(atto_value) atto_type; //or
+//    typedef decltype(pow(INT(10), INT(-18))) atto_type;
+//
+// === TYPES (you will see these in compiler error messages) ===
+// In compile error messages, natural numbers are represented in little-endian
+// base-1-million digits, each digit (probably) shown in decimal.
+// For example, a billion is ct::nat<0, 1000>.
+//
+// (TODO: make it big-endian because that's more readable, at the cost of
+// compile time reversing the order to compute e.g. addition and multiplication.)
+//
+// Negative integers are negative<nat<..>>.
+// Non-integer rationals are in canonical form and
+//   rational<nat<..>, nat<..>>   or   negative<rational<nat<..>, nat<..>>>.
+// All compile-time-number types T are derived from ct::number<T> to make
+// operator/function overloading on them easier.
+//
+//
+// === CONSTRUCTION ===
+// Literals are macros (TODO)
+//   INT(integer-literal)
+//   RAT(integer-literal-numerator, integer-literal-denominator)
+//   INTtype(integer-literal)
+//   RATtype(integer-literal-numerator, integer-literal-denominator)
+// INT(n) returns a value, and INTtype(n) returns decltype(INT(n)); likewise
+// for RAT.  Literals support any number of digits[1].
+//
+// Non numeric-literal integral-constant-expressions can be converted to
+// this family of arbitrary-precision types thus: (TODO)
+//   ct::from_int<integral-constant-expression>::value
+//   ct::from_uint<integral-constant-expression>::value
+//   typename ct::from_int<integral-constant-expression>::type
+//   typename ct::from_uint<integral-constant-expression>::type
+//
+// Each type is default-constructible and usable in arithmetic
+// (TODO add conversions to other numeric types). It stores no runtime data.
+//
+// === OPERATIONS ===
+// Operations are defined on the value level because it has nice syntax.
+//
+//   decltype(a)     //use one of these numbers as a type
+//   +a              //
+//   -a
+//   abs(a)
+//   a + b
+//   a - b
+//   a * b
+//   a / b           //rational division
+//   reciprocal(a)   //rational reciprocal
+//   div(a, b).quot  //integral division rounding towards zero
+//   div(a, b).rem   //integral remainder rounding towards zero
+//   pow(a, b)       //integer exponents permitted (TODO rational exponents
+//                     (crib from numbers.hpp static_root_nonnegative_integer)
+//                     (though what should it do when the result is irrational))
+//TODO:
+//   floor(a)        //round towards negative infinity to nearest integer
+//   ceil(a)         //round towards positive infinity to nearest integer
+//   round(a)        //round towards nearest integer (ties go to even)
+//   round(a, rounding_strategy)
+//   a % b  or  fmod(a, b) or remainder(a, b)   //rational modulus
+// Should this support bit-shifts (same as value*pow(INT(2), shift) and
+// value/pow(INT(2), shift); or should they be floor() of those?)?
+// What about bitwise operations |&^~ ? Should they operate on the
+// twos-complement representation?  Do we know how to compute this
+// with rationals?
+//
+// [1] Potentially limited by compiler limits on number of template arguments
+// (each character/digit is a template argument during our numeric-literal-parsing).
+// For limited compilers with variadic templates but not
+// user-defined-numeric-literals (GCC 4.6), it is also limited by
+// Boost.Preprocessor's limit of 256 (BOOST_PP_LIMIT_REPEAT) digits.
+
 
 // ct = compile-time
 namespace ct {
@@ -70,6 +151,11 @@ struct rational : number<rational<Num,Den>> {};
 
 struct divide_by_zero {};
 
+//TODO
+//struct in_base
+//struct integer_to_base
+
+namespace impl {
 /*
 // represents Nat * base^milliodigits_shifted_left
 template<int32_t milliodigits_shifted_left, typename Nat>
@@ -83,7 +169,8 @@ template<typename NumA, typename NumB> struct subtract;
 // Natural number subtraction (negative results become 'below_zero')
 template<typename NatA, typename NatB> struct subtract_nat;
 template<typename Num> struct negate;
-template<typename Num, intmax_t Exponent> struct power;
+template<typename Num> struct abs;
+template<typename Num, typename Exponent> struct power;
 // Compare: ::value is -1 if lhs < rhs; 0 if equal; 1 if lhs > rhs
 template<typename NatA, typename NatB> struct compare;
 template<typename Integer> struct even;
@@ -98,6 +185,10 @@ template<typename Rat> struct reciprocal;
 
 template<typename Num> struct round_down_to_nat;
 
+// Works on any integer/rational; returns the canonical rational representation.
+// For negative numbers, numerator is negative and denominator is positive.
+template<typename Rat> struct numerator;
+template<typename Rat> struct denominator;
 
 // add and multiply are associative
 template<typename NatA, typename NatB, typename NatC, typename...Nat>
@@ -285,9 +376,35 @@ template<typename B, uintmax_t OddExponent> struct power_impl2<B, OddExponent, t
 };
 template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, false>
   : power_impl2<Base, (uintmax_t(Exponent))> {};
-template<typename Base, intmax_t Exponent>
-struct power : power_impl1<Base, Exponent> {};
 
+// Large exponents are large.  Even with a small base, 2,
+// 2^(1000000*1000000) is sure not to fit in memory.  It has 10^12 bits:
+// a bit more than 10^11 bytes, a.k.a. 100 GB.
+// In practice, template-instantiation depth is likely to make the limit
+// much lower.
+template<typename Base, milliodigit ExponentMilliodigit>
+struct power<Base, nat<ExponentMilliodigit>> : power_impl1<Base, ExponentMilliodigit> {};
+template<typename Base, milliodigit ExponentMilliodigit0, milliodigit ExponentMilliodigit1>
+struct power<Base, nat<ExponentMilliodigit0, ExponentMilliodigit1>>
+  : power_impl1<Base, ExponentMilliodigit1*base + ExponentMilliodigit0> {};
+// Certain combinations work with even huge exponents.
+template<typename Exponent> struct power<nat<>, Exponent> { typedef nat<> type; };
+template<typename Exponent> struct power<nat<1>, Exponent> { typedef nat<1> type; };
+template<typename Exponent> struct power<negative<nat<1>>, Exponent>
+  : boost::conditional<even<Exponent>::value, nat<1>, negative<nat<1>>> {};
+// 0 to the 0 is more often 1 than 0.
+template<> struct power<nat<>, nat<>> { typedef nat<1> type; };
+template<typename Base, typename Exponent>
+struct power {
+  static_assert(sizeof(Base) && false, "Compile-time-exponentiation overflow");
+};
+
+template<milliodigit... Milliodigits> struct numerator<nat<Milliodigits...>> {
+  typedef nat<Milliodigits...> type;
+};
+template<milliodigit... Milliodigits> struct denominator<nat<Milliodigits...>> {
+  typedef nat<1> type;
+};
 
 ///////////////////////////
 //// Natural-number truncating division
@@ -564,16 +681,26 @@ template<typename NatA> struct divide_nat<NatA, nat<>> {
 ///////////////////////////
 
 // Integer subtraction
+template<typename NatA, typename NatB,
+  bool AIsLess = (compare<NatA, NatB>::value == -1)>
+struct subtract_impl;
+
+template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
+struct subtract_impl<nat<MilliodigitsA...>, nat<MilliodigitsB...>, true> {
+  typedef negative<typename subtract_nat<nat<MilliodigitsB...>,
+                                         nat<MilliodigitsA...>>::type> type;
+};
+template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
+struct subtract_impl<nat<MilliodigitsA...>, nat<MilliodigitsB...>, false> {
+  typedef typename subtract_nat<nat<MilliodigitsA...>,
+                                nat<MilliodigitsB...>>::type type;
+};
+
 template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
 struct subtract<nat<MilliodigitsA...>, nat<MilliodigitsB...>>
-  : boost::conditional<
-      (compare<nat<MilliodigitsA...>, nat<MilliodigitsB...>>::value == -1),
-        negative<typename subtract_nat<nat<MilliodigitsB...>,
-                                       nat<MilliodigitsA...>>::type>,
-        typename subtract_nat<nat<MilliodigitsA...>,
-                              nat<MilliodigitsB...>>::type> {};
+  : subtract_impl<nat<MilliodigitsA...>, nat<MilliodigitsB...>> {};
 
-// extend add and subtract to operations involving one or more negatives
+// Signed add/subtract
 template<typename T1, typename T2> struct add<negative<T1>, negative<T2>> {
   typedef negative<typename add<T1, T2>::type> type;
 };
@@ -585,7 +712,7 @@ template<typename T1, typename T2> struct subtract<negative<T1>, T2> {
   typedef negative<typename add<T1, T2>::type> type;
 };
 
-// Integer multiplication
+// Signed multiplication
 template<typename T1, typename T2> struct multiply<negative<T1>, negative<T2>> : multiply<T1, T2> {};
 template<typename T1, typename T2> struct multiply<negative<T1>, T2> {
   typedef negative<typename multiply<T1, T2>::type> type;
@@ -594,17 +721,31 @@ template<typename T1, typename T2> struct multiply<T1, negative<T2>> {
   typedef negative<typename multiply<T1, T2>::type> type;
 };
 
-// Integer comparison
+// Signed comparison
 template<typename T1, typename T2> struct compare<negative<T1>, negative<T2>> : compare<T2, T1> {};
 template<typename T1, typename T2> struct compare<negative<T1>, T2> : boost::integral_constant<int, (-1)> {};
 template<typename T1, typename T2> struct compare<T1, negative<T2>> : boost::integral_constant<int, 1> {};
 
-// Integer negation
+// (Signed) negation
 template<typename T> struct negate {
   typedef negative<T> type;
 };
 template<typename T> struct negate<negative<T>> {
   typedef T type;
+};
+template<typename T> struct abs {
+  typedef T type;
+};
+template<typename T> struct abs<negative<T>> {
+  typedef T type;
+};
+
+// Signed numerator/denominator
+template<typename T> struct numerator<negative<T>> {
+  typedef negative<typename numerator<T>::type> type;
+};
+template<typename T> struct denominator<negative<T>> {
+  typedef typename denominator<T>::type type;
 };
 
 // Integer division following int operator/ semantics
@@ -850,89 +991,17 @@ template<typename T1, typename T2> struct divide_rational<T1, negative<T2>> {
   typedef negative<typename divide_rational<T1, T2>::type> type;
 };
 
-//template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, true>
-//  : reciprocal<typename power_impl2<Base, (-uintmax_t(Exponent))>::type> {};
+template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, true>
+  : reciprocal<typename power_impl2<Base, (-uintmax_t(Exponent))>::type> {};
 
 // numerator<>
 // denominator<>
 // digit<base, exp>
-namespace impl {
-struct make_any_number {
-  template<typename T> constexpr inline operator T()const { return T(); }
-};
-}
 
-// ADL (Argument Dependent Lookup) will find these templates when appropriate...
-// but wait, will they - ok added number<> base
-// div vs / ??
-
-template<typename A> constexpr inline A
-operator+(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename negate<A>::type
-operator-(number<A>) { return impl::make_any_number(); }
-
-template<typename A, typename B> constexpr inline typename add<A, B>::type
-operator+(number<A>, number<B>) { return impl::make_any_number(); }
-
-template<typename A, typename B> constexpr inline typename subtract<A, B>::type
-operator-(number<A>, number<B>) { return impl::make_any_number(); }
-
-template<typename A, typename B> constexpr inline typename multiply<A, B>::type
-operator*(number<A>, number<B>) { return impl::make_any_number(); }
-
-template<typename A, typename B> constexpr inline typename divide_rational<A, B>::type
-operator/(number<A>, number<B>) { return impl::make_any_number(); }
-
-template<typename Quot, typename Rem>
-struct ctdiv_t {
-  Quot quot;
-  Rem rem;
-};
-template<typename A, typename B> constexpr inline
-ctdiv_t<typename divide_integer<A, B>::quot, typename divide_integer<A, B>::rem>
-div(number<A>, number<B>) { return impl::make_any_number(); }
-
-
-template<typename A, typename B> constexpr inline bool
-operator==(number<A>, number<B>) { return compare<A, B>::value == 0; }
-template<typename A, typename B> constexpr inline bool
-operator!=(number<A>, number<B>) { return compare<A, B>::value != 0; }
-template<typename A, typename B> constexpr inline bool
-operator<(number<A>, number<B>) { return compare<A, B>::value == -1; }
-template<typename A, typename B> constexpr inline bool
-operator>(number<A>, number<B>) { return compare<A, B>::value == 1; }
-template<typename A, typename B> constexpr inline bool
-operator<=(number<A>, number<B>) { return compare<A, B>::value != 1; }
-template<typename A, typename B> constexpr inline bool
-operator>=(number<A>, number<B>) { return compare<A, B>::value != -1; }
-/*
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type
-floor(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_up, negative_continuous_with_positive>>::type
-ceil(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_to_nearest_with_ties_rounding_to_even>>::type
-nearbyint(number<A>) { return impl::make_any_number(); }
-*/
-
-// and operator bool, maybe explicit operator float, etc.
-// I suppose the user-visible types should *anyway* be different from the intermediates...
-
-//#define NATt(integer) typename ::ct::integer_literal<(integer)>::type
-//#define NATv(integer) (typename ::ct::integer_literal<(integer)>::type())
-
-//pow
-//abs
-
-// NATlong or NAT using user integer literals
-// usually, and fixed-limit slower-compile stringify constant exprs
-// for gcc 4.6
 
 template<char...Digits> struct parse_nat;
 
-// based on open-std document N3531 2013-03-08
+// partially based on open-std document N3531 2013-03-08
 // http://www.open-std.org/JTC1/SC22/WG21/docs/papers/2013/n3531.pdf
 template <unsigned Base, typename Accumulator, char... Digits> struct parse_digits;
 template <char... Digits> struct parse_nat;
@@ -940,6 +1009,11 @@ template <char... Digits> struct parse_nat<'0','x',Digits...> : parse_digits<16,
 template <char... Digits> struct parse_nat<'0','X',Digits...> : parse_digits<16, nat<>, Digits...> {};
 template <char... Digits> struct parse_nat<'0',Digits...> : parse_digits<8, nat<>, Digits...> {};
 template <char... Digits> struct parse_nat : parse_digits<10, nat<>, Digits...> {};
+
+template <char... Digits> struct parse_integer : parse_nat<Digits...> {};
+template <char... Digits> struct parse_integer<'-',Digits...> {
+  typedef negative<parse_nat<Digits...>> type;
+};
 
 template <unsigned Base, typename Accumulator>
 struct parse_digits<Base, Accumulator> { typedef Accumulator type; };
@@ -982,61 +1056,98 @@ PARSE_DIGIT('D', 0xD)
 PARSE_DIGIT('E', 0xE)
 PARSE_DIGIT('F', 0xF)
 #undef PARSE_DIGIT
+
+struct make_any_number {
+  template<typename T> constexpr inline operator T()const { return T(); }
+};
+} /* end namespace ct::impl */
+
+
+// ADL (Argument Dependent Lookup) will find these templates when appropriate.
+// operator/ is rational division; div() is integer division.
+
+template<typename A> constexpr inline A
+operator+(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename impl::negate<A>::type
+operator-(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename impl::abs<A>::type
+abs(number<A>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline typename impl::add<A, B>::type
+operator+(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline typename impl::subtract<A, B>::type
+operator-(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline typename impl::multiply<A, B>::type
+operator*(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline typename impl::divide_rational<A, B>::type
+operator/(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A> constexpr inline typename impl::reciprocal<A>::type
+reciprocal(number<A>) { return impl::make_any_number(); }
+
+template<typename Quot, typename Rem>
+struct ctdiv_t {
+  Quot quot;
+  Rem rem;
+};
+template<typename A, typename B> constexpr inline
+ctdiv_t<typename impl::divide_integer<A, B>::quot, typename impl::divide_integer<A, B>::rem>
+div(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline typename impl::power<A, B>::type
+pow(number<A>, number<B>) { return impl::make_any_number(); }
+
+template<typename A, typename B> constexpr inline bool
+operator==(number<A>, number<B>) { return impl::compare<A, B>::value == 0; }
+template<typename A, typename B> constexpr inline bool
+operator!=(number<A>, number<B>) { return impl::compare<A, B>::value != 0; }
+template<typename A, typename B> constexpr inline bool
+operator<(number<A>, number<B>) { return impl::compare<A, B>::value == -1; }
+template<typename A, typename B> constexpr inline bool
+operator>(number<A>, number<B>) { return impl::compare<A, B>::value == 1; }
+template<typename A, typename B> constexpr inline bool
+operator<=(number<A>, number<B>) { return impl::compare<A, B>::value != 1; }
+template<typename A, typename B> constexpr inline bool
+operator>=(number<A>, number<B>) { return impl::compare<A, B>::value != -1; }
 /*
-template <unsigned base> struct parse_digits<base> { typedef nat<> type; };
-template <unsigned base, char... Digits>
-struct parse_digits<base,'0',Digits...> {
-  typedef typename parse_digits<base, Digits>::type type;
-};
-// could do it 6-at-a-time for decimal..
-#define PARSE_DIGIT(ch, n) \
-template <unsigned base, char... Digits> \
-struct parse_digits<base,ch,Digits...> { \
-static_assert(base > n,"invalid digit"); \
-typedef typename add< \
-    typename multiply_by_milliodigit< \
-      typename power<base, sizeof...(Digits)>, \
-      1>, \
-    parse_digits<base,Digits...>::type \
-  >::type type; \
-};
-PARSE_DIGIT('1', 1)
-PARSE_DIGIT('2', 2)
-PARSE_DIGIT('3', 3)
-PARSE_DIGIT('4', 4)
-PARSE_DIGIT('5', 5)
-PARSE_DIGIT('6', 6)
-PARSE_DIGIT('7', 7)
-PARSE_DIGIT('8', 8)
-PARSE_DIGIT('9', 9)
-PARSE_DIGIT('a', 0xa)
-PARSE_DIGIT('b', 0xb)
-PARSE_DIGIT('c', 0xc)
-PARSE_DIGIT('d', 0xd)
-PARSE_DIGIT('e', 0xe)
-PARSE_DIGIT('f', 0xf)
-PARSE_DIGIT('A', 0xA)
-PARSE_DIGIT('B', 0xB)
-PARSE_DIGIT('C', 0xC)
-PARSE_DIGIT('D', 0xD)
-PARSE_DIGIT('E', 0xE)
-PARSE_DIGIT('F', 0xF)
-#undef PARSE_DIGIT
-#endif
+template<typename A> constexpr inline typename
+round<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type
+floor(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename
+round<A, rounding_strategy<round_up, negative_continuous_with_positive>>::type
+ceil(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename
+round<A, rounding_strategy<round_to_nearest_with_ties_rounding_to_even>>::type
+nearbyint(number<A>) { return impl::make_any_number(); }
 */
 
-template<char...Digits>
-constexpr inline typename parse_nat<Digits...>::type
-_NAT() { return impl::make_any_number(); }
+// and operator bool, maybe explicit operator float, etc.
+// I suppose the user-visible types should *anyway* be different from the intermediates...
+
+//#define NATt(integer) typename ::ct::integer_literal<(integer)>::type
+//#define NATv(integer) (typename ::ct::integer_literal<(integer)>::type())
+
+//pow
+//abs
+
+// NATlong or NAT using user integer literals
+// usually, and fixed-limit slower-compile stringify constant exprs
+// for gcc 4.6
 
 } /* end namespace ct */
 
 #if LASERCAKE_HAVE_USER_DEFINED_LITERALS
 
 template<char...Digits>
-constexpr inline typename ct::parse_nat<Digits...>::type
-operator "" _NAT() { return ct::impl::make_any_number(); }
+constexpr inline typename ct::impl::parse_nat<Digits...>::type
+operator "" _NAT() {
+  return ct::impl::make_any_number();
+}
 
+#include <boost/preprocessor/cat.hpp>
 #define NAT(n) (BOOST_PP_CAT(n,_NAT))
 
 #else
@@ -1044,20 +1155,36 @@ operator "" _NAT() { return ct::impl::make_any_number(); }
 // This might not be the fastest possible; our GCC 4.6 support is grudging.
 #include <boost/preprocessor/config/limits.hpp>
 #include <boost/preprocessor/repetition/enum.hpp>
+#include <boost/preprocessor/stringize.hpp>
 #define CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX(z, n, str) \
   (sizeof(str) > n ? str[n] : '\0')
 #define CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(ident) \
-  BOOST_PP_ENUM(BOOST_PP_LIMIT_REPEAT, CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX, #ident)
-#define NAT(n) (::ct::_NAT<CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(n)>())
+  BOOST_PP_ENUM(BOOST_PP_LIMIT_REPEAT, CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX, BOOST_PP_STRINGIZE(ident))
+#define NAT(n) (::ct::impl::_NAT<sizeof(BOOST_PP_STRINGIZE(n)), \
+                                 CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(n)>())
 #endif
 
-// NATt NATv
-//#define NATtype(integer) typename ::ct::literal<decltype((integer)), (integer)>::type
-//#define NAT(integer) (make_literal<decltype((integer)), (integer)>())
-//#define NATtype(integer) typename ::ct::literal<unsigned long long, (BOOST_PP_CAT(integer,ull))>::type
-//#define NATtype(integer) typename ::ct::literal<uintmax_t, (UINTMAX_C(integer))>::type
-//#define NAT(integer) (make_literal<uintmax_t, (UINTMAX_C(integer))>())
+#define NATtype(n) decltype(NAT(n))
 
+namespace ct {
+namespace impl {
+template<size_t NumDigits, char...Digits>
+constexpr inline typename impl::parse_nat<Digits...>::type
+_NAT() {
+#if !LASERCAKE_HAVE_USER_DEFINED_LITERALS
+  static_assert(NumDigits <= BOOST_PP_LIMIT_REPEAT,
+    "ct:: compile-time numeric literal has more digits than supported by this environment.");
+#endif
+  return impl::make_any_number();
+}
+}} /* end namespaces ct::impl, ct */
+
+
+/*
+ * ideas
+// NAT could be INT: for operator"" _NAT it is trivial, and for the workaround it requires
+// detecting leading '-' in the template which is easy.
+// INT(i) and RAT(num, den) ?
 //domain
 struct N;
 struct Z;
@@ -1069,7 +1196,7 @@ struct NaN;// division by zero, subtraction in N
 //Oh hm we might need constexpr sqrt.  Then it needs to specify
 //a rounding mode and/or precision?  Or we need to make real<> HAR HAR HAR
 //(which contains a compile-time-function exponent->bit or similar)
-
+*/
 
 
 
