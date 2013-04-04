@@ -28,6 +28,7 @@
 
 
 #include "../data_structures/bignum.hpp"
+#include "../data_structures/compile_time_bignum.hpp"
 
 
 #include "../data_structures/bounds_checked_int.hpp"
@@ -43,6 +44,57 @@ template class biguint<192>;
 template class bigint<0>;
 template class biguint<0>;
 */
+
+namespace ct_test {
+using namespace ct;
+static_assert(compare<nat<>, nat<1>>::value == -1, "bug");
+static_assert(compare<nat<1>, nat<>>::value == 1, "bug");
+static_assert(compare<nat<1>, nat<1>>::value == 0, "bug");
+static_assert(compare<nat<>, nat<>>::value == 0, "bug");
+static_assert(compare<nat<>, nat<>>::value == 0, "bug");
+static_assert(compare<negative<nat<1>>, nat<>>::value == -1, "bug");
+static_assert(compare<nat<>, negative<nat<1>>>::value == 1, "bug");
+
+static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
+static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
+//static_assert(typename integer_literal<1234567>::type() -
+//  typename integer_literal<1234000>::type() == nat<567>(), "bug");
+//static_assert(bool(typename ::ct::integer_literal<1>::type() + typename ::ct::integer_literal<2>::type()), "bug");
+//static_assert(NATv(1234567) - NATv(1234000) == NATv(567), "bug");
+static_assert(NAT(1234567) - NAT(1234000) == NAT(567), "bug");
+static_assert(NAT(2) * NAT(3) == NAT(6), "bug");
+static_assert(NAT(0x10) * NAT(0x10) == NAT(0x100), "bug");
+template<typename T> constexpr inline bool check_same_type(T, T) { return true; }
+#define CHECK_SAME_TYPE(a,b) static_assert(check_same_type(a, b), "bug: different types");
+CHECK_SAME_TYPE(NAT(10000000000000) * NAT(10000000000000), NAT(100000000000000000000000000))
+CHECK_SAME_TYPE(NAT(0x10000000000) * NAT(0x10000000000), NAT(0x100000000000000000000))
+static_assert(NAT(0x10000000000) * NAT(0x10000000000) == NAT(0x100000000000000000000), "bug");
+
+typedef floating<(-1), nat<1>> f1;
+typedef typename add<f1, f1>::type f1_2;
+typedef floating<(-1), nat<2>> f2;
+typedef typename multiply<f2, f2>::type f2_3;
+typedef floating<(-2), nat<4>> f3;
+typedef typename multiply<f3, f1>::type f3_4;
+typedef floating<(-3), nat<4>> f4;
+typedef typename subtract<f1, f1>::type f1_0;
+typedef floating<(-1), nat<>> f0;
+typedef typename set_floating_milliodigit_exponent_rounding_down<(-2), f1>::type f7;
+typedef floating<(-2), nat<0, 1>> f72;
+
+CHECK_SAME_TYPE(f1_2(), f2())
+CHECK_SAME_TYPE(f2_3(), f3())
+CHECK_SAME_TYPE(f3_4(), f4())
+CHECK_SAME_TYPE(f1_0(), f0())
+CHECK_SAME_TYPE(f7(), f72())
+CHECK_SAME_TYPE(div(NAT(5), NAT(3)).quot, NAT(1))
+CHECK_SAME_TYPE(div(NAT(3), NAT(3)).quot, NAT(1))
+CHECK_SAME_TYPE(div(NAT(10000000000000), NAT(10000000000000)).quot, NAT(1))
+CHECK_SAME_TYPE(div(NAT(100000000000000), NAT(10000000000000)).quot, NAT(10))
+CHECK_SAME_TYPE(NAT(10) / NAT(10), NAT(1))
+CHECK_SAME_TYPE(NAT(10000000000000) / NAT(10000000000000), NAT(1))
+CHECK_SAME_TYPE(NAT(10000000000000) / NAT(1000000000000), NAT(10))
+}
 
 static void bignum_compile_test() {
   bigint<128> aa = bigint<64>{};
