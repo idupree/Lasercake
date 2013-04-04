@@ -293,7 +293,14 @@ struct power : power_impl1<Base, Exponent> {};
 //// Natural-number truncating division
 ///////////////////////////
 
-// Natural number division
+#if 0
+// could be a compilation-time-optimization
+template<milliodigit... Milliodigits, milliodigit Divisor>
+struct divide_by_milliodigit<nat<Milliodigits...>, Divisor> {
+  
+};
+#endif
+
 template<typename Nat, shift_type Shift> struct shift_left_by_milliodigits;
 template<milliodigit... Milliodigits, shift_type Shift>
 struct shift_left_by_milliodigits<nat<Milliodigits...>, Shift>
@@ -426,7 +433,7 @@ struct initial_recip_estimate<nat<MilliodigitM0, MilliodigitM1, Milliodigits...>
 template<milliodigit Milliodigit0, milliodigit...Milliodigits>
 struct initial_recip_estimate<nat<Milliodigit0, Milliodigits...>>
   : initial_recip_estimate<nat<Milliodigits...>> {};
-#if 0
+#if 1
 template<milliodigit MilliodigitM0, milliodigit MilliodigitM1>
 struct initial_recip_estimate<nat<MilliodigitM1, MilliodigitM0>> {
   typedef nat<(base*base / (MilliodigitM0*base + MilliodigitM1))> type;
@@ -443,7 +450,7 @@ template<>
 struct initial_recip_estimate<nat<0, 1>> {
   typedef nat<0, 1> type;
 };
-#endif
+#else
 // Always round down, so that this code never need deal with a negative adjustment,
 // and so that base / Milliodigit < base even when Milliodigit is 1.
 template<milliodigit MilliodigitM0, milliodigit MilliodigitM1>
@@ -454,6 +461,7 @@ template<milliodigit Milliodigit>
 struct initial_recip_estimate<nat<Milliodigit>> {
   typedef nat<(base / (Milliodigit + 1))> type;
 };
+#endif
 
 template<typename Nat, shift_type milliodigits_below_1, typename EstimateFloating>
 struct reciprocal_nat_as_floating_impl1;
@@ -475,20 +483,6 @@ struct reciprocal_nat_as_floating_impl3<floating<Shift, Nat>, nat<1>> {
 };
 template<typename Nat, shift_type milliodigits_below_1, typename EstimateFloating>
 struct reciprocal_nat_as_floating_impl1
-#if 0
-{
-  typedef typename set_floating_milliodigit_exponent_rounding_down<
-        (-milliodigits_below_1),
-        typename multiply<
-          EstimateFloating,
-          typename subtract<
-            floating<0, nat<1>>,
-            typename multiply<
-              floating<0, Nat>,
-              EstimateFloating
-              >::type>::type>::type>::type type;
-};
-#else
   : reciprocal_nat_as_floating_impl2<Nat, milliodigits_below_1, EstimateFloating,
       typename set_floating_milliodigit_exponent_rounding_down<
         (-milliodigits_below_1),
@@ -500,7 +494,7 @@ struct reciprocal_nat_as_floating_impl1
               floating<0, Nat>,
               EstimateFloating
               >::type>::type>::type>::type> {};
-#endif
+
 // use (milliodigits_of_precision+1) because there is no attempt for the
 // top milliodigit to have a full digit's worth of information.
 template<typename Nat, shift_type milliodigits_of_precision>
@@ -521,19 +515,7 @@ struct reciprocal_nat_as_floating {
     >::type type;
 };
 
-template<typename NatA, typename NatB> struct divide_nat_optimize {
-#if 0
-  typedef typename multiply<
-      floating<0, NatA>,
-      typename reciprocal_nat_as_floating<
-        NatB,
-        milliodigit_count<NatA>::value>::type>::type quotz;
-  typedef typename reciprocal_nat_as_floating<
-        NatB,
-        milliodigit_count<NatA>::value>::type quot;
-  typedef quot type;
-  typedef nat<> rem;
-#else
+template<typename NatA, typename NatB> struct divide_nat_optimize2 {
   typedef typename round_down_to_nat<typename multiply<
       floating<0, NatA>,
       typename reciprocal_nat_as_floating<
@@ -541,29 +523,36 @@ template<typename NatA, typename NatB> struct divide_nat_optimize {
         milliodigit_count<NatA>::value>::type>::type>::type quot;
   typedef quot type;
   typedef typename subtract_nat<NatA, typename multiply<quot, NatB>::type>::type rem;
-#endif
 };
-#if 0
-template<typename NatA> struct divide_nat_optimize<NatA, nat<1>> {
+template<milliodigit MilliodigitA, milliodigit MilliodigitB>
+struct divide_nat_optimize2<nat<MilliodigitA>, nat<MilliodigitB>> {
+  typedef nat<(MilliodigitA / MilliodigitB)> quot;
+  typedef quot type;
+  typedef nat<(MilliodigitA % MilliodigitB)> rem;
+};
+template<typename NatA, typename NatB> struct divide_nat_optimize1
+  : divide_nat_optimize2<NatA, NatB> {};
+template<typename Nat> struct divide_nat_optimize1<Nat, Nat> {
+  typedef nat<1> quot;
+  typedef quot type;
+  typedef nat<> rem;
+};
+template<typename NatA> struct divide_nat_optimize1<NatA, nat<1>> {
   typedef NatA quot;
   typedef quot type;
   typedef nat<> rem;
 };
-template<typename Nat> struct divide_nat_optimize<Nat, Nat> {
+template<> struct divide_nat_optimize1<nat<1>, nat<1>> {
   typedef nat<1> quot;
   typedef quot type;
   typedef nat<> rem;
 };
-template<typename NatA> struct divide_nat_optimize<nat<1>, nat<1>> {
-  typedef nat<1> quot;
-  typedef quot type;
-  typedef nat<> rem;
-};
+#if 0
 template<typename NatA, milliodigit MilliodigitB> struct divide_nat_optimize<NatA, nat<MilliodigitB>>
   : divide_by_milliodigit<NatA, MilliodigitB> {};
 #endif
 template<typename NatA, typename NatB> struct divide_nat
-  : divide_nat_optimize<NatA, NatB> {};
+  : divide_nat_optimize1<NatA, NatB> {};
 template<typename NatA> struct divide_nat<NatA, nat<>> {
   typedef divide_by_zero quot;
   typedef quot type;
