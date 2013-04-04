@@ -1198,6 +1198,10 @@ namespace std {
 template<size_t Bits>
 class numeric_limits< biguint<Bits> >
 {
+  //static constexpr double log10_2 = 0.3010299956639811952137388947244930267681898814621085;
+  // --> http://www.mindspring.com/~alanh/fracs.html -->
+  static constexpr uint64_t log10_2_numerator = 44240665;
+  static constexpr uint64_t log10_2_denominator = 146964308;
 public:
   static constexpr bool is_specialized = true;
   static biguint<Bits> min() noexcept { return biguint<Bits>(bignum::zero<biguint<Bits>::bignum_limbs>()); }
@@ -1205,7 +1209,7 @@ public:
   static biguint<Bits> lowest() noexcept { return biguint<Bits>(bignum::zero<biguint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits;
-  static constexpr int  digits10 = Bits * std::log10(2);
+  static constexpr int  digits10 = Bits * log10_2_numerator / log10_2_denominator;
   static constexpr bool is_signed = false;
   static constexpr bool is_integer = true;
   static constexpr bool is_exact = true;
@@ -1220,6 +1224,8 @@ public:
 template<size_t Bits>
 class numeric_limits< bigint<Bits> >
 {
+  static constexpr uint64_t log10_2_numerator = 44240665;
+  static constexpr uint64_t log10_2_denominator = 146964308;
 public:
   static constexpr bool is_specialized = true;
   static bigint<Bits> min() noexcept { return bigint<Bits>(bignum::min_signed<bigint<Bits>::bignum_limbs>()); }
@@ -1227,7 +1233,7 @@ public:
   static bigint<Bits> lowest() noexcept { return bigint<Bits>(bignum::min_signed<bigint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits-1;
-  static constexpr int  digits10 = (Bits-1) * std::log10(2);
+  static constexpr int  digits10 = (Bits-1) * log10_2_numerator / log10_2_denominator;
   static constexpr bool is_signed = true;
   static constexpr bool is_integer = true;
   static constexpr bool is_exact = true;
