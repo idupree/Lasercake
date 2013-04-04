@@ -47,6 +47,10 @@ template class biguint<0>;
 
 namespace ct_test {
 using namespace ct;
+using namespace ct::impl;
+template<typename T> constexpr inline bool check_same_type(T, T) { return true; }
+#define CHECK_SAME_TYPE(a,b) static_assert(check_same_type(a, b), "bug: different types");
+
 static_assert(compare<nat<>, nat<1>>::value == -1, "bug");
 static_assert(compare<nat<1>, nat<>>::value == 1, "bug");
 static_assert(compare<nat<1>, nat<1>>::value == 0, "bug");
@@ -55,20 +59,17 @@ static_assert(compare<nat<>, nat<>>::value == 0, "bug");
 static_assert(compare<negative<nat<1>>, nat<>>::value == -1, "bug");
 static_assert(compare<nat<>, negative<nat<1>>>::value == 1, "bug");
 
+CHECK_SAME_TYPE(INTEGER(0xf), INTEGER(15))
+
+
 static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
 static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
-//static_assert(typename integer_literal<1234567>::type() -
-//  typename integer_literal<1234000>::type() == nat<567>(), "bug");
-//static_assert(bool(typename ::ct::integer_literal<1>::type() + typename ::ct::integer_literal<2>::type()), "bug");
-//static_assert(NATv(1234567) - NATv(1234000) == NATv(567), "bug");
-static_assert(NAT(1234567) - NAT(1234000) == NAT(567), "bug");
-static_assert(NAT(2) * NAT(3) == NAT(6), "bug");
-static_assert(NAT(0x10) * NAT(0x10) == NAT(0x100), "bug");
-template<typename T> constexpr inline bool check_same_type(T, T) { return true; }
-#define CHECK_SAME_TYPE(a,b) static_assert(check_same_type(a, b), "bug: different types");
-CHECK_SAME_TYPE(NAT(10000000000000) * NAT(10000000000000), NAT(100000000000000000000000000))
-CHECK_SAME_TYPE(NAT(0x10000000000) * NAT(0x10000000000), NAT(0x100000000000000000000))
-static_assert(NAT(0x10000000000) * NAT(0x10000000000) == NAT(0x100000000000000000000), "bug");
+static_assert(INTEGER(1234567) - INTEGER(1234000) == INTEGER(567), "bug");
+static_assert(INTEGER(2) * INTEGER(3) == INTEGER(6), "bug");
+static_assert(INTEGER(0x10) * INTEGER(0x10) == INTEGER(0x100), "bug");
+CHECK_SAME_TYPE(INTEGER(10000000000000) * INTEGER(10000000000000), INTEGER(100000000000000000000000000))
+CHECK_SAME_TYPE(INTEGER(0x10000000000) * INTEGER(0x10000000000), INTEGER(0x100000000000000000000))
+static_assert(INTEGER(0x10000000000) * INTEGER(0x10000000000) == INTEGER(0x100000000000000000000), "bug");
 
 typedef floating<(-1), nat<1>> f1;
 typedef typename add<f1, f1>::type f1_2;
@@ -87,13 +88,72 @@ CHECK_SAME_TYPE(f2_3(), f3())
 CHECK_SAME_TYPE(f3_4(), f4())
 CHECK_SAME_TYPE(f1_0(), f0())
 CHECK_SAME_TYPE(f7(), f72())
-CHECK_SAME_TYPE(div(NAT(5), NAT(3)).quot, NAT(1))
-CHECK_SAME_TYPE(div(NAT(3), NAT(3)).quot, NAT(1))
-CHECK_SAME_TYPE(div(NAT(10000000000000), NAT(10000000000000)).quot, NAT(1))
-CHECK_SAME_TYPE(div(NAT(100000000000000), NAT(10000000000000)).quot, NAT(10))
-CHECK_SAME_TYPE(NAT(10) / NAT(10), NAT(1))
-CHECK_SAME_TYPE(NAT(10000000000000) / NAT(10000000000000), NAT(1))
-CHECK_SAME_TYPE(NAT(10000000000000) / NAT(1000000000000), NAT(10))
+CHECK_SAME_TYPE(INTEGER(5) - INTEGER(3), INTEGER(2))
+CHECK_SAME_TYPE(INTEGER(3) - INTEGER(5), -INTEGER(2))
+CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(3)).quot, INTEGER(1))
+CHECK_SAME_TYPE(div(INTEGER(3), INTEGER(3)).quot, INTEGER(1))
+CHECK_SAME_TYPE(div(INTEGER(10000000000000), INTEGER(10000000000000)).quot, INTEGER(1))
+CHECK_SAME_TYPE(div(INTEGER(100000000000000), INTEGER(10000000000000)).quot, INTEGER(10))
+CHECK_SAME_TYPE(INTEGER(10) / INTEGER(10), INTEGER(1))
+CHECK_SAME_TYPE(INTEGER(10000000000000) / INTEGER(10000000000000), INTEGER(1))
+CHECK_SAME_TYPE(INTEGER(10000000000000) / INTEGER(1000000000000), INTEGER(10))
+
+CHECK_SAME_TYPE(+INTEGER(10), INTEGER(10))
+CHECK_SAME_TYPE(-INTEGER(10), INTEGER(10) - INTEGER(20))
+CHECK_SAME_TYPE(-INTEGER(10), INTEGER(-10))
+CHECK_SAME_TYPE(abs(INTEGER(-10)), INTEGER(10))
+CHECK_SAME_TYPE(abs(INTEGER(10)), INTEGER(10))
+CHECK_SAME_TYPE(INTEGER(-10) * INTEGER(-2), INTEGER(20))
+CHECK_SAME_TYPE(INTEGER(-11) / INTEGER(-2), RATIONAL(11, 2))
+CHECK_SAME_TYPE(reciprocal(INTEGER(-11)), RATIONAL(-1, 11))
+CHECK_SAME_TYPE(reciprocal(RATIONAL(-1, 11)), INTEGER(-11))
+CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(3)).quot, INTEGER(1))
+CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(3)).rem, INTEGER(2))
+CHECK_SAME_TYPE(div(INTEGER(-5), INTEGER(3)).quot, INTEGER(-1))
+CHECK_SAME_TYPE(div(INTEGER(-5), INTEGER(3)).rem, INTEGER(-2))
+CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(-3)).quot, INTEGER(-1))
+CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(-3)).rem, INTEGER(2))
+CHECK_SAME_TYPE(div(INTEGER(-5), INTEGER(-3)).quot, INTEGER(1))
+CHECK_SAME_TYPE(div(INTEGER(-5), INTEGER(-3)).rem, INTEGER(-2))
+
+CHECK_SAME_TYPE(pow(INTEGER(2), INTEGER(7)), INTEGER(128))
+CHECK_SAME_TYPE(pow(INTEGER(-2), INTEGER(7)), INTEGER(-128))
+CHECK_SAME_TYPE(pow(INTEGER(-2), INTEGER(-7)), reciprocal(INTEGER(-128)))
+CHECK_SAME_TYPE(
+  pow(INTEGER(0),
+      INTEGER(9999999999999999999999999999999999999999999999999999999999999999999)),
+  INTEGER(0))
+CHECK_SAME_TYPE(
+  pow(INTEGER(1),
+      INTEGER(9999999999999999999999999999999999999999999999999999999999999999999)),
+  INTEGER(1))
+CHECK_SAME_TYPE(
+  pow(INTEGER(-1),
+      INTEGER(9999999999999999999999999999999999999999999999999999999999999999999)),
+  INTEGER(-1))
+CHECK_SAME_TYPE(
+  pow(INTEGER(-1),
+      INTEGER(9999999999999999999999999999999999999999999999999999999999999999998)),
+  INTEGER(1))
+
+CHECK_SAME_TYPE(RATIONAL(6, 3), INTEGER(2))
+static const RATIONALtype(6, 3) testthing = INTEGERtype(2)();
+CHECK_SAME_TYPE(ct::from_int<(23)>::value, INTEGER(23))
+CHECK_SAME_TYPE(ct::from_int<(-23)>::value, INTEGER(-23))
+CHECK_SAME_TYPE(ct::from_uint<(23)>::value, INTEGER(23))
+static const typename ct::from_int<(-23)>::type testthing2 = INTEGER(-23);
+static const typename ct::from_uint<(23)>::type testthing3 = INTEGER(23);
+
+static_assert(INTEGER(-2) < INTEGER(2), "bug");
+static_assert(RATIONAL(3,2) < INTEGER(2), "bug");
+static_assert(RATIONAL(-3,2) < INTEGER(-1), "bug");
+static_assert(RATIONAL(-3,2) > INTEGER(-2), "bug");
+static_assert(RATIONAL(-3,2) >= INTEGER(-2), "bug");
+static_assert(RATIONAL(-3,2) <= INTEGER(-1), "bug");
+static_assert(RATIONAL(-3,2) != INTEGER(-1), "bug");
+static_assert(RATIONAL(-4,2) == INTEGER(-2), "bug");
+static_assert(!(RATIONAL(-3,2) > INTEGER(2)), "bug");
+
 }
 
 static void bignum_compile_test() {

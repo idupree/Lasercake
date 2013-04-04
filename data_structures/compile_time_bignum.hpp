@@ -29,13 +29,14 @@
 // arguments).  Equal values are guaranteed to have identical types.
 //
 //  Example:
-//      INT(10000000000000000000000000000000000000000) * RAT(2/3)
+//      INTEGER(10000000000000000000000000000000000000000) * RATIONAL(2, 3)
 //  represents exactly 20000000000000000000000000000000000000000/3
 //
 //  Example:
-//    constexpr auto atto_value = pow(INT(10), INT(-18));
-//    typedef decltype(atto_value) atto_type; //or
-//    typedef decltype(pow(INT(10), INT(-18))) atto_type;
+//    // yocto- is the SI prefix for 10^-24.
+//    constexpr auto yocto_value = pow(INTEGER(10), INTEGER(-24));
+//    typedef decltype(atto_value) yocto_type; //or
+//    typedef decltype(pow(INTEGER(10), INTEGER(-24))) yocto_type;
 //
 // === TYPES (you will see these in compiler error messages) ===
 // In compile error messages, natural numbers are represented in little-endian
@@ -53,16 +54,17 @@
 //
 //
 // === CONSTRUCTION ===
-// Literals are macros (TODO)
-//   INT(integer-literal)
-//   RAT(integer-literal-numerator, integer-literal-denominator)
-//   INTtype(integer-literal)
-//   RATtype(integer-literal-numerator, integer-literal-denominator)
-// INT(n) returns a value, and INTtype(n) returns decltype(INT(n)); likewise
-// for RAT.  Literals support any number of digits[1].
+// Literals are macros
+//   INTEGER(integer-literal)
+//   RATIONAL(integer-literal-numerator, integer-literal-denominator)
+//   INTEGERtype(integer-literal)
+//   RATIONALtype(integer-literal-numerator, integer-literal-denominator)
+// INTEGER(n) returns a value, and INTEGERtype(n) returns
+// decltype(INTEGER(n)); likewise for RATIONAL.  Literals support
+// any number of digits[1].
 //
 // Non numeric-literal integral-constant-expressions can be converted to
-// this family of arbitrary-precision types thus: (TODO)
+// this family of arbitrary-precision types thus:
 //   ct::from_int<integral-constant-expression>::value
 //   ct::from_uint<integral-constant-expression>::value
 //   typename ct::from_int<integral-constant-expression>::type
@@ -75,7 +77,11 @@
 // Operations are defined on the value level because it has nice syntax.
 //
 //   decltype(a)     //use one of these numbers as a type
-//   +a              //
+//   a == b, a != b
+//   a < b, a > b
+//   a <= b, a >= b  // comparisons return constexpr 'bool' rather than
+//                   // an arbitrary-precision-numeric type.
+//   +a
 //   -a
 //   abs(a)
 //   a + b
@@ -91,7 +97,8 @@
 //TODO:
 //   floor(a)        //round towards negative infinity to nearest integer
 //   ceil(a)         //round towards positive infinity to nearest integer
-//   round(a)        //round towards nearest integer (ties go to even)
+//   nearbyint(a)    //round towards nearest integer (ties go to even)
+//   round(a)        //round towards nearest integer (ties go to +Inf)
 //   round(a, rounding_strategy)
 //   a % b  or  fmod(a, b) or remainder(a, b)   //rational modulus
 // Should this support bit-shifts (same as value*pow(INT(2), shift) and
@@ -156,20 +163,17 @@ struct divide_by_zero {};
 //struct integer_to_base
 
 namespace impl {
-/*
-// represents Nat * base^milliodigits_shifted_left
-template<int32_t milliodigits_shifted_left, typename Nat>
-struct floating {};
-*/
 
-//template<intmax_t Int> struct integer_literal;
+// Operations that have the same name as a function on numbers
+// (e.g. abs) have an underscore appended, because otherwise the
+// name-lookup rules find the struct and think there is an ambiguity.
 template<typename... Num> struct add;
 template<typename... Num> struct multiply;
 template<typename NumA, typename NumB> struct subtract;
 // Natural number subtraction (negative results become 'below_zero')
 template<typename NatA, typename NatB> struct subtract_nat;
 template<typename Num> struct negate;
-template<typename Num> struct abs;
+template<typename Num> struct abs_;
 template<typename Num, typename Exponent> struct power;
 // Compare: ::value is -1 if lhs < rhs; 0 if equal; 1 if lhs > rhs
 template<typename NatA, typename NatB> struct compare;
@@ -181,7 +185,7 @@ template<typename NatA, typename NatB> struct divide_nat;
 template<typename NatA, typename NatB> struct divide_integer;
 // Exact
 template<typename RatA, typename RatB> struct divide_rational;
-template<typename Rat> struct reciprocal;
+template<typename Rat> struct reciprocal_;
 
 template<typename Num> struct round_down_to_nat;
 
@@ -239,6 +243,7 @@ struct make_nat_from_milliodigit<0> {
 template<uintmax_t Int> struct uinteger_literal {
   // TODO do this more generically
   // This supports 64 bit literals
+  static_assert(std::numeric_limits<uintmax_t>::max()/base/base/base/base == 0, "bug");
   typedef
     typename make_nat_from_rest_and_least<
       typename make_nat_from_rest_and_least<
@@ -257,8 +262,9 @@ template<intmax_t Int> struct integer_literal
       typename uinteger_literal<Int>::type> {};
       */
 template<typename Int, Int Value, bool Negative = (Value < 0)> struct literal;
-template<typename Int, Int Value> struct literal<Int, Value, true>
-  : uinteger_literal<static_cast<uintmax_t>(-Value)> {};
+template<typename Int, Int Value> struct literal<Int, Value, true> {
+  typedef negative<typename uinteger_literal<static_cast<uintmax_t>(-Value)>::type> type;
+};
 template<typename Int, Int Value> struct literal<Int, Value, false>
   : uinteger_literal<static_cast<uintmax_t>(Value)> {};
 
@@ -359,23 +365,25 @@ struct compare<nat<MilliodigitsA...>, nat<MilliodigitsB...>>
                                        nat<MilliodigitsB...>>::type> {};
 
 // Exponentiation based on multiplication
-template<typename Base, intmax_t Exponent, bool Negative = (Exponent < 0)>
+template<typename Base, typename Exponent>
 struct power_impl1;
-template<typename Base, uintmax_t Exponent, bool Odd = (Exponent % 2 == 1)>
+template<typename Base, intmax_t Exponent, bool Negative = (Exponent < 0)>
 struct power_impl2;
-template<typename B> struct power_impl2<B, 0, false> { typedef nat<1> type; };
-template<typename B> struct power_impl2<B, 1, true> { typedef B type; };
-template<typename B> struct power_impl2<B, 2, false> : multiply<B, B> {};
-template<typename B, uintmax_t EvenExponent> struct power_impl2<B, EvenExponent, false> {
-  typedef typename power_impl2<B, EvenExponent/2>::type half;
+template<typename Base, uintmax_t Exponent, bool Odd = (Exponent % 2 == 1)>
+struct power_impl3;
+template<typename B> struct power_impl3<B, 0, false> { typedef nat<1> type; };
+template<typename B> struct power_impl3<B, 1, true> { typedef B type; };
+template<typename B> struct power_impl3<B, 2, false> : multiply<B, B> {};
+template<typename B, uintmax_t EvenExponent> struct power_impl3<B, EvenExponent, false> {
+  typedef typename power_impl3<B, EvenExponent/2>::type half;
   typedef typename multiply<half, half>::type type;
 };
-template<typename B, uintmax_t OddExponent> struct power_impl2<B, OddExponent, true> {
-  typedef typename power_impl2<B, OddExponent/2>::type half;
+template<typename B, uintmax_t OddExponent> struct power_impl3<B, OddExponent, true> {
+  typedef typename power_impl3<B, OddExponent/2>::type half;
   typedef typename multiply<B, typename multiply<half, half>::type>::type type;
 };
-template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, false>
-  : power_impl2<Base, (uintmax_t(Exponent))> {};
+template<typename Base, intmax_t Exponent> struct power_impl2<Base, Exponent, false>
+  : power_impl3<Base, (uintmax_t(Exponent))> {};
 
 // Large exponents are large.  Even with a small base, 2,
 // 2^(1000000*1000000) is sure not to fit in memory.  It has 10^12 bits:
@@ -383,10 +391,18 @@ template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, fa
 // In practice, template-instantiation depth is likely to make the limit
 // much lower.
 template<typename Base, milliodigit ExponentMilliodigit>
-struct power<Base, nat<ExponentMilliodigit>> : power_impl1<Base, ExponentMilliodigit> {};
+struct power_impl1<Base, nat<ExponentMilliodigit>> : power_impl2<Base, ExponentMilliodigit> {};
 template<typename Base, milliodigit ExponentMilliodigit0, milliodigit ExponentMilliodigit1>
-struct power<Base, nat<ExponentMilliodigit0, ExponentMilliodigit1>>
-  : power_impl1<Base, ExponentMilliodigit1*base + ExponentMilliodigit0> {};
+struct power_impl1<Base, nat<ExponentMilliodigit0, ExponentMilliodigit1>>
+  : power_impl2<Base, ExponentMilliodigit1*base + ExponentMilliodigit0> {};
+template<typename Base, typename Exponent>
+struct power_impl1<Base, negative<Exponent>>
+  : reciprocal_<typename power_impl1<Base, Exponent>::type> {};
+template<typename Base, typename Exponent>
+struct power_impl1 {
+  static_assert(sizeof(Base) && false, "Compile-time-exponentiation overflow");
+};
+
 // Certain combinations work with even huge exponents.
 template<typename Exponent> struct power<nat<>, Exponent> { typedef nat<> type; };
 template<typename Exponent> struct power<nat<1>, Exponent> { typedef nat<1> type; };
@@ -395,9 +411,7 @@ template<typename Exponent> struct power<negative<nat<1>>, Exponent>
 // 0 to the 0 is more often 1 than 0.
 template<> struct power<nat<>, nat<>> { typedef nat<1> type; };
 template<typename Base, typename Exponent>
-struct power {
-  static_assert(sizeof(Base) && false, "Compile-time-exponentiation overflow");
-};
+struct power : power_impl1<Base, Exponent> {};
 
 template<milliodigit... Milliodigits> struct numerator<nat<Milliodigits...>> {
   typedef nat<Milliodigits...> type;
@@ -733,10 +747,10 @@ template<typename T> struct negate {
 template<typename T> struct negate<negative<T>> {
   typedef T type;
 };
-template<typename T> struct abs {
+template<typename T> struct abs_ {
   typedef T type;
 };
-template<typename T> struct abs<negative<T>> {
+template<typename T> struct abs_<negative<T>> {
   typedef T type;
 };
 
@@ -925,27 +939,37 @@ struct divide_rational<rational<NumA, DenA>, rational<NumB, DenB>>
       typename multiply<NumA, DenB>::type,
       typename multiply<DenA, NumB>::type> {};
 
+template<typename T>
+struct reciprocal_<negative<T>> {
+  typedef negative<typename reciprocal_<T>::type> type;
+};
 template<typename Num, typename Den>
-struct reciprocal<rational<Num, Den>> {
+struct reciprocal_<rational<Num, Den>> {
   typedef rational<Den, Num> type;
 };
+template<typename Den>
+struct reciprocal_<rational<nat<1>, Den>> {
+  typedef Den type;
+};
 template<milliodigit...Milliodigits>
-struct reciprocal<nat<Milliodigits...>> {
+struct reciprocal_<nat<Milliodigits...>> {
   typedef rational<nat<1>, nat<Milliodigits...>> type;
 };
 template<>
-struct reciprocal<nat<>> {
+struct reciprocal_<nat<1>> {
+  typedef nat<1> type;
+};
+template<>
+struct reciprocal_<nat<>> {
   // error: divide by zero
   typedef divide_by_zero type;
 };
-template<>
-struct reciprocal<nat<1>> {
-  typedef nat<1> type;
-};
-template<milliodigit...Milliodigits>
-struct reciprocal<negative<nat<Milliodigits...>>> {
-  typedef negative<typename reciprocal<nat<Milliodigits...>>::type> type;
-};
+
+template<typename NumA, typename DenA, typename NumB, typename DenB>
+struct compare<rational<NumA, DenA>, rational<NumB, DenB>>
+  : compare<
+      typename multiply<NumA, DenB>::type,
+      typename multiply<NumB, DenA>::type> {};
 
 
 // dull conversions
@@ -961,6 +985,9 @@ struct multiply<rational<NumA, DenA>, nat<MilliodigitsB...>>
 template<typename NumA, typename DenA, milliodigit...MilliodigitsB>
 struct divide_rational<rational<NumA, DenA>, nat<MilliodigitsB...>>
   : divide_rational<rational<NumA, DenA>, typename as_rational<nat<MilliodigitsB...>>::type> {};
+template<typename NumA, typename DenA, milliodigit...MilliodigitsB>
+struct compare<rational<NumA, DenA>, nat<MilliodigitsB...>>
+  : compare<rational<NumA, DenA>, typename as_rational<nat<MilliodigitsB...>>::type> {};
 
 template<milliodigit...MilliodigitsA, typename NumB, typename DenB>
 struct add<nat<MilliodigitsA...>, rational<NumB, DenB>>
@@ -974,6 +1001,9 @@ struct multiply<nat<MilliodigitsA...>, rational<NumB, DenB>>
 template<milliodigit...MilliodigitsA, typename NumB, typename DenB>
 struct divide_rational<nat<MilliodigitsA...>, rational<NumB, DenB>>
   : divide_rational<typename as_rational<nat<MilliodigitsA...>>::type, rational<NumB, DenB>> {};
+template<milliodigit...MilliodigitsA, typename NumB, typename DenB>
+struct compare<nat<MilliodigitsA...>, rational<NumB, DenB>>
+  : compare<typename as_rational<nat<MilliodigitsA...>>::type, rational<NumB, DenB>> {};
 
 template<milliodigit...MilliodigitsA, milliodigit...MilliodigitsB>
 struct divide_rational<nat<MilliodigitsA...>, nat<MilliodigitsB...>>
@@ -991,8 +1021,8 @@ template<typename T1, typename T2> struct divide_rational<T1, negative<T2>> {
   typedef negative<typename divide_rational<T1, T2>::type> type;
 };
 
-template<typename Base, intmax_t Exponent> struct power_impl1<Base, Exponent, true>
-  : reciprocal<typename power_impl2<Base, (-uintmax_t(Exponent))>::type> {};
+template<typename Base, intmax_t Exponent> struct power_impl2<Base, Exponent, true>
+  : reciprocal_<typename power_impl3<Base, (-uintmax_t(Exponent))>::type> {};
 
 // numerator<>
 // denominator<>
@@ -1012,7 +1042,7 @@ template <char... Digits> struct parse_nat : parse_digits<10, nat<>, Digits...> 
 
 template <char... Digits> struct parse_integer : parse_nat<Digits...> {};
 template <char... Digits> struct parse_integer<'-',Digits...> {
-  typedef negative<parse_nat<Digits...>> type;
+  typedef negative<typename parse_nat<Digits...>::type> type;
 };
 
 template <unsigned Base, typename Accumulator>
@@ -1070,7 +1100,7 @@ template<typename A> constexpr inline A
 operator+(number<A>) { return impl::make_any_number(); }
 template<typename A> constexpr inline typename impl::negate<A>::type
 operator-(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename impl::abs<A>::type
+template<typename A> constexpr inline typename impl::abs_<A>::type
 abs(number<A>) { return impl::make_any_number(); }
 
 template<typename A, typename B> constexpr inline typename impl::add<A, B>::type
@@ -1085,7 +1115,7 @@ operator*(number<A>, number<B>) { return impl::make_any_number(); }
 template<typename A, typename B> constexpr inline typename impl::divide_rational<A, B>::type
 operator/(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A> constexpr inline typename impl::reciprocal<A>::type
+template<typename A> constexpr inline typename impl::reciprocal_<A>::type
 reciprocal(number<A>) { return impl::make_any_number(); }
 
 template<typename Quot, typename Rem>
@@ -1112,6 +1142,19 @@ template<typename A, typename B> constexpr inline bool
 operator<=(number<A>, number<B>) { return impl::compare<A, B>::value != 1; }
 template<typename A, typename B> constexpr inline bool
 operator>=(number<A>, number<B>) { return impl::compare<A, B>::value != -1; }
+
+template<uintmax_t Int>
+struct from_uint {
+  typedef typename impl::literal<uintmax_t, Int>::type type;
+  static constexpr type value = type();
+};
+template<intmax_t Int>
+struct from_int {
+  typedef typename impl::literal<intmax_t, Int>::type type;
+  static constexpr type value = type();
+};
+//template<uintmax_t Int> constexpr inline typename impl::literal<uintmax_t, Int>::type
+//from_uint() { return impl::make_any_number(); }
 /*
 template<typename A> constexpr inline typename
 round<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type
@@ -1127,28 +1170,18 @@ nearbyint(number<A>) { return impl::make_any_number(); }
 // and operator bool, maybe explicit operator float, etc.
 // I suppose the user-visible types should *anyway* be different from the intermediates...
 
-//#define NATt(integer) typename ::ct::integer_literal<(integer)>::type
-//#define NATv(integer) (typename ::ct::integer_literal<(integer)>::type())
-
-//pow
-//abs
-
-// NATlong or NAT using user integer literals
-// usually, and fixed-limit slower-compile stringify constant exprs
-// for gcc 4.6
-
 } /* end namespace ct */
 
 #if LASERCAKE_HAVE_USER_DEFINED_LITERALS
 
 template<char...Digits>
 constexpr inline typename ct::impl::parse_nat<Digits...>::type
-operator "" _NAT() {
+operator "" _integer() {
   return ct::impl::make_any_number();
 }
 
 #include <boost/preprocessor/cat.hpp>
-#define NAT(n) (BOOST_PP_CAT(n,_NAT))
+#define INTEGER(n) (BOOST_PP_CAT(n,_integer))
 
 #else
 
@@ -1159,18 +1192,18 @@ operator "" _NAT() {
 #define CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX(z, n, str) \
   (sizeof(str) > n ? str[n] : '\0')
 #define CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(ident) \
-  BOOST_PP_ENUM(BOOST_PP_LIMIT_REPEAT, CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX, BOOST_PP_STRINGIZE(ident))
-#define NAT(n) (::ct::impl::_NAT<sizeof(BOOST_PP_STRINGIZE(n)), \
-                                 CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(n)>())
-#endif
-
-#define NATtype(n) decltype(NAT(n))
+  BOOST_PP_ENUM( \
+    BOOST_PP_LIMIT_REPEAT, \
+    CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS_AUX, \
+    BOOST_PP_STRINGIZE(ident))
+#define INTEGER(n) (::ct::impl::_integer<sizeof(BOOST_PP_STRINGIZE(n)), \
+                       CONVERT_IDENTIFIER_TO_TEMPLATE_CHAR_ARGUMENTS(n)>())
 
 namespace ct {
 namespace impl {
 template<size_t NumDigits, char...Digits>
-constexpr inline typename impl::parse_nat<Digits...>::type
-_NAT() {
+constexpr inline typename impl::parse_integer<Digits...>::type
+_integer() {
 #if !LASERCAKE_HAVE_USER_DEFINED_LITERALS
   static_assert(NumDigits <= BOOST_PP_LIMIT_REPEAT,
     "ct:: compile-time numeric literal has more digits than supported by this environment.");
@@ -1179,6 +1212,11 @@ _NAT() {
 }
 }} /* end namespaces ct::impl, ct */
 
+#endif
+
+#define RATIONAL(n, d) (INTEGER(n) / INTEGER(d))
+#define INTEGERtype(n) decltype(INTEGER(n))
+#define RATIONALtype(n, d) decltype(RATIONAL(n, d))
 
 /*
  * ideas
