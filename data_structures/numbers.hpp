@@ -695,7 +695,6 @@ struct static_pow_nonnegative_integer
 
 template<uintmax_t Radicand, uintmax_t Root = 2>
 struct static_root_nonnegative_integer {
-  // Newton-Raphson method.
   template<uintmax_t LowerBound, uintmax_t UpperBound, bool Done>
   struct recur {
     static const uintmax_t mid = ((LowerBound + UpperBound) >> 1);
