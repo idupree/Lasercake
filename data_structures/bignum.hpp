@@ -53,7 +53,6 @@
 //#include <iomanip>
 //#include <ios>
 #include <cmath>
-#include <boost/type_traits/conditional.hpp>
 #include "../cxx11/hash.hpp"
 #include <boost/functional/hash.hpp>
 #include "numbers.hpp"
@@ -303,33 +302,40 @@ inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> 
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
 inline bignum<LimbsOut> long_multiply_signed(bignum<LimbsA> a, bignum<LimbsB> b) {
   static_assert(LimbsA > 0 && LimbsB > 0, "signed ints need a sign bit");
-  // If a is negative
-  const bool isnega = is_negative(a);
-  const bool isnegb = is_negative(b);
   bignum<LimbsOut> result = {{}};
-  const bignum_with_overflow<LimbsA> nega = negate_overflow(a);
-  const bignum_with_overflow<LimbsB> negb = negate_overflow(b);
-  // max negative two's complement int requires special treatment.
-  // unspecified zeroes here are implicit from "= {}" of result above.
-  if(isnega && nega.overflow) {
-    for(size_t ib = 0; ib+LimbsA < LimbsOut && ib < LimbsB; ++ib) {
-      const size_t ir = ib+LimbsA;
-      result.limbs[ir] = negb.num.limbs[ib];
-    }
-  }
-  else if(isnegb && negb.overflow) {
-    for(size_t ia = 0; ia+LimbsB < LimbsOut && ia < LimbsA; ++ia) {
-      const size_t ir = ia+LimbsB;
-      result.limbs[ir] = nega.num.limbs[ia];
-    }
+  if(LimbsOut <= LimbsA && LimbsOut <= LimbsB) {
+    // optimization: unsigned multiply gives the same result
+    // as signed in this case.
+    result = long_multiply_unsigned<LimbsOut>(a, b);
   }
   else {
-    const bignum<LimbsA> absa = (isnega ? nega.num : a);
-    const bignum<LimbsB> absb = (isnegb ? negb.num : b);
-    result = long_multiply_unsigned<LimbsOut>(absa, absb);
-    //LOG << "Well?" << (isnega) << ','<<isnegb<<".\n";
-    if(isnega != isnegb) {
-      result = negate(result);
+    // If a is negative
+    const bool isnega = is_negative(a);
+    const bool isnegb = is_negative(b);
+    const bignum_with_overflow<LimbsA> nega = negate_overflow(a);
+    const bignum_with_overflow<LimbsB> negb = negate_overflow(b);
+    // max negative two's complement int requires special treatment.
+    // unspecified zeroes here are implicit from "= {}" of result above.
+    if(isnega && nega.overflow) {
+      for(size_t ib = 0; ib+LimbsA < LimbsOut && ib < LimbsB; ++ib) {
+        const size_t ir = ib+LimbsA;
+        result.limbs[ir] = negb.num.limbs[ib];
+      }
+    }
+    else if(isnegb && negb.overflow) {
+      for(size_t ia = 0; ia+LimbsB < LimbsOut && ia < LimbsA; ++ia) {
+        const size_t ir = ia+LimbsB;
+        result.limbs[ir] = nega.num.limbs[ia];
+      }
+    }
+    else {
+      const bignum<LimbsA> absa = (isnega ? nega.num : a);
+      const bignum<LimbsB> absb = (isnegb ? negb.num : b);
+      result = long_multiply_unsigned<LimbsOut>(absa, absb);
+      //LOG << "Well?" << (isnega) << ','<<isnegb<<".\n";
+      if(isnega != isnegb) {
+        result = negate(result);
+      }
     }
   }
   return result;
@@ -798,7 +804,7 @@ inline bignum<LimbsOut> long_multiply_by_reciprocal_unsigned(bignum<LimbsA> a, r
   //  << shift_right_zero_extend<LimbsOut>(long_multiply_unsigned<LimbsA+LimbsB>(a, b.reciprocal), b.shift) << "\n";
   return shift_right_zero_extend<LimbsOut>(long_multiply_unsigned<LimbsA+LimbsB>(a, b.reciprocal), b.shift);
 }
-template<size_t Limbs>
+template<size_t LimbsOut, size_t Limbs>
 /*GCC can probably infer that the function does not read or write memory,
   but make doubly sure it knows this is CSEable (common subexpression elimination).
   Prevent inlining to increase chances of CSE, since reciprocal is not fast
@@ -808,12 +814,12 @@ __attribute__((const,noinline))
 #endif
 // TODO avoid double's exponent-overflow (roughly +-2^1000)
 // TODO do something faster for single limb
-inline reciprocal_bignum<Limbs> reciprocal_unsigned(bignum<Limbs> a) {
+inline reciprocal_bignum<LimbsOut> reciprocal_unsigned(bignum<Limbs> a) {
   caller_correct_if(nonzero(a), "division by or reciprocal of zero");
-  reciprocal_bignum<Limbs> result = {{{}}, 0};
+  reciprocal_bignum<LimbsOut> result = {{{}}, 0};
   // log2 with exact powers-of-2 rounding down by 1:
   const int32_t log = (equal(a, bignum<Limbs>{{1}}) ? -1 : log2_unsigned(subtract(a, bignum<Limbs>{{1}})));
-  result.shift = Limbs*limb_bits + log;//+log-2;
+  result.shift = LimbsOut*limb_bits + log;//+log-2;
   // Newton-Raphson iteration, according to 
   // https://en.wikipedia.org/wiki/Division_algorithm#Newton.E2.80.93Raphson_division
 //  LOG << "log: " << log << "\n";
@@ -821,24 +827,26 @@ inline reciprocal_bignum<Limbs> reciprocal_unsigned(bignum<Limbs> a) {
 //  LOG << "So... ";
 //  fprintf(stderr, "%a\n", ldexp(1.0, result.shift)/to_double_unsigned(a));
 //  LOG << "\n";
-  result.reciprocal = from_double_saturating_unsigned<Limbs>(ldexp(1.0, result.shift)/to_double_unsigned(a));
+  result.reciprocal = from_double_saturating_unsigned<LimbsOut>(ldexp(1.0, result.shift)/to_double_unsigned(a));
   //  LOG<<result<<'\n';
   while(true) {
-    static const size_t L = Limbs*2+1;
+    // This size for L appears to be sufficient.
+    static const size_t L = LimbsOut*2+1;
     const bignum<L> should_represent_unity = long_multiply_unsigned<L>(result.reciprocal, a);
     const bignum<L> error = subtract(shift_left_zero_extend<L>(bignum<L>{{1}}, result.shift), should_represent_unity);
+    LOG << error << "?\n";
     const bignum<L> reerror = long_multiply_unsigned<L>(result.reciprocal, error);
-    const bignum<Limbs> adjust = shift_right_zero_extend<Limbs>(reerror, result.shift);
+    const bignum<LimbsOut> adjust = shift_right_zero_extend<LimbsOut>(reerror, result.shift);
     if(!nonzero(adjust)) { break; }
     result.reciprocal = add(result.reciprocal, adjust);
 //    LOG<<result/*<<"<<<<" <<should_represent_unity<<">>>>"<<error<<"!!!!"<<reerror*/<<'\n';
   }
   if(long_multiply_by_reciprocal_unsigned<1>(a, result).limbs[0] != 1) {
 //    LOG << "bumped ";
-    result.reciprocal = add(result.reciprocal, bignum<Limbs>{{1}});
+    result.reciprocal = add(result.reciprocal, bignum<LimbsOut>{{1}});
   }
 //  LOG << "reciprocal " << result << " of " << a << "\n";
-  assert(equal(long_multiply_by_reciprocal_unsigned<Limbs>(a, result), bignum<Limbs>{{1}}));//{LOG << "ASSERTION FAILURE NOT SELFDIV TO 1\n";}
+  assert(equal(long_multiply_by_reciprocal_unsigned<LimbsOut>(a, result), bignum<LimbsOut>{{1}}));//{LOG << "ASSERTION FAILURE NOT SELFDIV TO 1\n";}
   return result;
 }
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
@@ -846,8 +854,10 @@ template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
    to CSE (common subexpression elimination) reciprocal_unsigned if the user
    divides by the same value multiple times in the same function (which is common) */
 BOOST_FORCEINLINE
+// TODO does the amount of precision of reciprocal needed depend on the size of the dividend?
+// I believe it does.  Does it also depend on the divisor somehow?
 bignum<LimbsOut> divide_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
-  return long_multiply_by_reciprocal_unsigned<LimbsOut>(a, reciprocal_unsigned<LimbsB>(zero_extend<LimbsB>(b)));
+  return long_multiply_by_reciprocal_unsigned<LimbsOut>(a, reciprocal_unsigned<LimbsA>(b));
 }
 
 template<size_t LimbsOut, size_t Limbs, size_t OperationLimbs = Limbs/2+1>
