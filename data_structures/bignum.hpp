@@ -834,7 +834,7 @@ inline reciprocal_bignum<LimbsOut> reciprocal_unsigned(bignum<Limbs> a) {
     static const size_t L = LimbsOut*2+1;
     const bignum<L> should_represent_unity = long_multiply_unsigned<L>(result.reciprocal, a);
     const bignum<L> error = subtract(shift_left_zero_extend<L>(bignum<L>{{1}}, result.shift), should_represent_unity);
-    LOG << error << "?\n";
+    //LOG << error << "?\n";
     const bignum<L> reerror = long_multiply_unsigned<L>(result.reciprocal, error);
     const bignum<LimbsOut> adjust = shift_right_zero_extend<LimbsOut>(reerror, result.shift);
     if(!nonzero(adjust)) { break; }
