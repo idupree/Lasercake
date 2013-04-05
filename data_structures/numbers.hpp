@@ -51,12 +51,12 @@ struct greater_equal  { template<typename A, typename B> constexpr bool operator
 
 // returns the signum (-1, 0, or 1)
 template <typename Number>
-inline Number sign(Number n) {
+constexpr inline Number sign(Number n) {
   return (n > 0) - (n < 0);
 }
 
 template <typename Number>
-inline bool is_negative(Number n) {
+constexpr inline bool is_negative(Number n) {
   // this is (very slightly) the fastest comparison-with-zero among < 0, <= 0, > 0, >= 0:
   // in signed two's complement, it's the value of the highest bit:
   // which leads to one less x86 instruction (small code = more fits in cache).
@@ -65,13 +65,13 @@ inline bool is_negative(Number n) {
 }
 
 template<typename Int>
-typename boost::make_signed<Int>::type to_signed_type(Int i) {
+inline typename boost::make_signed<Int>::type to_signed_type(Int i) {
   typename boost::make_signed<Int>::type result(i);
   caller_correct_if(result >= 0, "to_signed_type overflow");
   return result;
 }
 template<typename Int>
-typename boost::make_unsigned<Int>::type to_unsigned_type(Int i) {
+inline typename boost::make_unsigned<Int>::type to_unsigned_type(Int i) {
   caller_correct_if(i >= 0, "to_unsigned_type underflow");
   typename boost::make_unsigned<Int>::type result(i);
   return result;
@@ -376,8 +376,7 @@ inline constexpr auto divide(T1 dividend, T2 divisor, RoundingStrategy strat)
   typedef decltype(dividend / divisor) operation_type;
   static_assert(
        NegStrategy != negative_variant_doesnt_make_a_difference
-    || PosStrategy == round_to_nearest_with_ties_rounding_to_even
-    || PosStrategy == round_to_nearest_with_ties_rounding_to_odd
+    || PosStrategy >= round_to_nearest_with_ties_rounding_to_even
     || (!std::numeric_limits<T1>::is_signed && !std::numeric_limits<T2>::is_signed),
     "You lied! The negative variant does make a difference.");
   return rounding_strategies_impl::divide_impl1(
