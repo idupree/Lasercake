@@ -23,6 +23,7 @@
 #define LASERCAKE_NUMBER_STRUCTURES_HPP__
 
 #include "../config.hpp"
+#include "rounding_strategy.hpp"
 #include <cstdlib>
 #include <boost/integer/static_log2.hpp>
 #include <boost/type_traits/make_signed.hpp>
@@ -77,45 +78,6 @@ typename boost::make_unsigned<Int>::type to_unsigned_type(Int i) {
 }
 
 
-// Zero divided by something is always zero.
-// Any other division result is always (before rounding)
-// positive or negative.
-// We specify a division strategy in terms of positive
-// numbers and an indication of how negative rounding is
-// related to positive rounding.
-enum rounding_strategy_for_positive_numbers {
-  round_down, round_up,
-  round_to_nearest_with_ties_rounding_up,
-  round_to_nearest_with_ties_rounding_down,
-  round_to_nearest_with_ties_rounding_to_even,
-  round_to_nearest_with_ties_rounding_to_odd
-};
-enum rounding_strategy_for_negative_numbers {
-  // "doesn't make a difference" is true for unsigned arguments
-  // and for round-to-even and round-to-odd.  It is a compile
-  // error to claim "doesn't make a difference" when it might
-  // in fact make a difference.
-  negative_variant_doesnt_make_a_difference,
-  
-  // result invariant under negation; roughly,
-  // -divide(-x, y, strat) == divide(x, y, strat)
-  negative_mirrors_positive,
-  
-  // result invariant under addition of a constant; roughly,
-  // divide(x + C*y, y, strat) - C == divide(x, y, strat)
-  negative_continuous_with_positive,
-  
-  // these just assert that the numerator and denominator is nonnegative.
-  negative_is_forbidden
-};
-template<
-  rounding_strategy_for_positive_numbers PosStrategy,
-  rounding_strategy_for_negative_numbers NegStrategy
-    = negative_variant_doesnt_make_a_difference>
-struct rounding_strategy {
-  static const rounding_strategy_for_positive_numbers positive_strategy = PosStrategy;
-  static const rounding_strategy_for_negative_numbers negative_strategy = NegStrategy;
-};
 namespace rounding_strategies_impl {
 // Otherwise we get warnings when instantiated with unsigned
 // types for (val < 0):
@@ -807,29 +769,35 @@ inline result_t isqrt_impl(radicand_t radicand) {
   // log2(0) doesn't exist, but sqrt(0) does, so we have to check for it here.
   if(radicand == 0)return 0;
 
-  //shift is the log base 2 of radicand, rounded down.
-  int32_t shift = ilog2(radicand);
+  //shift is the log base 2 of radicand, divided by two, rounded down.
+  int32_t shift = ilog2(radicand) >> 1;
+  
+  assert_if_ASSERT_EVERYTHING(shift < std::numeric_limits<lower_bound_and_mid_t>::digits);
+  //...okay that wasn't very useful.
+  //er the while loop gives one bit each time.  perhaps we should use newton's method?
+  //in any case one-bit-each-time means we can have earlier-known loop iteration count.
 
-  //bounds are [lower_bound, upper_bound), a half-open range.
-  //lower_bound is guaranteed to be less than or equal to the answer.
-  //upper_bound is guaranteed to be greater than the answer.
-  lower_bound_and_mid_t lower_bound = lower_bound_and_mid_t(1) << (shift >> 1);
+  //bounds are (lower_bound, upper_bound], a half-open range.
+  //lower_bound is guaranteed to be less than to the answer.
+  //upper_bound is guaranteed to be greater than or equal to the answer.
+  lower_bound_and_mid_t lower_bound = (lower_bound_and_mid_t(1) << shift) - 1;
 
   //upper_bound is twice the original lower_bound;
-  //upper_bound is    2**(floor(log2(radicand) / 2)+1)
-  //which is equal to 2**ceil((log2(radicand)+1) / 2)
-  upper_bound_t upper_bound = upper_bound_t(lower_bound) << 1;
+  //upper_bound is    2**(floor(log2(radicand) / 2)+1)-1
+  lower_bound_and_mid_t upper_bound = (lower_bound<<1) + 1;
 
-#if 0//def DETECTED_uint128_t
+#ifdef DETECTED_uint128_t
   typedef DETECTED_uint128_t twice_t;
-  assert_if_ASSERT_EVERYTHING(full_t(lower_bound)*lower_bound <= radicand);
-  assert_if_ASSERT_EVERYTHING(twice_t(upper_bound)*upper_bound > radicand);
+  assert_if_ASSERT_EVERYTHING(test_multiply_t(lower_bound)*lower_bound <= (test_multiply_t)radicand);
+  assert_if_ASSERT_EVERYTHING(radicand_t(lower_bound)*radicand_t(lower_bound) <= radicand);
+  assert_if_ASSERT_EVERYTHING(twice_t(upper_bound)*upper_bound > twice_t(radicand));
 #endif
 
-  while(lower_bound < upper_bound - 1)
+  while(lower_bound + 1 < upper_bound)
   {
-    const lower_bound_and_mid_t mid((upper_bound + lower_bound) >> 1);
-    if(test_multiply_t(mid) * test_multiply_t(mid) > test_multiply_t(radicand)) {
+    const lower_bound_and_mid_t mid(((upper_bound_t)upper_bound + lower_bound) >> 1);
+    const test_multiply_t test_result(mid+1);
+    if(test_result*test_result > test_multiply_t(radicand)) {
       upper_bound = mid;
     }
     else {
@@ -837,7 +805,7 @@ inline result_t isqrt_impl(radicand_t radicand) {
     }
   }
 
-  return result_t(lower_bound);
+  return result_t(lower_bound+1);
 }
 
 // range: [0, 2^32-1]
