@@ -993,42 +993,45 @@ private:
           face& vf3 = faces_[vfc->vertex_face_3()];
           face& sf  = faces_[vfc->struck_face()];
           if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
-            //std::cerr << c->r1_ << "," << c->r2_ << "," << c->r2_ << "," << c->r2_ << "\n";
-            //std::cerr << "vfc.\n";
-            // Haaaaaaack
-            region_idx_type ri1 = 0;
-            region_idx_type ri2 = 0;
-            for (auto ri : vf1.neighboring_regions_) {
-              if (regions_[ri].contents == ROCK) ri1 = ri;
+            vector3<mpz> normal = sf.updated_to_time(vfc->when_event_occurs_).ABC;
+            vector3<velocity1d> problem_velocity = normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1.updated_to_time(vfc->when_event_occurs_), vf2.updated_to_time(vfc->when_event_occurs_), vf3.updated_to_time(vfc->when_event_occurs_)).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
+            // Hack - this standardizes "normals point outwards from rock"
+            if (problem_velocity.dot<mpz>(normal) < 0) {
+              //std::cerr << c->r1_ << "," << c->r2_ << "," << c->r2_ << "," << c->r2_ << "\n";
+              //std::cerr << "vfc.\n";
+              // Haaaaaaack
+              region_idx_type ri1 = 0;
+              region_idx_type ri2 = 0;
+              for (auto ri : vf1.neighboring_regions_) {
+                if (regions_[ri].contents == ROCK) ri1 = ri;
+              }
+              for (auto ri : sf.neighboring_regions_) {
+                if (regions_[ri].contents == ROCK) ri2 = ri;
+              }
+              region& r1 = regions_[ri1];
+              region& r2 = regions_[ri2];
+              assert(r1.contents = ROCK); assert(r2.contents = ROCK);
+              for (face_idx_type fi : r1.faces_) {
+                faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
+              }
+              for (face_idx_type fi : r2.faces_) {
+                faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
+              }
+              for (face_idx_type fi : r1.faces_) {
+                faces_[fi].D_velocity -= problem_velocity.dot<mpz>(faces_[fi].ABC);
+              }
+              for (face_idx_type fi : r2.faces_) {
+                faces_[fi].D_velocity += problem_velocity.dot<mpz>(faces_[fi].ABC);
+              }
+              // TODO : have the recomputation be automated somehow
+              for (face_idx_type fi : r1.faces_) {
+                insert_events_involving(fi);
+              }
+              for (face_idx_type fi : r2.faces_) {
+                insert_events_involving(fi);
+              }
+              return true;
             }
-            for (auto ri : sf.neighboring_regions_) {
-              if (regions_[ri].contents == ROCK) ri2 = ri;
-            }
-            region& r1 = regions_[ri1];
-            region& r2 = regions_[ri2];
-            assert(r1.contents = ROCK); assert(r2.contents = ROCK);
-            for (face_idx_type fi : r1.faces_) {
-              faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
-            }
-            for (face_idx_type fi : r2.faces_) {
-              faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
-            }
-            vector3<mpz> normal = sf.ABC;
-            vector3<velocity1d> problem_velocity = normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1, vf2, vf3).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
-            for (face_idx_type fi : r1.faces_) {
-              faces_[fi].D_velocity -= problem_velocity.dot<mpz>(faces_[fi].ABC);
-            }
-            for (face_idx_type fi : r2.faces_) {
-              faces_[fi].D_velocity += problem_velocity.dot<mpz>(faces_[fi].ABC);
-            }
-            // TODO : have the recomputation be automated somehow
-            for (face_idx_type fi : r1.faces_) {
-              insert_events_involving(fi);
-            }
-            for (face_idx_type fi : r2.faces_) {
-              insert_events_involving(fi);
-            }
-            return true;
           }
         }
         if (const shared_ptr<edge_edge_collision> eec = dynamic_pointer_cast<edge_edge_collision>(c)) {
