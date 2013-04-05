@@ -328,7 +328,7 @@ vector3<velocity1d> approx_velocity_of_triple_intersection_of_up_to_date_faces(f
 }
 
 // TODO : What about the cases where two of the planes are parallel? That's legit (handle them separately? they're easier)
-faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4/*, bool hack_recurse_test = true*/) {
+std::vector<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4/*, bool hack_recurse_test = true*/) {
 #if 0
   if (hack_recurse_test) {
     const faux_optional<time_type> a = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1, f2, f3, f4, false);
@@ -415,13 +415,14 @@ faux_optional<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_co
   // - D4 * scalar_triple_product(f1.ABC, f2.ABC, f3.ABC)
   // But Dn is Dn + dDn*t + .5ddDn*t^2
   // so
+  std::vector<time_type> result;
   const mpz t1 = scalar_triple_product(f2.ABC, f3.ABC, f4.ABC);
   const mpz t2 = scalar_triple_product(f3.ABC, f4.ABC, f1.ABC);
   const mpz t3 = scalar_triple_product(f4.ABC, f1.ABC, f2.ABC);
   const mpz t4 = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   if ((t1 == 0) || (t2 == 0) || (t3 == 0) || (t4 == 0)) {
     //std::cerr << "Warning: Linearly dependent normals passed to how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point()\n";
-    return boost::none;
+    return result;
   }
   // in at^2 + bt + c = 0
   acceleration1d a_times_2 = f1.D_acceleration*t1 - f2.D_acceleration*t2 + f3.D_acceleration*t3 - f4.D_acceleration*t4;
@@ -448,7 +449,7 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
   // (-b +/- sqrt(b^2 - 2(a_times_2)c)) / a_times_2
   const auto discriminant = b*b - a_times_2*2*c;
   if (discriminant < 0) {
-    return boost::none;
+    return result;
   }
   else {
     const rounding_strategy<round_down, negative_is_forbidden> strat;
@@ -459,22 +460,23 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
           // Uhh... apparently sometimes c=0 can occur when they're never intersecting, too.
           // I don't really know. Returning none here is techincally a false-negative sometimes.
           // But probably only in border cases.
-          return boost::none;
+          return result;
         }
-        else return boost::none;
+        else return result;
       }
       if (b < 0) {
         b = -b;
         c = -c;
       }
-      if (c > 0) return boost::none;
+      if (c > 0) return result;
       // hack - should just be
       // return divide(-c * identity(time_units / seconds), b, strat);
       // but overflow stuff
       // also see below
       const time_type zero = divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
       //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
-      return zero;
+      result.push_back(zero);
+      return result;
     }
     else {
       if (a_times_2 < 0) {
@@ -491,7 +493,7 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
             a_times_2,
             strat)*time_units/seconds;
         //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
-        return zero;
+        result.push_back(zero);
       }
       const velocity1d greater_numerator = -b + sqrt_disc;
       if (greater_numerator >= 0) {
@@ -500,20 +502,21 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
             a_times_2,
             strat)*time_units/seconds;
         //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
-        return zero;
+        result.push_back(zero);
       }
-      return boost::none;
+      return result;
     }
   }
 }
-faux_optional<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
+std::vector<time_type> when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(face const& f1, face const& f2, face const& f3, face const& f4) {
   assert(f1.base_time_ == f2.base_time_);
   assert(f1.base_time_ == f3.base_time_);
   assert(f1.base_time_ == f4.base_time_);
-  if (faux_optional<time_type> result = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1,f2,f3,f4)) {
-    return *result + f1.base_time_;
+  std::vector<time_type> result = how_long_from_now_will_planes_of_up_to_date_faces_be_coincident_at_a_point(f1,f2,f3,f4);
+  for (time_type& r : result) {
+    r += f1.base_time_;
   }
-  else return boost::none;
+  return result;
 }
 
 enum region_contents {
@@ -701,10 +704,11 @@ class grand_structure_of_lasercake {
             face const& old_other_face = faces_[fi2];
             const face present_other_face = old_other_face.updated_to_time(f.base_time_);
             if (fi2 != neighbor_id_2) {
-              if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                  f, present_neighbor_1, present_neighbor_2, present_other_face)) {
+              std::vector<time_type> collision_times = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                  f, present_neighbor_1, present_neighbor_2, present_other_face);
+              for (auto collision_time : collision_times) {
                 next_events_.push(shared_ptr<event>(new vertex_face_collision(
-                    *collision_time,
+                    collision_time,
                                fi,              f.revision_number_,
                     neighbor_id_1, old_neighbor_1.revision_number_,
                     neighbor_id_2, old_neighbor_2.revision_number_,
@@ -720,10 +724,11 @@ class grand_structure_of_lasercake {
                 if (other_neighbor_id > fi2) {
                   face const& old_other_neighbor = faces_[other_neighbor_id];
                   const face present_other_neighbor = old_other_neighbor.updated_to_time(f.base_time_);
-                  if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                      f, present_neighbor_1, present_other_face, present_other_neighbor)) {
+                  std::vector<time_type> collision_times = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                      f, present_neighbor_1, present_other_face, present_other_neighbor);
+                  for (auto collision_time : collision_times) {
                     next_events_.push(shared_ptr<event>(new edge_edge_collision(
-                        *collision_time,
+                        collision_time,
                                        fi,                  f.revision_number_,
                             neighbor_id_1,     old_neighbor_1.revision_number_,
                                       fi2,     old_other_face.revision_number_,
@@ -753,10 +758,11 @@ class grand_structure_of_lasercake {
                 face const& old_neighbor_2 = faces_[neighbor_id_2];
                 const face present_neighbor_1 = old_neighbor_1.updated_to_time(f.base_time_);
                 const face present_neighbor_2 = old_neighbor_2.updated_to_time(f.base_time_);
-                if (faux_optional<time_type> collision_time = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
-                    present_other_face, present_neighbor_1, present_neighbor_2, f)) {
+                std::vector<time_type> collision_times = when_will_planes_of_up_to_date_faces_be_coincident_at_a_point(
+                    present_other_face, present_neighbor_1, present_neighbor_2, f);
+                for (auto collision_time : collision_times) {
                   next_events_.push(shared_ptr<event>(new vertex_face_collision(
-                      *collision_time,
+                      collision_time,
                                 fi2, old_other_face.revision_number_,
                       neighbor_id_1, old_neighbor_1.revision_number_,
                       neighbor_id_2, old_neighbor_2.revision_number_,
