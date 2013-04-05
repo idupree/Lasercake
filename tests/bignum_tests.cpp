@@ -273,6 +273,22 @@ CHECK_SAME_TYPE(round(INTEGER(2), rounding_strategy<round_to_nearest_with_ties_r
 CHECK_SAME_TYPE(round(INTEGER(-2), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(-2))
 CHECK_SAME_TYPE(round(INTEGER(0), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(0))
 
+CHECK_SAME_TYPE(log2(INTEGER(8), rounding_strategy<require_exact_answer>()), INTEGER(3))
+CHECK_SAME_TYPE(log2(INTEGER(2), rounding_strategy<require_exact_answer>()), INTEGER(1))
+CHECK_SAME_TYPE(log2(INTEGER(1), rounding_strategy<require_exact_answer>()), INTEGER(0))
+
+CHECK_SAME_TYPE(log10(INTEGER(1000000000), rounding_strategy<require_exact_answer>()), INTEGER(9))
+CHECK_SAME_TYPE(log10(INTEGER(100), rounding_strategy<require_exact_answer>()), INTEGER(2))
+CHECK_SAME_TYPE(log10(INTEGER(1), rounding_strategy<require_exact_answer>()), INTEGER(0))
+
+CHECK_SAME_TYPE(log(RATIONAL(2,3), RATIONAL(4,9), rounding_strategy<require_exact_answer>()), INTEGER(2))
+CHECK_SAME_TYPE(log(RATIONAL(2,3), RATIONAL(9,4), rounding_strategy<require_exact_answer>()), INTEGER(-2))
+CHECK_SAME_TYPE(log(RATIONAL(3,2), RATIONAL(4,9), rounding_strategy<require_exact_answer>()), INTEGER(-2))
+
+CHECK_SAME_TYPE(log10(INTEGER(100), rounding_strategy<round_down>()), INTEGER(2))
+CHECK_SAME_TYPE(log10(INTEGER(101), rounding_strategy<round_down>()), INTEGER(2))
+CHECK_SAME_TYPE(log10(INTEGER(99), rounding_strategy<round_down>()), INTEGER(1))
+
 }
 
 static void bignum_compile_test() {

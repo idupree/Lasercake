@@ -100,6 +100,12 @@
 //   floor(a)        //round towards negative infinity to nearest integer
 //   ceil(a)         //round towards positive infinity to nearest integer
 //   nearbyint(a)    //round towards nearest integer (ties go to even)
+//   round(a, rounding_strategy)
+//                   // logarithms, rounded since we
+//                   // can't represent irrational quantities:
+//   log(base, number, rounding_strategy)
+//   log2(number, rounding_strategy)
+//   log10(number, rounding_strategy)
 //
 //   is_integer(a)   //these return constexpr bool
 //   is_nonnegative_integer(a)
@@ -110,9 +116,10 @@
 //   is_zero(a)
 //
 //TODO:
-//   round(a)        //round towards nearest integer (ties go to +Inf)
-//   round(a, rounding_strategy)
 //   a % b  or  fmod(a, b) or remainder(a, b)   //rational modulus
+//   sqrt(a, rounding_strategy)
+//   nth root (also extends pow) (but requires rounding strategy,
+//                       perhaps defaulting to require_exact_answer)
 // Should this support bit-shifts (same as value*pow(INT(2), shift) and
 // value/pow(INT(2), shift); or should they be floor() of those?)?
 // What about bitwise operations |&^~ ? Should they operate on the
@@ -201,6 +208,10 @@ template<typename NatA, typename NatB> struct divide_integer;
 // Exact
 template<typename RatA, typename RatB> struct divide_rational;
 template<typename Rat> struct reciprocal_;
+// Since we can't represent irrational values,
+// you must pass a RoundingStrategy to round this to a nearby
+// integer (or half-integer).
+template<typename Base, typename Number, typename RoundingStrategy> struct logarithm;
 
 template<typename Num> struct is_integer_;
 template<typename Num> struct is_nonnegative_integer_;
@@ -469,6 +480,7 @@ struct power_impl1 {
 // Certain combinations work with even huge exponents.
 template<typename Exponent> struct power<nat<>, Exponent> { typedef nat<> type; };
 template<typename Exponent> struct power<nat<1>, Exponent> { typedef nat<1> type; };
+template<typename Base> struct power<Base, nat<>> { typedef nat<1> type; };
 template<typename Exponent> struct power<negative<nat<1>>, Exponent>
   : boost::conditional<even<Exponent>::value, nat<1>, negative<nat<1>>> {};
 // 0 to the 0 is more often 1 than 0.
@@ -1129,6 +1141,10 @@ template<milliodigit...Milliodigits, rounding_strategy_for_positive_numbers Stra
 struct round_nonnegative<nat<Milliodigits...>, Strategy> {
   typedef nat<Milliodigits...> type;
 };
+template<typename Num, typename Den>
+struct round_nonnegative<rational<Num, Den>, require_exact_answer> {
+  static_assert(sizeof(Num) && false, "Rounding a number that was required to be exact.");
+};
 template<typename Num>
 struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_down> {
   typedef typename divide_nat<Num, nat<2>>::type type;
@@ -1210,6 +1226,257 @@ template<typename Num, rounding_strategy_for_positive_numbers PositiveStrategy,
 struct round_<Num, rounding_strategy<PositiveStrategy, NegativeStrategy>> {
   typedef typename round_nonnegative<Num, PositiveStrategy>::type type;
 };
+
+///////////////////////////
+//// Logarithm
+///////////////////////////
+
+struct undefined_logarithm {};
+
+template<typename Base, typename Number>
+struct log_impl1;
+
+template<typename Base, typename Number, typename RoundingStrategy>
+struct logarithm {
+  typedef typename round_<typename log_impl1<Base, Number>::type, RoundingStrategy>::type type;
+};
+
+// This function's domain is {x | x > 0 and x != 1}
+template<typename Argument>
+struct log_argument_is_less_than_1;
+template<milliodigit...Milliodigits>
+struct log_argument_is_less_than_1<nat<Milliodigits...>> : boost::false_type {};
+template<typename Num, typename Den>
+struct log_argument_is_less_than_1<rational<Num, Den>>
+  : boost::integral_constant<bool, (compare<Num, Den>::value == -1)> {};
+
+template<typename Base, typename Number>
+struct log_impl2;
+template<typename Base, typename Number,
+  bool BaseIsLessThanOne = log_argument_is_less_than_1<Base>::value,
+  bool NumberIsLessThanOne = log_argument_is_less_than_1<Number>::value
+  >
+struct log_impl3;
+template<typename Base, typename Number>
+struct log_impl4;
+
+// Neither the base nor the number may be negative.
+template<typename Base, typename Number>
+struct log_impl1 : log_impl2<Base, Number> {};
+template<typename Base, typename Number>
+struct log_impl1<negative<Base>, Number> {
+  typedef undefined_logarithm type;
+};
+template<typename Base, typename Number>
+struct log_impl1<negative<Base>, negative<Number>> {
+  typedef undefined_logarithm type;
+};
+template<typename Base, typename Number>
+struct log_impl1<Base, negative<Number>> {
+  typedef undefined_logarithm type;
+};
+
+// Neither the base nor the number may zero.
+// If the number is 1 and the base is valid,
+// the exponent is 0.
+template<typename Base, typename Number>
+struct log_impl2 : log_impl3<Base, Number> {};
+template<typename Number>
+struct log_impl2<nat<>, Number> {
+  typedef undefined_logarithm type;
+};
+template<typename Number>
+struct log_impl2<nat<1>, Number> {
+  typedef undefined_logarithm type;
+};
+template<typename Base>
+struct log_impl2<Base, nat<1>> {
+  typedef nat<> type;
+};
+template<typename Base>
+struct log_impl2<Base, nat<>> {
+  typedef undefined_logarithm type;
+};
+template<>
+struct log_impl2<nat<1>, nat<>> {
+  typedef undefined_logarithm type;
+};
+// Should these be nat<> or undefined_logarithm?
+template<>
+struct log_impl2<nat<1>, nat<1>> {
+  typedef undefined_logarithm type;
+};
+template<>
+struct log_impl2<nat<>, nat<1>> {
+  typedef undefined_logarithm type;
+};
+// nat<1> or undefined_logarithm?
+template<>
+struct log_impl2<nat<>, nat<>> {
+  typedef undefined_logarithm type;
+};
+
+template<typename Base, typename Number>
+struct log_impl3<Base, Number, false, false>
+  : log_impl4<Base, Number> {};
+template<typename Base, typename Number>
+struct log_impl3<Base, Number, false, true> {
+  typedef typename negate<
+    typename log_impl4<Base, typename reciprocal_<Number>::type>::type
+    >::type type;
+};
+template<typename Base, typename Number>
+struct log_impl3<Base, Number, true, false> {
+  typedef typename negate<
+    typename log_impl4<typename reciprocal_<Base>::type, Number>::type
+    >::type type;
+};
+template<typename Base, typename Number>
+struct log_impl3<Base, Number, true, true> {
+  typedef
+    typename log_impl4<typename reciprocal_<Base>::type,
+                       typename reciprocal_<Number>::type>::type
+    type;
+};
+
+// Now Base and Number are both > 1.
+
+// If Number < Base... or ==...
+
+// 0 -> result
+// -1 -> backtrack
+// 1 -> recur
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename TestAccum = typename multiply<TestAccumPrev, TestAccumPrev>::type,
+  typename ExponentAccum = typename twice<ExponentAccumPrev>::type,
+  int Compare = compare<Number, TestAccum>::value>
+struct log_impl5;
+
+template<typename Base, typename Number>
+struct log_impl4 : log_impl5<Base, Number, nat<1>, nat<>, Base, nat<1>> {};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl5<
+  Base, Number, TestAccumPrev, ExponentAccumPrev,
+  TestAccum, ExponentAccum, 1
+> : log_impl5<Base, Number, TestAccum, ExponentAccum> {};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl5<
+  Base, Number, TestAccumPrev, ExponentAccumPrev,
+  TestAccum, ExponentAccum, 0
+> {
+  typedef ExponentAccum type;
+};
+
+// 0 -> result
+// -1 -> recur without keep
+// 1 -> recur with keep
+// also TestAccum 0 means stop
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename ExponentAccumTestSizePrev,
+  typename ExponentAccumTestSize = typename half_nat_rounding_down<ExponentAccumTestSizePrev>::type,
+  typename TestAccum = typename multiply<TestAccumPrev, typename power<Base, ExponentAccumTestSize>::type>::type,
+  typename ExponentAccum = typename add<ExponentAccumPrev, ExponentAccumTestSize>::type,
+  int Compare = compare<Number, TestAccum>::value,
+  bool NoMoreExponentsToTest = is_zero_<ExponentAccumTestSize>::value>
+struct log_impl6;
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl5<
+  Base, Number, TestAccumPrev, ExponentAccumPrev,
+  TestAccum, ExponentAccum, (-1)
+> : log_impl6<Base, Number, TestAccumPrev, ExponentAccumPrev,
+      ExponentAccumPrev> {};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename ExponentAccumTestSizePrev,
+  typename ExponentAccumTestSize,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl6<
+  Base, Number, TestAccumPrev, ExponentAccumPrev, ExponentAccumTestSizePrev,
+  ExponentAccumTestSize, TestAccum, ExponentAccum, 0, false
+> {
+  typedef ExponentAccum type;
+};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename ExponentAccumTestSizePrev,
+  typename ExponentAccumTestSize,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl6<
+  Base, Number, TestAccumPrev, ExponentAccumPrev, ExponentAccumTestSizePrev,
+  ExponentAccumTestSize, TestAccum, ExponentAccum, 1, false
+> : log_impl6<Base, Number, TestAccum, ExponentAccum, ExponentAccumTestSize> {};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename ExponentAccumTestSizePrev,
+  typename ExponentAccumTestSize,
+  typename TestAccum,
+  typename ExponentAccum
+> struct log_impl6<
+  Base, Number, TestAccumPrev, ExponentAccumPrev, ExponentAccumTestSizePrev,
+  ExponentAccumTestSize, TestAccum, ExponentAccum, (-1), false
+> : log_impl6<Base, Number, TestAccumPrev, ExponentAccumPrev, ExponentAccumTestSize> {};
+
+template<
+  typename Base,
+  typename Number,
+  typename TestAccumPrev,
+  typename ExponentAccumPrev,
+  typename ExponentAccumTestSizePrev,
+  typename ExponentAccumTestSize,
+  typename TestAccum,
+  typename ExponentAccum,
+  int Compare
+> struct log_impl6<
+  Base, Number, TestAccumPrev, ExponentAccumPrev, ExponentAccumTestSizePrev,
+  ExponentAccumTestSize, TestAccum, ExponentAccum, Compare, true
+> {
+  typedef typename add<ExponentAccumPrev, rational<nat<1>, nat<2>>>::type type;
+};
+
+
 
 // digit<base, exp>
 
@@ -1375,7 +1642,19 @@ nearbyint(number<A>) { return impl::make_any_number(); }
 template<typename A, typename RoundingStrategy> constexpr inline
 number<typename impl::round_<A, RoundingStrategy>::type>
 round(number<A>, RoundingStrategy) { return impl::make_any_number(); }
-//approx_log2
+
+template<typename Base, typename Number, typename RoundingStrategy> constexpr inline
+number<typename impl::logarithm<Base, Number, RoundingStrategy>::type>
+log(number<Base>, number<Number>, RoundingStrategy) { return impl::make_any_number(); }
+
+template<typename Number, typename RoundingStrategy> constexpr inline
+number<typename impl::logarithm<nat<2>, Number, RoundingStrategy>::type>
+log2(number<Number>, RoundingStrategy) { return impl::make_any_number(); }
+
+template<typename Number, typename RoundingStrategy> constexpr inline
+number<typename impl::logarithm<nat<10>, Number, RoundingStrategy>::type>
+log10(number<Number>, RoundingStrategy) { return impl::make_any_number(); }
+
 
 // and operator bool, maybe explicit operator float, etc.
 // I suppose the user-visible types should *anyway* be different from the intermediates...

@@ -13,9 +13,12 @@ enum rounding_strategy_for_positive_numbers {
   round_down, round_up,
   round_to_nearest_with_ties_rounding_up,
   round_to_nearest_with_ties_rounding_down,
-  // The negative variant doesn't make a difference with these:
+  // The negative variant doesn't make a difference with any
+  // after this point.
   round_to_nearest_with_ties_rounding_to_even,
   round_to_nearest_with_ties_rounding_to_odd,
+  // signal an error if the answer is not exact
+  require_exact_answer,//TODO implement this in divide() and shift_right()
   // Non-integer results become the nearest "X.5".
   // This is only meaningful for types that can hold one-half.
   // It provides information that cannot be directly accessed
