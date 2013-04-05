@@ -1024,10 +1024,10 @@ private:
                 faces_[fi] = faces_[fi].updated_to_time(vfc->when_event_occurs_);
               }
               for (face_idx_type fi : r1.faces_) {
-                faces_[fi].D_velocity -= problem_velocity.dot<mpz>(faces_[fi].ABC);
+                faces_[fi].D_velocity -= problem_velocity.dot<mpz>(faces_[fi].ABC) * 2 / 3;
               }
               for (face_idx_type fi : r2.faces_) {
-                faces_[fi].D_velocity += problem_velocity.dot<mpz>(faces_[fi].ABC);
+                faces_[fi].D_velocity += problem_velocity.dot<mpz>(faces_[fi].ABC) * 2 / 3;
               }
               // TODO : have the recomputation be automated somehow
               for (face_idx_type fi : r1.faces_) {
