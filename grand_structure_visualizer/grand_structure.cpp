@@ -484,7 +484,7 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
       }
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = isqrt(discriminant);
-      const velocity1d  lesser_numerator = -b - sqrt_disc;
+      const velocity1d  lesser_numerator = -b - sqrt_disc - 1*distance_units/seconds;
       if ( lesser_numerator >= 0)  {
         const time_type zero = divide(
             lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units),
