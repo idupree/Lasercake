@@ -49,7 +49,7 @@
 // Negative integers are negative<nat<..>>.
 // Non-integer rationals are in canonical form and
 //   rational<nat<..>, nat<..>>   or   negative<rational<nat<..>, nat<..>>>.
-// All compile-time-number types T are derived from ct::number<T> to make
+// All compile-time-number types T are wrapped in ct::number<T> to make
 // operator/function overloading on them easier.
 //
 //
@@ -148,10 +148,10 @@ struct number {};
 //ct: compile-time
 //nat: natural number (integer >= 0)
 template<milliodigit... Milliodigits>
-struct nat : number<nat<Milliodigits...>> {};
+struct nat {};//: number<nat<Milliodigits...>> {};
 // < 0
 template<typename Nonnegative>
-struct negative : number<negative<Nonnegative>> {};
+struct negative {};//: number<negative<Nonnegative>> {};
 //rational number
 //normalized
 // integers are nat
@@ -159,7 +159,10 @@ struct negative : number<negative<Nonnegative>> {};
 //zero: rational<nat<>, nat<1>>
 //negative: negative<rational<nat<..>, nat<..>>>
 template<typename Num, typename Den>
-struct rational : number<rational<Num,Den>> {};
+struct rational {};//: number<rational<Num,Den>> {};
+// inheritance didn't give as strong function-overloading properties,
+// may slow compile-time computations a bit,
+// and we don't need it anymore.
 
 struct divide_by_zero {};
 
@@ -1127,30 +1130,30 @@ struct make_any_number {
 // ADL (Argument Dependent Lookup) will find these templates when appropriate.
 // operator/ is rational division; div() is integer division.
 
-template<typename A> constexpr inline A
+template<typename A> constexpr inline number<A>
 operator+(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename impl::negate<A>::type
+template<typename A> constexpr inline number<typename impl::negate<A>::type>
 operator-(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename impl::abs_<A>::type
+template<typename A> constexpr inline number<typename impl::abs_<A>::type>
 abs(number<A>) { return impl::make_any_number(); }
 
-template<typename A, typename B> constexpr inline typename impl::add<A, B>::type
+template<typename A, typename B> constexpr inline number<typename impl::add<A, B>::type>
 operator+(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A, typename B> constexpr inline typename impl::subtract<A, B>::type
+template<typename A, typename B> constexpr inline number<typename impl::subtract<A, B>::type>
 operator-(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A, typename B> constexpr inline typename impl::multiply<A, B>::type
+template<typename A, typename B> constexpr inline number<typename impl::multiply<A, B>::type>
 operator*(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A, typename B> constexpr inline typename impl::divide_rational<A, B>::type
+template<typename A, typename B> constexpr inline number<typename impl::divide_rational<A, B>::type>
 operator/(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A> constexpr inline typename impl::reciprocal_<A>::type
+template<typename A> constexpr inline number<typename impl::reciprocal_<A>::type>
 reciprocal(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename impl::numerator_<A>::type
+template<typename A> constexpr inline number<typename impl::numerator_<A>::type>
 numerator(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename impl::denominator_<A>::type
+template<typename A> constexpr inline number<typename impl::denominator_<A>::type>
 denominator(number<A>) { return impl::make_any_number(); }
 
 template<typename Quot, typename Rem>
@@ -1159,10 +1162,12 @@ struct ctdiv_t {
   Rem rem;
 };
 template<typename A, typename B> constexpr inline
-ctdiv_t<typename impl::divide_integer<A, B>::quot, typename impl::divide_integer<A, B>::rem>
+ctdiv_t<
+  number<typename impl::divide_integer<A, B>::quot>,
+  number<typename impl::divide_integer<A, B>::rem> >
 div(number<A>, number<B>) { return impl::make_any_number(); }
 
-template<typename A, typename B> constexpr inline typename impl::power<A, B>::type
+template<typename A, typename B> constexpr inline number<typename impl::power<A, B>::type>
 pow(number<A>, number<B>) { return impl::make_any_number(); }
 
 template<typename A, typename B> constexpr inline bool
@@ -1187,12 +1192,12 @@ is_positive_integer(number<A>) { return impl::is_positive_integer_<A>::value; }
 
 template<uintmax_t Int>
 struct from_uint {
-  typedef typename impl::literal<uintmax_t, Int>::type type;
+  typedef number<typename impl::literal<uintmax_t, Int>::type> type;
   static constexpr type value = type();
 };
 template<intmax_t Int>
 struct from_int {
-  typedef typename impl::literal<intmax_t, Int>::type type;
+  typedef number<typename impl::literal<intmax_t, Int>::type> type;
   static constexpr type value = type();
 };
 //template<uintmax_t Int> constexpr inline typename impl::literal<uintmax_t, Int>::type
@@ -1217,7 +1222,7 @@ nearbyint(number<A>) { return impl::make_any_number(); }
 #if LASERCAKE_HAVE_USER_DEFINED_LITERALS
 
 template<char...Digits>
-constexpr inline typename ct::impl::parse_nat<Digits...>::type
+constexpr inline ct::number<typename ct::impl::parse_nat<Digits...>::type>
 operator "" _integer() {
   return ct::impl::make_any_number();
 }
@@ -1244,7 +1249,7 @@ operator "" _integer() {
 namespace ct {
 namespace impl {
 template<size_t NumDigits, char...Digits>
-constexpr inline typename impl::parse_integer<Digits...>::type
+constexpr inline number<typename impl::parse_integer<Digits...>::type>
 _integer() {
 #if !LASERCAKE_HAVE_USER_DEFINED_LITERALS
   static_assert(NumDigits <= BOOST_PP_LIMIT_REPEAT,
