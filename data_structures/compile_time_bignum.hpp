@@ -23,6 +23,7 @@
 #define LASERCAKE_COMPILE_TIME_BIGNUM_HPP__
 
 #include <boost/type_traits/conditional.hpp>
+#include "rounding_strategy.hpp"
 
 // Compile-time arbitrary-precision naturals, integers, and rational numbers
 // whose value is represented in their type (specifically, in their template
@@ -96,13 +97,19 @@
 //                     (though what should it do when the result is irrational))
 //   numerator(a)    //negative if a is negative
 //   denominator(a)  //always nonnegative; '1' for integers
-//   is_integer(a)   //returns constexpr bool
-//   is_nonnegative_integer(a) //returns constexpr bool
-//   is_positive_integer(a)    //returns constexpr bool
-//TODO:
 //   floor(a)        //round towards negative infinity to nearest integer
 //   ceil(a)         //round towards positive infinity to nearest integer
 //   nearbyint(a)    //round towards nearest integer (ties go to even)
+//
+//   is_integer(a)   //these return constexpr bool
+//   is_nonnegative_integer(a)
+//   is_positive_integer(a)
+//   is_negative(a)
+//   is_nonnegative(a)
+//   is_positive(a)
+//   is_zero(a)
+//
+//TODO:
 //   round(a)        //round towards nearest integer (ties go to +Inf)
 //   round(a, rounding_strategy)
 //   a % b  or  fmod(a, b) or remainder(a, b)   //rational modulus
@@ -198,6 +205,13 @@ template<typename Rat> struct reciprocal_;
 template<typename Num> struct is_integer_;
 template<typename Num> struct is_nonnegative_integer_;
 template<typename Num> struct is_positive_integer_;
+template<typename Num> struct is_nonnegative_;
+template<typename Num> struct is_positive_;
+template<typename Num> struct is_negative_;
+template<typename Num> struct is_zero_;
+
+template<typename Num, typename RoundingStrategy> struct round_;
+
 
 template<typename Num> struct round_down_to_nat;
 
@@ -230,6 +244,27 @@ struct is_positive_integer_ : boost::false_type {};
 template<milliodigit... Milliodigits, milliodigit Milliodigit0>
 struct is_positive_integer_<nat<Milliodigit0, Milliodigits...>> : boost::true_type {};
 
+template<typename Num>
+struct is_nonnegative_ : boost::true_type {};
+template<typename T>
+struct is_nonnegative_<negative<T>> : boost::false_type {};
+
+template<typename Num>
+struct is_negative_ : boost::false_type {};
+template<typename T>
+struct is_negative_<negative<T>> : boost::true_type {};
+
+template<typename Num>
+struct is_positive_ : boost::true_type {};
+template<typename T>
+struct is_positive_<negative<T>> : boost::false_type {};
+template<>
+struct is_positive_<nat<>> : boost::false_type {};
+
+template<typename Num>
+struct is_zero_ : boost::false_type {};
+template<>
+struct is_zero_<nat<>> : boost::true_type {};
 
 ///////////////////////////
 //// Basic natural-number operations
@@ -1060,6 +1095,122 @@ template<typename T1, typename T2> struct divide_rational<T1, negative<T2>> {
 template<typename Base, intmax_t Exponent> struct power_impl2<Base, Exponent, true>
   : reciprocal_<typename power_impl3<Base, (-uintmax_t(Exponent))>::type> {};
 
+///////////////////////////
+//// Miscellaneous
+///////////////////////////
+
+// Rounding to integers
+
+template<typename Num, rounding_strategy_for_positive_numbers Strategy> struct round_nonnegative;
+
+#if 0
+template<milliodigit...Milliodigits, typename RoundingStrategy>
+struct round_<nat<Milliodigits...>, RoundingStrategy> {
+  typedef nat<Milliodigits...> type;
+};
+template<milliodigit...Milliodigits, typename RoundingStrategy>
+struct round_<negative<nat<Milliodigits...>>, RoundingStrategy> {
+  typedef negative<nat<Milliodigits...>> type;
+};
+#endif
+
+template<bool Increment, typename Num> struct increment_if;
+template<typename Num> struct increment_if<true, Num> : add<Num, nat<1>> {};
+template<typename Num> struct increment_if<false, Num> {
+  typedef Num type;
+};
+template<bool Increment, typename Num> struct decrement_if;
+template<typename Num> struct decrement_if<true, Num> : subtract<Num, nat<1>> {};
+template<typename Num> struct decrement_if<false, Num> {
+  typedef Num type;
+};
+
+template<milliodigit...Milliodigits, rounding_strategy_for_positive_numbers Strategy>
+struct round_nonnegative<nat<Milliodigits...>, Strategy> {
+  typedef nat<Milliodigits...> type;
+};
+template<typename Num>
+struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_down> {
+  typedef typename divide_nat<Num, nat<2>>::type type;
+};
+template<typename Num>
+struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_up> {
+  typedef typename add<typename divide_nat<Num, nat<2>>::type, nat<1>>::type type;
+};
+template<typename Num>
+struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_to_even> {
+  typedef typename divide_nat<Num, nat<2>>::type div_result_;
+  typedef typename increment_if<odd<div_result_>::value, div_result_>::type type;
+};
+template<typename Num>
+struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_to_odd> {
+  typedef typename divide_nat<Num, nat<2>>::type div_result_;
+  typedef typename increment_if<even<div_result_>::value, div_result_>::type type;
+};
+template<typename Num>
+struct round_nonnegative<rational<Num, nat<2>>, round_to_nearest_with_ties_rounding_to_halfway> {
+  typedef rational<Num, nat<2>> type;
+};
+
+template<typename Num, typename Den>
+struct round_nonnegative<rational<Num, Den>, round_inexact_to_halfway> {
+  typedef typename add<typename divide_nat<Num, Den>::type, rational<nat<1>, nat<2>>>::type type;
+};
+
+template<typename Num, typename Den>
+struct round_nonnegative<rational<Num, Den>, round_down> {
+  typedef typename divide_nat<Num, Den>::type type;
+};
+template<typename Num, typename Den>
+struct round_nonnegative<rational<Num, Den>, round_up> {
+  typedef typename add<typename divide_nat<Num, Den>::type, nat<1>>::type type;
+};
+template<typename Num, typename Den, rounding_strategy_for_positive_numbers RoundToNearestSomething>
+struct round_nonnegative<rational<Num, Den>, RoundToNearestSomething>
+  : round_nonnegative<typename add<rational<Num, Den>, rational<nat<1>, nat<2>>>::type, round_down> {};
+
+
+template<typename Num, rounding_strategy_for_positive_numbers Strategy>
+struct round_<Num, rounding_strategy<Strategy, negative_is_forbidden>> {
+  static_assert(is_nonnegative_<Num>::value, "Negative number appeared where explicitly forbidden");
+  typedef typename round_nonnegative<Num, Strategy>::type type;
+};
+template<typename Num, rounding_strategy_for_positive_numbers Strategy>
+struct round_<Num, rounding_strategy<Strategy, negative_variant_doesnt_make_a_difference>> {
+  typedef typename round_nonnegative<Num, Strategy>::type type;
+};
+template<typename Num, rounding_strategy_for_positive_numbers Strategy>
+struct round_<negative<Num>, rounding_strategy<Strategy, negative_variant_doesnt_make_a_difference>> {
+  static_assert(Strategy >= round_to_nearest_with_ties_rounding_to_even,
+                "You lied! The negative variant does make a difference.");
+  typedef negative<typename round_nonnegative<Num, Strategy>::type> type;
+};
+template<typename Num, rounding_strategy_for_positive_numbers Strategy>
+struct round_<negative<Num>, rounding_strategy<Strategy, negative_mirrors_positive>> {
+  typedef negative<typename round_nonnegative<Num, Strategy>::type> type;
+};
+template<typename Num>
+struct round_<negative<Num>, rounding_strategy<round_up, negative_continuous_with_positive>> {
+  typedef negative<typename round_nonnegative<Num, round_down>::type> type;
+};
+template<typename Num>
+struct round_<negative<Num>, rounding_strategy<round_down, negative_continuous_with_positive>> {
+  typedef negative<typename round_nonnegative<Num, round_up>::type> type;
+};
+template<typename Num>
+struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_up, negative_continuous_with_positive>> {
+  typedef negative<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_down>::type> type;
+};
+template<typename Num>
+struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_down, negative_continuous_with_positive>> {
+  typedef negative<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_up>::type> type;
+};
+template<typename Num, rounding_strategy_for_positive_numbers PositiveStrategy,
+  rounding_strategy_for_negative_numbers NegativeStrategy>
+struct round_<Num, rounding_strategy<PositiveStrategy, NegativeStrategy>> {
+  typedef typename round_nonnegative<Num, PositiveStrategy>::type type;
+};
+
 // digit<base, exp>
 
 
@@ -1189,6 +1340,14 @@ template<typename A> constexpr inline bool
 is_nonnegative_integer(number<A>) { return impl::is_nonnegative_integer_<A>::value; }
 template<typename A> constexpr inline bool
 is_positive_integer(number<A>) { return impl::is_positive_integer_<A>::value; }
+template<typename A> constexpr inline bool
+is_nonnegative(number<A>) { return impl::is_nonnegative_<A>::value; }
+template<typename A> constexpr inline bool
+is_positive(number<A>) { return impl::is_positive_<A>::value; }
+template<typename A> constexpr inline bool
+is_negative(number<A>) { return impl::is_negative_<A>::value; }
+template<typename A> constexpr inline bool
+is_zero(number<A>) { return impl::is_zero_<A>::value; }
 
 template<uintmax_t Int>
 struct from_uint {
@@ -1200,19 +1359,23 @@ struct from_int {
   typedef number<typename impl::literal<intmax_t, Int>::type> type;
   static constexpr type value = type();
 };
-//template<uintmax_t Int> constexpr inline typename impl::literal<uintmax_t, Int>::type
-//from_uint() { return impl::make_any_number(); }
-/*
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type
+
+template<typename A> constexpr inline
+number<typename impl::round_<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type>
 floor(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_up, negative_continuous_with_positive>>::type
+
+template<typename A> constexpr inline
+number<typename impl::round_<A, rounding_strategy<round_up, negative_continuous_with_positive>>::type>
 ceil(number<A>) { return impl::make_any_number(); }
-template<typename A> constexpr inline typename
-round<A, rounding_strategy<round_to_nearest_with_ties_rounding_to_even>>::type
+
+template<typename A> constexpr inline
+number<typename impl::round_<A, rounding_strategy<round_to_nearest_with_ties_rounding_to_even>>::type>
 nearbyint(number<A>) { return impl::make_any_number(); }
-*/
+
+template<typename A, typename RoundingStrategy> constexpr inline
+number<typename impl::round_<A, RoundingStrategy>::type>
+round(number<A>, RoundingStrategy) { return impl::make_any_number(); }
+//approx_log2
 
 // and operator bool, maybe explicit operator float, etc.
 // I suppose the user-visible types should *anyway* be different from the intermediates...

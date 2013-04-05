@@ -47,10 +47,10 @@ template class biguint<0>;
 
 namespace ct_test {
 using namespace ct;
-using namespace ct::impl;
 template<typename T> constexpr inline bool check_same_type(T, T) { return true; }
 #define CHECK_SAME_TYPE(a,b) static_assert(check_same_type(a, b), "bug: different types");
-
+namespace impl_test {
+using namespace ct::impl;
 static_assert(compare<nat<>, nat<1>>::value == -1, "bug");
 static_assert(compare<nat<1>, nat<>>::value == 1, "bug");
 static_assert(compare<nat<1>, nat<1>>::value == 0, "bug");
@@ -59,17 +59,8 @@ static_assert(compare<nat<>, nat<>>::value == 0, "bug");
 static_assert(compare<negative<nat<1>>, nat<>>::value == -1, "bug");
 static_assert(compare<nat<>, negative<nat<1>>>::value == 1, "bug");
 
-CHECK_SAME_TYPE(INTEGER(0xf), INTEGER(15))
-
-
-static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
-static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
-static_assert(INTEGER(1234567) - INTEGER(1234000) == INTEGER(567), "bug");
-static_assert(INTEGER(2) * INTEGER(3) == INTEGER(6), "bug");
-static_assert(INTEGER(0x10) * INTEGER(0x10) == INTEGER(0x100), "bug");
-CHECK_SAME_TYPE(INTEGER(10000000000000) * INTEGER(10000000000000), INTEGER(100000000000000000000000000))
-CHECK_SAME_TYPE(INTEGER(0x10000000000) * INTEGER(0x10000000000), INTEGER(0x100000000000000000000))
-static_assert(INTEGER(0x10000000000) * INTEGER(0x10000000000) == INTEGER(0x100000000000000000000), "bug");
+//static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
+//static_assert(nat<1>() + nat<2>() == nat<3>(), "bug");
 
 typedef floating<(-1), nat<1>> f1;
 typedef typename add<f1, f1>::type f1_2;
@@ -88,6 +79,17 @@ CHECK_SAME_TYPE(f2_3(), f3())
 CHECK_SAME_TYPE(f3_4(), f4())
 CHECK_SAME_TYPE(f1_0(), f0())
 CHECK_SAME_TYPE(f7(), f72())
+}
+
+CHECK_SAME_TYPE(INTEGER(0xf), INTEGER(15))
+
+static_assert(INTEGER(1234567) - INTEGER(1234000) == INTEGER(567), "bug");
+static_assert(INTEGER(2) * INTEGER(3) == INTEGER(6), "bug");
+static_assert(INTEGER(0x10) * INTEGER(0x10) == INTEGER(0x100), "bug");
+CHECK_SAME_TYPE(INTEGER(10000000000000) * INTEGER(10000000000000), INTEGER(100000000000000000000000000))
+CHECK_SAME_TYPE(INTEGER(0x10000000000) * INTEGER(0x10000000000), INTEGER(0x100000000000000000000))
+static_assert(INTEGER(0x10000000000) * INTEGER(0x10000000000) == INTEGER(0x100000000000000000000), "bug");
+
 CHECK_SAME_TYPE(INTEGER(5) - INTEGER(3), INTEGER(2))
 CHECK_SAME_TYPE(INTEGER(3) - INTEGER(5), -INTEGER(2))
 CHECK_SAME_TYPE(div(INTEGER(5), INTEGER(3)).quot, INTEGER(1))
@@ -186,6 +188,91 @@ static_assert(is_positive_integer(INTEGER(99999999999999999999)), "bug");
 static_assert(is_positive_integer(RATIONAL(2, 2)), "bug");
 static_assert(!is_positive_integer(RATIONAL(0, 2)), "bug");
 static_assert(!is_positive_integer(RATIONAL(3, 2)), "bug");
+
+static_assert(is_nonnegative(INTEGER(2)), "bug");
+static_assert(!is_nonnegative(INTEGER(-2)), "bug");
+static_assert(is_nonnegative(INTEGER(0)), "bug");
+static_assert(is_nonnegative(INTEGER(99999999999999999999)), "bug");
+static_assert(is_nonnegative(RATIONAL(2, 2)), "bug");
+static_assert(is_nonnegative(RATIONAL(0, 2)), "bug");
+static_assert(is_nonnegative(RATIONAL(3, 2)), "bug");
+
+static_assert(is_positive(INTEGER(2)), "bug");
+static_assert(!is_positive(INTEGER(-2)), "bug");
+static_assert(!is_positive(INTEGER(0)), "bug");
+static_assert(is_positive(INTEGER(99999999999999999999)), "bug");
+static_assert(is_positive(RATIONAL(2, 2)), "bug");
+static_assert(!is_positive(RATIONAL(0, 2)), "bug");
+static_assert(is_positive(RATIONAL(3, 2)), "bug");
+
+static_assert(!is_negative(INTEGER(2)), "bug");
+static_assert(is_negative(INTEGER(-2)), "bug");
+static_assert(!is_negative(INTEGER(0)), "bug");
+static_assert(!is_negative(INTEGER(99999999999999999999)), "bug");
+static_assert(!is_negative(RATIONAL(2, 2)), "bug");
+static_assert(!is_negative(RATIONAL(0, 2)), "bug");
+static_assert(!is_negative(RATIONAL(3, 2)), "bug");
+
+static_assert(!is_zero(INTEGER(2)), "bug");
+static_assert(!is_zero(INTEGER(-2)), "bug");
+static_assert(is_zero(INTEGER(0)), "bug");
+static_assert(!is_zero(INTEGER(99999999999999999999)), "bug");
+static_assert(!is_zero(RATIONAL(2, 2)), "bug");
+static_assert(is_zero(RATIONAL(0, 2)), "bug");
+static_assert(!is_zero(RATIONAL(3, 2)), "bug");
+
+CHECK_SAME_TYPE(floor(RATIONAL(4,3)), INTEGER(1))
+CHECK_SAME_TYPE(floor(RATIONAL(5,3)), INTEGER(1))
+CHECK_SAME_TYPE(floor(RATIONAL(3,2)), INTEGER(1))
+CHECK_SAME_TYPE(floor(INTEGER(1)), INTEGER(1))
+
+CHECK_SAME_TYPE(floor(-RATIONAL(4,3)), -INTEGER(2))
+CHECK_SAME_TYPE(floor(-RATIONAL(5,3)), -INTEGER(2))
+CHECK_SAME_TYPE(floor(-RATIONAL(3,2)), -INTEGER(2))
+CHECK_SAME_TYPE(floor(-INTEGER(1)), -INTEGER(1))
+
+CHECK_SAME_TYPE(ceil(RATIONAL(4,3)), INTEGER(2))
+CHECK_SAME_TYPE(ceil(RATIONAL(5,3)), INTEGER(2))
+CHECK_SAME_TYPE(ceil(RATIONAL(3,2)), INTEGER(2))
+CHECK_SAME_TYPE(ceil(INTEGER(1)), INTEGER(1))
+
+CHECK_SAME_TYPE(ceil(-RATIONAL(4,3)), -INTEGER(1))
+CHECK_SAME_TYPE(ceil(-RATIONAL(5,3)), -INTEGER(1))
+CHECK_SAME_TYPE(ceil(-RATIONAL(3,2)), -INTEGER(1))
+CHECK_SAME_TYPE(ceil(-INTEGER(1)), -INTEGER(1))
+
+CHECK_SAME_TYPE(nearbyint(RATIONAL(4,3)), INTEGER(1))
+CHECK_SAME_TYPE(nearbyint(RATIONAL(5,3)), INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(RATIONAL(3,2)), INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(RATIONAL(5,2)), INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(INTEGER(1)), INTEGER(1))
+
+CHECK_SAME_TYPE(nearbyint(-RATIONAL(4,3)), -INTEGER(1))
+CHECK_SAME_TYPE(nearbyint(-RATIONAL(5,3)), -INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(-RATIONAL(3,2)), -INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(-RATIONAL(5,2)), -INTEGER(2))
+CHECK_SAME_TYPE(nearbyint(-INTEGER(1)), -INTEGER(1))
+
+CHECK_SAME_TYPE(round(RATIONAL(4,3), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(3,2))
+CHECK_SAME_TYPE(round(RATIONAL(-4,3), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(-3,2))
+CHECK_SAME_TYPE(round(RATIONAL(3,2), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(3,2))
+CHECK_SAME_TYPE(round(RATIONAL(-3,2), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(-3,2))
+CHECK_SAME_TYPE(round(RATIONAL(5,3), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(3,2))
+CHECK_SAME_TYPE(round(RATIONAL(-5,3), rounding_strategy<round_inexact_to_halfway>()), RATIONAL(-3,2))
+CHECK_SAME_TYPE(round(INTEGER(2), rounding_strategy<round_inexact_to_halfway>()), INTEGER(2))
+CHECK_SAME_TYPE(round(INTEGER(-2), rounding_strategy<round_inexact_to_halfway>()), INTEGER(-2))
+CHECK_SAME_TYPE(round(INTEGER(0), rounding_strategy<round_inexact_to_halfway>()), INTEGER(0))
+
+CHECK_SAME_TYPE(round(RATIONAL(4,3), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(1))
+CHECK_SAME_TYPE(round(RATIONAL(-4,3), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(-1))
+CHECK_SAME_TYPE(round(RATIONAL(3,2), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), RATIONAL(3,2))
+CHECK_SAME_TYPE(round(RATIONAL(-3,2), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), RATIONAL(-3,2))
+CHECK_SAME_TYPE(round(RATIONAL(5,3), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(2))
+CHECK_SAME_TYPE(round(RATIONAL(-5,3), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(-2))
+CHECK_SAME_TYPE(round(INTEGER(2), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(2))
+CHECK_SAME_TYPE(round(INTEGER(-2), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(-2))
+CHECK_SAME_TYPE(round(INTEGER(0), rounding_strategy<round_to_nearest_with_ties_rounding_to_halfway>()), INTEGER(0))
+
 }
 
 static void bignum_compile_test() {

@@ -9,11 +9,20 @@
 // numbers and an indication of how negative rounding is
 // related to positive rounding.
 enum rounding_strategy_for_positive_numbers {
+  // The negative variant makes a difference with these:
   round_down, round_up,
   round_to_nearest_with_ties_rounding_up,
   round_to_nearest_with_ties_rounding_down,
+  // The negative variant doesn't make a difference with these:
   round_to_nearest_with_ties_rounding_to_even,
-  round_to_nearest_with_ties_rounding_to_odd
+  round_to_nearest_with_ties_rounding_to_odd,
+  // Non-integer results become the nearest "X.5".
+  // This is only meaningful for types that can hold one-half.
+  // It provides information that cannot be directly accessed
+  // with the other strategies (namely, whether the result was exact):
+  round_inexact_to_halfway,
+  // "X.5" results remain "X.5"; the rest round to the nearest integer:
+  round_to_nearest_with_ties_rounding_to_halfway
 };
 enum rounding_strategy_for_negative_numbers {
   // "doesn't make a difference" is true for unsigned arguments
