@@ -94,6 +94,11 @@
 //   pow(a, b)       //integer exponents permitted (TODO rational exponents
 //                     (crib from numbers.hpp static_root_nonnegative_integer)
 //                     (though what should it do when the result is irrational))
+//   numerator(a)    //negative if a is negative
+//   denominator(a)  //always nonnegative; '1' for integers
+//   is_integer(a)   //returns constexpr bool
+//   is_nonnegative_integer(a) //returns constexpr bool
+//   is_positive_integer(a)    //returns constexpr bool
 //TODO:
 //   floor(a)        //round towards negative infinity to nearest integer
 //   ceil(a)         //round towards positive infinity to nearest integer
@@ -187,12 +192,16 @@ template<typename NatA, typename NatB> struct divide_integer;
 template<typename RatA, typename RatB> struct divide_rational;
 template<typename Rat> struct reciprocal_;
 
+template<typename Num> struct is_integer_;
+template<typename Num> struct is_nonnegative_integer_;
+template<typename Num> struct is_positive_integer_;
+
 template<typename Num> struct round_down_to_nat;
 
 // Works on any integer/rational; returns the canonical rational representation.
 // For negative numbers, numerator is negative and denominator is positive.
-template<typename Rat> struct numerator;
-template<typename Rat> struct denominator;
+template<typename Rat> struct numerator_;
+template<typename Rat> struct denominator_;
 
 // add and multiply are associative
 template<typename NatA, typename NatB, typename NatC, typename...Nat>
@@ -200,7 +209,23 @@ struct add<NatA, NatB, NatC, Nat...> : add<typename add<NatA, NatB>::type, NatC,
 template<typename NatA, typename NatB, typename NatC, typename...Nat>
 struct multiply<NatA, NatB, NatC, Nat...> : multiply<typename multiply<NatA, NatB>::type, NatC, Nat...> {};
 
+// classification
+template<typename Num>
+struct is_integer_ : boost::false_type {};
+template<milliodigit... Milliodigits>
+struct is_integer_<nat<Milliodigits...>> : boost::true_type {};
+template<milliodigit... Milliodigits>
+struct is_integer_<negative<nat<Milliodigits...>>> : boost::true_type {};
 
+template<typename Num>
+struct is_nonnegative_integer_ : boost::false_type {};
+template<milliodigit... Milliodigits>
+struct is_nonnegative_integer_<nat<Milliodigits...>> : boost::true_type {};
+
+template<typename Num>
+struct is_positive_integer_ : boost::false_type {};
+template<milliodigit... Milliodigits, milliodigit Milliodigit0>
+struct is_positive_integer_<nat<Milliodigit0, Milliodigits...>> : boost::true_type {};
 
 
 ///////////////////////////
@@ -413,10 +438,10 @@ template<> struct power<nat<>, nat<>> { typedef nat<1> type; };
 template<typename Base, typename Exponent>
 struct power : power_impl1<Base, Exponent> {};
 
-template<milliodigit... Milliodigits> struct numerator<nat<Milliodigits...>> {
+template<milliodigit... Milliodigits> struct numerator_<nat<Milliodigits...>> {
   typedef nat<Milliodigits...> type;
 };
-template<milliodigit... Milliodigits> struct denominator<nat<Milliodigits...>> {
+template<milliodigit... Milliodigits> struct denominator_<nat<Milliodigits...>> {
   typedef nat<1> type;
 };
 
@@ -755,11 +780,11 @@ template<typename T> struct abs_<negative<T>> {
 };
 
 // Signed numerator/denominator
-template<typename T> struct numerator<negative<T>> {
-  typedef negative<typename numerator<T>::type> type;
+template<typename T> struct numerator_<negative<T>> {
+  typedef negative<typename numerator_<T>::type> type;
 };
-template<typename T> struct denominator<negative<T>> {
-  typedef typename denominator<T>::type type;
+template<typename T> struct denominator_<negative<T>> {
+  typedef typename denominator_<T>::type type;
 };
 
 // Integer division following int operator/ semantics
@@ -971,6 +996,14 @@ struct compare<rational<NumA, DenA>, rational<NumB, DenB>>
       typename multiply<NumA, DenB>::type,
       typename multiply<NumB, DenA>::type> {};
 
+template<typename Num, typename Den>
+struct numerator_<rational<Num, Den>> {
+  typedef Num type;
+};
+template<typename Num, typename Den>
+struct denominator_<rational<Num, Den>> {
+  typedef Den type;
+};
 
 // dull conversions
 template<typename NumA, typename DenA, milliodigit...MilliodigitsB>
@@ -1024,8 +1057,6 @@ template<typename T1, typename T2> struct divide_rational<T1, negative<T2>> {
 template<typename Base, intmax_t Exponent> struct power_impl2<Base, Exponent, true>
   : reciprocal_<typename power_impl3<Base, (-uintmax_t(Exponent))>::type> {};
 
-// numerator<>
-// denominator<>
 // digit<base, exp>
 
 
@@ -1117,6 +1148,10 @@ operator/(number<A>, number<B>) { return impl::make_any_number(); }
 
 template<typename A> constexpr inline typename impl::reciprocal_<A>::type
 reciprocal(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename impl::numerator_<A>::type
+numerator(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline typename impl::denominator_<A>::type
+denominator(number<A>) { return impl::make_any_number(); }
 
 template<typename Quot, typename Rem>
 struct ctdiv_t {
@@ -1142,6 +1177,13 @@ template<typename A, typename B> constexpr inline bool
 operator<=(number<A>, number<B>) { return impl::compare<A, B>::value != 1; }
 template<typename A, typename B> constexpr inline bool
 operator>=(number<A>, number<B>) { return impl::compare<A, B>::value != -1; }
+
+template<typename A> constexpr inline bool
+is_integer(number<A>) { return impl::is_integer_<A>::value; }
+template<typename A> constexpr inline bool
+is_nonnegative_integer(number<A>) { return impl::is_nonnegative_integer_<A>::value; }
+template<typename A> constexpr inline bool
+is_positive_integer(number<A>) { return impl::is_positive_integer_<A>::value; }
 
 template<uintmax_t Int>
 struct from_uint {

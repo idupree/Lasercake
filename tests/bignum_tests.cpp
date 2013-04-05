@@ -154,6 +154,38 @@ static_assert(RATIONAL(-3,2) != INTEGER(-1), "bug");
 static_assert(RATIONAL(-4,2) == INTEGER(-2), "bug");
 static_assert(!(RATIONAL(-3,2) > INTEGER(2)), "bug");
 
+CHECK_SAME_TYPE(numerator(RATIONAL(6,4)), INTEGER(3))
+CHECK_SAME_TYPE(numerator(-RATIONAL(6,4)), INTEGER(-3))
+CHECK_SAME_TYPE(denominator(RATIONAL(6,4)), INTEGER(2))
+CHECK_SAME_TYPE(denominator(-RATIONAL(6,4)), INTEGER(2))
+CHECK_SAME_TYPE(numerator(RATIONAL(6,6)), INTEGER(1))
+CHECK_SAME_TYPE(numerator(-RATIONAL(6,6)), INTEGER(-1))
+CHECK_SAME_TYPE(denominator(RATIONAL(6,6)), INTEGER(1))
+CHECK_SAME_TYPE(denominator(-RATIONAL(6,6)), INTEGER(1))
+
+static_assert(is_integer(INTEGER(2)), "bug");
+static_assert(is_integer(INTEGER(-2)), "bug");
+static_assert(is_integer(INTEGER(0)), "bug");
+static_assert(is_integer(INTEGER(-99999999999999999999)), "bug");
+static_assert(is_integer(RATIONAL(2, 2)), "bug");
+static_assert(is_integer(RATIONAL(0, 2)), "bug");
+static_assert(!is_integer(RATIONAL(3, 2)), "bug");
+
+static_assert(is_nonnegative_integer(INTEGER(2)), "bug");
+static_assert(!is_nonnegative_integer(INTEGER(-2)), "bug");
+static_assert(is_nonnegative_integer(INTEGER(0)), "bug");
+static_assert(is_nonnegative_integer(INTEGER(99999999999999999999)), "bug");
+static_assert(is_nonnegative_integer(RATIONAL(2, 2)), "bug");
+static_assert(is_nonnegative_integer(RATIONAL(0, 2)), "bug");
+static_assert(!is_nonnegative_integer(RATIONAL(3, 2)), "bug");
+
+static_assert(is_positive_integer(INTEGER(2)), "bug");
+static_assert(!is_positive_integer(INTEGER(-2)), "bug");
+static_assert(!is_positive_integer(INTEGER(0)), "bug");
+static_assert(is_positive_integer(INTEGER(99999999999999999999)), "bug");
+static_assert(is_positive_integer(RATIONAL(2, 2)), "bug");
+static_assert(!is_positive_integer(RATIONAL(0, 2)), "bug");
+static_assert(!is_positive_integer(RATIONAL(3, 2)), "bug");
 }
 
 static void bignum_compile_test() {
