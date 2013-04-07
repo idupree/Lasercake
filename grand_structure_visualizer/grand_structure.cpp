@@ -583,6 +583,57 @@ struct event_ptr_compare {
   bool operator()(shared_ptr<event> const& a, shared_ptr<event> const& b)const { return a->when_event_occurs_ > b->when_event_occurs_; }
 };
 
+struct face_triple {
+  // standardized to be in increasing order
+  face_idx_type f1_;
+  face_idx_type f2_;
+  face_idx_type f3_;
+};
+
+namespace HASH_NAMESPACE {
+  template<> struct hash<face_triple> {
+    inline size_t operator()(face_triple const& t) const {
+      size_t seed = 0;
+      boost::hash_combine(seed, t.f1_);
+      boost::hash_combine(seed, t.f2_);
+      boost::hash_combine(seed, t.f3_);
+      return seed;
+    }
+  };
+}
+
+struct face_face_overlap_segment_collection {
+  // TODO: Evaluate data structure choice.
+  // This structure will usually contain 3 segments at most, and very rarely more than, let's say, eight.
+  // So a hash table is probably the wrong choice.
+  std::unordered_multimap<face_triple, face_triple> contents_;
+  void insert(std::pair<face_triple, face_triple> const& o) {
+    contents_.insert(o);
+    contents_.insert(std::make_pair(o.second, o.first));
+  }
+  void erase(std::pair<face_triple, face_triple> const& o) {
+    {
+      auto r = contents_.equal_range(o.first);
+      for (auto i : r) { if (i->second == o.second) { contents.erase(i); break; } }
+    }
+    {
+      auto r = contents_.equal_range(o.second);
+      for (auto i : r) { if (i->second == o.first) { contents.erase(i); break; } }
+    }
+  }
+  bool empty() {
+    return contents_.empty();
+  }
+  face_triple* arbitrary_other_end(face_triple const& t) {
+    auto result = contents_.find(t);
+    if (t == contents_.end()) return nullptr;
+    else return &*t;
+  }
+  face_triple arbitrary_triple() {
+    return contents_.begin()->first;
+  }
+};
+
 // Maybe the structures should be required to follow some kind of right-hand-rule
 // order? Then asserts could check that it is still correct, and OpenGL would
 // be more easily able to draw directional surfaces.
@@ -914,11 +965,12 @@ public:
     present_time_ = when;
   }
 
+  
     /*
      * Pseudocode for this function:
      * 
   std::vector<std::vector<face triple>> find_self_overlaps(region const& r)const {
-    set<(face pair, first cut, second cut) (indexed by both first face-triple and last face-triple)> face_overlaps;
+    face_face_overlap_segment_collection face_overlaps;
     for (each pair (f1, f2) of nonadjacent faces of r) {
       priority_queue f1_transition_points;
       priority_queue f2_transition_points;
@@ -933,23 +985,15 @@ public:
     std::vector<std::vector<face triple>> result;
     while (!face_overlaps.empty()) {
       std::vector<face triple> loop;
-      loop.push_back(face_overlaps.front()); face_overlaps.erase(loop.back());
-      while (true) {
-        if (thing* overlap = find_as_pointer(face_overlaps, loop.back().second face triple) {
-          loop.push_back(*overlap);
-          face_overlaps.erase(loop.back());
-          if (loop.back().first face triple != loop[loop.size()-2].second face triple) {
-            switch the order of loop.back();
-          }
-          if (loop.back().second face triple == loop.front().first face triple) {
-            // Yay, the loop is closed
-            break;
-          }
-        }
-        else {
-          assert(false);
-        }
+      loop.push_back(face_overlaps.arbitrary_triple());
+      do {
+        face_triple* nextp = face_overlaps.arbitrary_other_end(loop.back());
+        assert(nextp);
+        face_triple next = *nextp;
+        face_overlaps.erase(std::make_pair(loop.back(), next));
+        loop.push_back(next);
       }
+      while (loop.back() != loop.front());
     }
     return result;
   }
