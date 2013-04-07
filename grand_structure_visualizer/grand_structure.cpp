@@ -914,6 +914,47 @@ public:
     present_time_ = when;
   }
 
+    /*
+     * Pseudocode for this function:
+     * 
+  std::vector<std::vector<face triple>> find_self_overlaps(region const& r)const {
+    set<(face pair, first cut, second cut) (indexed by both first face-triple and last face-triple)> face_overlaps;
+    for (each pair (f1, f2) of nonadjacent faces of r) {
+      priority_queue f1_transition_points;
+      priority_queue f2_transition_points;
+      for (each triple (n1, n2, n3) of consecutive faces adjacent to f1, constituting a pair of adjacent vertices (v1, v2) of f1) {
+        if (v1 and v2 are on opposite sides of f2) {
+          record the triple intersection (f1, f2, n2) in f1_transition_points;
+        }
+      }
+      do the same with f2 {}
+      Compute the intersection of the line-subsets described in f1_transition_points, f2_transition_points; insert them into face_overlaps;
+    }
+    std::vector<std::vector<face triple>> result;
+    while (!face_overlaps.empty()) {
+      std::vector<face triple> loop;
+      loop.push_back(face_overlaps.front()); face_overlaps.erase(loop.back());
+      while (true) {
+        if (thing* overlap = find_as_pointer(face_overlaps, loop.back().second face triple) {
+          loop.push_back(*overlap);
+          face_overlaps.erase(loop.back());
+          if (loop.back().first face triple != loop[loop.size()-2].second face triple) {
+            switch the order of loop.back();
+          }
+          if (loop.back().second face triple == loop.front().first face triple) {
+            // Yay, the loop is closed
+            break;
+          }
+        }
+        else {
+          assert(false);
+        }
+      }
+    }
+    return result;
+  }
+    */
+  
   void display_face(face const& f, gl_triangles& triangles, gl_data_format::color c, float width) {
     gl_polygon polygon;
     const face present_face = f.updated_to_time(present_time_);
