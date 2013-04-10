@@ -490,7 +490,7 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
       }
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = isqrt(discriminant);
-      const velocity1d  lesser_numerator = -b - sqrt_disc - 1*distance_units/time_units;
+      const velocity1d  lesser_numerator = -b - sqrt_disc - ((sqrt_disc*sqrt_disc == discriminant) ? 0 : 1)*distance_units/time_units;
       if ( lesser_numerator >= 0)  {
         const time_type zero = divide(lesser_numerator, a_times_2, strat);
         //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
