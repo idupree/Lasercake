@@ -588,11 +588,13 @@ struct face_triple {
   face_idx_type f1_;
   face_idx_type f2_;
   face_idx_type f3_;
+  bool operator==(face_triple const& o)const{return (f1_ == o.f1_) && (f2_ == o.f2_) && (f3_ == o.f3_);}
 };
 
+} // namespace YO 
 namespace HASH_NAMESPACE {
-  template<> struct hash<face_triple> {
-    inline size_t operator()(face_triple const& t) const {
+  template<> struct hash<YO::face_triple> {
+    inline size_t operator()(YO::face_triple const& t) const {
       size_t seed = 0;
       boost::hash_combine(seed, t.f1_);
       boost::hash_combine(seed, t.f2_);
@@ -601,6 +603,7 @@ namespace HASH_NAMESPACE {
     }
   };
 }
+namespace YO {
 
 struct face_face_overlap_segment_collection {
   // TODO: Evaluate data structure choice.
@@ -614,11 +617,11 @@ struct face_face_overlap_segment_collection {
   void erase(std::pair<face_triple, face_triple> const& o) {
     {
       auto r = contents_.equal_range(o.first);
-      for (auto i : r) { if (i->second == o.second) { contents.erase(i); break; } }
+      for (auto i = r.first; i != r.second; ++i) { if (i->second == o.second) { contents_.erase(i); break; } }
     }
     {
       auto r = contents_.equal_range(o.second);
-      for (auto i : r) { if (i->second == o.first) { contents.erase(i); break; } }
+      for (auto i = r.first; i != r.second; ++i) { if (i->second == o.first) { contents_.erase(i); break; } }
     }
   }
   bool empty() {
@@ -626,8 +629,8 @@ struct face_face_overlap_segment_collection {
   }
   face_triple* arbitrary_other_end(face_triple const& t) {
     auto result = contents_.find(t);
-    if (t == contents_.end()) return nullptr;
-    else return &*t;
+    if (result == contents_.end()) return nullptr;
+    else return &result->second;
   }
   face_triple arbitrary_triple() {
     return contents_.begin()->first;
