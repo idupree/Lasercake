@@ -1086,7 +1086,7 @@ private:
           face& sf  = faces_[vfc->struck_face()];
           if (vertex_is_in_bounded_face__hack(vfc->when_event_occurs_, vf1, vf2, vf3, sf)) {
             vector3<mpz> normal = sf.updated_to_time(vfc->when_event_occurs_).ABC;
-            vector3<velocity1d> problem_velocity = normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1.updated_to_time(vfc->when_event_occurs_), vf2.updated_to_time(vfc->when_event_occurs_), vf3.updated_to_time(vfc->when_event_occurs_)).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
+            vector3<velocity1d> problem_velocity = -normal * 10000000 * distance_units / time_units / normal.magnitude_using<mpz>(); //normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1.updated_to_time(vfc->when_event_occurs_), vf2.updated_to_time(vfc->when_event_occurs_), vf3.updated_to_time(vfc->when_event_occurs_)).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
             assert(problem_velocity != 0);
             // Hack - this standardizes "normals point outwards from rock"
             if (problem_velocity.dot<mpz>(normal) < 0) {
