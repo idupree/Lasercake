@@ -256,18 +256,25 @@ void push_wireframe_polygon(
 //TODO make this size better for long durations or something
 //long distances
 //128
-typedef typename units_prod<pico_t, seconds_t>::type time_units_t;
+typedef typename units_prod<milli_t, seconds_t>::type time_units_t;
 constexpr time_units_t time_units = time_units_t();
 typedef physical_quantity<mpz, time_units_t> time_type;
 
 typedef typename units_prod<nano_t, meters_t>::type distance_units_t;
+typedef typename units_prod<distance_units_t, typename units_pow<time_units_t, -1>::type>::type velocity_units_t;
+typedef typename units_prod<velocity_units_t, typename units_pow<time_units_t, -1>::type>::type acceleration_units_t;
+typedef typename units_prod<acceleration_units_t, dim::ratio<2>>::type acceleration_coefficient_units_t;
 constexpr distance_units_t distance_units = distance_units_t();
+constexpr velocity_units_t velocity_units = velocity_units_t();
+constexpr acceleration_units_t acceleration_units = acceleration_units_t();
+constexpr acceleration_coefficient_units_t acceleration_coefficient_units = acceleration_coefficient_units_t();
 typedef physical_quantity<mpz, distance_units_t> distance;
-typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-1)> >::type> velocity1d;
-typedef physical_quantity<mpz, typename units_prod<distance_units_t, dim::second<(-2)> >::type> acceleration1d;
+typedef physical_quantity<mpz, velocity_units_t> velocity1d;
+typedef physical_quantity<mpz, acceleration_units_t> acceleration1d;
+typedef physical_quantity<mpz, acceleration_coefficient_units_t> acceleration_coefficient;
 
 // Standard (Earth-equivalent) gravity: precisely 9.80665 m/s2
-const acceleration1d gravity_acceleration_magnitude = mpz(9806650) * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters));
+const acceleration1d gravity_acceleration_magnitude = mpz(9806650) * (micro*meters) / (seconds*seconds) * identity(distance_units / (micro*meters)) / (identity(time_units * time_units / seconds / seconds));
 const vector3<acceleration1d> gravity_acceleration(0, 0, -gravity_acceleration_magnitude);
 
 typedef uint32_t region_idx_type;
@@ -277,13 +284,13 @@ typedef uint64_t revision_number_type;
 
 
 struct face {
-  face():base_time_(0),revision_number_(0),ABC(0),D(0),D_velocity(0),D_acceleration(0){}
+  face():base_time_(0),revision_number_(0),ABC(0),D(0),D_velocity(0),D_acc_coeff(0){}
   time_type base_time_;
   revision_number_type revision_number_;
   vector3<mpz> ABC;
   distance D;
   velocity1d D_velocity;
-  acceleration1d D_acceleration;
+  acceleration_coefficient D_acc_coeff;
   std::vector<face_idx_type> neighboring_faces_;
   std::vector<region_idx_type> neighboring_regions_;
   face updated_to_time(time_type t)const {
@@ -292,11 +299,10 @@ struct face {
     const time_type relative_time = t - base_time_;
     //const auto relative_timem = relative_time/identity(units_factor<1, 1000000000>());
     //TODO deal with times somehow more correctly
-    const mpz trillion = 1000000000000;
-    result.D          += ((D_velocity    *seconds/distance_units) * (relative_time/time_units) / trillion *distance_units)
-                       + (D_acceleration*seconds*seconds/distance_units)*(relative_time/time_units)*(relative_time/time_units) / 2
-                       / (trillion*trillion) * distance_units;
-    result.D_velocity += (D_acceleration*seconds/distance_units)*(relative_time/time_units)/ trillion * distance_units;
+    assert((identity(acceleration_units / acceleration_coefficient_units) / 2) == (1 * acceleration_units / acceleration_coefficient_units));
+    result.D          += D_velocity * relative_time
+                       + D_acc_coeff * relative_time * relative_time * (identity(acceleration_units / acceleration_coefficient_units) / 2);
+    result.D_velocity += D_acc_coeff * relative_time * identity(acceleration_units / acceleration_coefficient_units);
     result.base_time_ = t;
     ++result.revision_number_;
     return result;
@@ -425,10 +431,12 @@ std::vector<time_type> how_long_from_now_will_planes_of_up_to_date_faces_be_coin
     return result;
   }
   // in at^2 + bt + c = 0
-  acceleration1d a_times_2 = f1.D_acceleration*t1 - f2.D_acceleration*t2 + f3.D_acceleration*t3 - f4.D_acceleration*t4;
-  velocity1d     b         = f1.D_velocity    *t1 - f2.D_velocity    *t2 + f3.D_velocity    *t3 - f4.D_velocity    *t4;
-  distance       c         = f1.D             *t1 - f2.D             *t2 + f3.D             *t3 - f4.D             *t4;
+  acceleration_coefficient a = (f1.D_acc_coeff*t1 - f2.D_acc_coeff*t2 + f3.D_acc_coeff*t3 - f4.D_acc_coeff*t4);
+  velocity1d               b =  f1.D_velocity *t1 - f2.D_velocity *t2 + f3.D_velocity *t3 - f4.D_velocity *t4;
+  distance                 c =  f1.D          *t1 - f2.D          *t2 + f3.D          *t3 - f4.D          *t4;
 
+  acceleration1d a_times_2 = a * identity(acceleration_units / acceleration_coefficient_units);
+  
 #if 0
 if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
 
@@ -469,11 +477,7 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
         c = -c;
       }
       if (c > 0) return result;
-      // hack - should just be
-      // return divide(-c * identity(time_units / seconds), b, strat);
-      // but overflow stuff
-      // also see below
-      const time_type zero = divide(-c * mpz(identity(time_units / seconds)*seconds/time_units), b, strat)*time_units/seconds;
+      const time_type zero = divide(-c, b, strat);
       //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
       result.push_back(zero);
       return result;
@@ -486,21 +490,15 @@ if(!(f4.ABC(X) != 0 || f4.ABC(Y) != 0 || f4.ABC(Z) <= 0 || f3.ABC(Z) == 0)){
       }
       // we want the earlier time, but not if it's negative
       const velocity1d sqrt_disc = isqrt(discriminant);
-      const velocity1d  lesser_numerator = -b - sqrt_disc - 1*distance_units/seconds;
+      const velocity1d  lesser_numerator = -b - sqrt_disc - 1*distance_units/time_units;
       if ( lesser_numerator >= 0)  {
-        const time_type zero = divide(
-            lesser_numerator * mpz(identity(time_units / seconds)*seconds/time_units),
-            a_times_2,
-            strat)*time_units/seconds;
+        const time_type zero = divide(lesser_numerator, a_times_2, strat);
         //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
         result.push_back(zero);
       }
       const velocity1d greater_numerator = -b + sqrt_disc;
       if (greater_numerator >= 0) {
-        const time_type zero = divide(
-            greater_numerator * mpz(identity(time_units / seconds)*seconds/time_units),
-            a_times_2,
-            strat)*time_units/seconds;
+        const time_type zero = divide(greater_numerator, a_times_2, strat);
         //std::cerr << a_times_2 << ", " << b << ", " << c << ": " << zero << ", " << get(zero,time_units)*get(zero,time_units)*get(a_times_2,typename units_prod<distance_units_t, dim::second<(-2)> >::type()) / 2 + get(zero,time_units)*get(b,typename units_prod<distance_units_t, dim::second<(-1)> >::type())*mpz(1e12) + get(c,distance_units)*mpz(1e24) << "\n";
         result.push_back(zero);
       }
@@ -851,7 +849,7 @@ class grand_structure_of_lasercake {
       f.ABC = diffs[i] + vector3<mpz>(first_face_idx+1, first_face_idx+1, first_face_idx+1);
       f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_using<mpz>()*100*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
-      f.D_acceleration = f.ABC.dot<mpz>(gravity_acceleration);
+      f.D_acc_coeff = divide(f.ABC.dot<mpz>(gravity_acceleration), identity(acceleration_units / acceleration_coefficient_units), rounding_strategy<round_to_nearest_with_ties_rounding_to_even>());
       f.neighboring_regions_.push_back(0);
       f.neighboring_regions_.push_back(region_idx);
       r.faces_.push_back(first_face_idx + i);
@@ -875,7 +873,7 @@ class grand_structure_of_lasercake {
       f.ABC = vector3<mpz>(cardinal_direction_vectors[i]);
       f.D = loc.dot<mpz>(f.ABC) + f.ABC.magnitude_using<mpz>()*1000*(centi*meters)*identity(distance_units/(centi*meters));
       f.D_velocity = 0;
-      f.D_acceleration = 0;
+      f.D_acc_coeff = 0;
       f.neighboring_regions_.push_back(0);
       f.neighboring_regions_.push_back(region_idx);
       r.faces_.push_back(first_face_idx + i);
@@ -1372,7 +1370,7 @@ shared_ptr<event> current_event;
     //doing stuff code here
     
     ++frame;
-    if (moving) when += int64_t(10000000000LL)*pico*seconds;
+    if (moving) when += int64_t(10LL)*milli*seconds;
     //std::cerr << when << "\n";
     
     
