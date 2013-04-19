@@ -1036,7 +1036,9 @@ public:
           const silly_rational_loc v2 = exact_loc_of_triple_intersection_of_up_to_date_faces(fA, fAn2, fAn3);
           
           //if (v1 and v2 are on opposite sides of fB) {
-          if ((v1.nums.dot<mpz>(fB.ABC) < fB.D) != (v2.nums.dot<mpz>(fB.ABC) < fB.D)) {
+          const mpz d1neg = is_negative(v1.shared_denom) ? -1 : 1;
+          const mpz d2neg = is_negative(v2.shared_denom) ? -1 : 1;
+          if ((v1.nums.dot<mpz>(fB.ABC) * d1neg < fB.D * v1.shared_denom * d1neg) != (v2.nums.dot<mpz>(fB.ABC) * d2neg < fB.D * v2.shared_denom * d2neg)) {
 
             fA_transition_points.push(v1);
             fA_transition_points.push(v2);
