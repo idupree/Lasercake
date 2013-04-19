@@ -321,6 +321,16 @@ struct silly_rational_loc {
     }
     return false;
   }
+  bool operator==(silly_rational_loc const& o)const {
+    for (which_dimension_type dim = 0; dim < 3; ++dim) {
+      const auto prod = (nums(X) * o.shared_denom - o.nums(X) * shared_denom);
+      if (prod != 0) return false;
+    }
+    return true;
+  }
+  bool operator!=(silly_rational_loc const& o)const {
+    return !(o == *this);
+  }
 };
 
 mpz scalar_triple_product(vector3<mpz> v1, vector3<mpz> v2, vector3<mpz> v3) {
@@ -622,16 +632,16 @@ namespace HASH_NAMESPACE {
 }
 namespace YO {
 
-struct face_face_overlap_segment_collection {
+template<typename JoinedType>
+struct segment_collection {
   // TODO: Evaluate data structure choice.
   // This structure will usually contain 3 segments at most, and very rarely more than, let's say, eight.
-  // So a hash table is probably the wrong choice.
-  std::unordered_multimap<face_triple, face_triple> contents_;
-  void insert(std::pair<face_triple, face_triple> const& o) {
+  std::multimap<JoinedType, JoinedType> contents_;
+  void insert(std::pair<JoinedType, JoinedType> const& o) {
     contents_.insert(o);
     contents_.insert(std::make_pair(o.second, o.first));
   }
-  void erase(std::pair<face_triple, face_triple> const& o) {
+  void erase(std::pair<JoinedType, JoinedType> const& o) {
     {
       auto r = contents_.equal_range(o.first);
       for (auto i = r.first; i != r.second; ++i) { if (i->second == o.second) { contents_.erase(i); break; } }
@@ -644,12 +654,12 @@ struct face_face_overlap_segment_collection {
   bool empty() {
     return contents_.empty();
   }
-  face_triple* arbitrary_other_end(face_triple const& t) {
+  JoinedType* arbitrary_other_end(JoinedType const& t) {
     auto result = contents_.find(t);
     if (result == contents_.end()) return nullptr;
     else return &result->second;
   }
-  face_triple arbitrary_triple() {
+  JoinedType arbitrary_triple() {
     return contents_.begin()->first;
   }
 };
@@ -987,8 +997,8 @@ public:
   }
 
   
-  std::vector<std::vector<face_triple>> find_self_overlaps(region const& r)const {
-    face_face_overlap_segment_collection face_overlaps;
+  std::vector<std::vector<silly_rational_loc>> find_self_overlaps(region const& r)const {
+    segment_collection<silly_rational_loc> face_overlaps;
 
     
     //for (each pair (f1, f2) of nonadjacent faces of r) {
@@ -1030,7 +1040,7 @@ public:
 
             fA_transition_points.push(v1);
             fA_transition_points.push(v2);
-            //record the triple intersection (fA, fB, fAn2) in fA_transition_points;
+            // this comment is wrong - "record the triple intersection (fA, fB, fAn2) in fA_transition_points;"
 
           //}
           }
@@ -1039,19 +1049,53 @@ public:
         }
       
       }
+
+      
       //Compute the intersection of the line-subsets described in f1_transition_points, f2_transition_points; insert them into face_overlaps;
+      bool f1_on = false;
+      bool f2_on = false;
+      faux_optional<silly_rational_loc> segment_forming;
+      while ((!f1_transition_points.empty()) && (!f2_transition_points.empty())) {
+        bool really_transitioning;
+        silly_rational_loc l;
+        if (f1_transition_points.top() < f2_transition_points.top()) {
+          l = f2_transition_points.top();
+          f2_on = !f2_on;
+          really_transitioning = f1_on;
+          f1_transition_points.pop();
+        }
+        else {
+          l = f1_transition_points.top();
+          f1_on = !f1_on;
+          really_transitioning = f2_on;
+          f1_transition_points.pop();
+        }
+        if (really_transitioning) {
+          if (segment_forming) {
+            assert((f1_on || f2_on) && (!(f1_on && f2_on)));
+            face_overlaps.insert(std::make_pair(l, *segment_forming));
+            segment_forming = boost::none;
+          }
+          else {
+            assert(f1_on && f2_on);
+            segment_forming = l;
+          }
+        }
+      }
+      assert(!(f1_on && f2_on));
+      assert(!segment_forming);
     
     //}
     }}
     
-    std::vector<std::vector<face_triple>> result;
+    std::vector<std::vector<silly_rational_loc>> result;
     while (!face_overlaps.empty()) {
-      std::vector<face_triple> loop;
+      std::vector<silly_rational_loc> loop;
       loop.push_back(face_overlaps.arbitrary_triple());
       do {
-        face_triple* nextp = face_overlaps.arbitrary_other_end(loop.back());
+        silly_rational_loc* nextp = face_overlaps.arbitrary_other_end(loop.back());
         assert(nextp);
-        face_triple next = *nextp;
+        silly_rational_loc next = *nextp;
         face_overlaps.erase(std::make_pair(loop.back(), next));
         loop.push_back(next);
       }
