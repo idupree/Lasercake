@@ -1092,7 +1092,8 @@ public:
     
     std::vector<std::vector<silly_rational_loc>> result;
     while (!face_overlaps.empty()) {
-      std::vector<silly_rational_loc> loop;
+      result.push_back(std::vector<silly_rational_loc>());
+      std::vector<silly_rational_loc>& loop = result.back();
       loop.push_back(face_overlaps.arbitrary_triple());
       do {
         silly_rational_loc const* nextp = face_overlaps.arbitrary_other_end(loop.back());
