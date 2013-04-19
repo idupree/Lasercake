@@ -1040,9 +1040,7 @@ public:
           const mpz d2neg = is_negative(v2.shared_denom) ? -1 : 1;
           if ((v1.nums.dot<mpz>(fB.ABC) * d1neg < fB.D * v1.shared_denom * d1neg) != (v2.nums.dot<mpz>(fB.ABC) * d2neg < fB.D * v2.shared_denom * d2neg)) {
 
-            fA_transition_points.push(v1);
-            fA_transition_points.push(v2);
-            // this comment is wrong - "record the triple intersection (fA, fB, fAn2) in fA_transition_points;"
+            fA_transition_points.push(exact_loc_of_triple_intersection_of_up_to_date_faces(fA, fB, fAn2));
 
           //}
           }
