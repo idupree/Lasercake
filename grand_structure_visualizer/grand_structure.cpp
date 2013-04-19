@@ -1089,6 +1089,16 @@ public:
     
     //}
     }}
+
+#if 0
+    if (!face_overlaps.empty()) {
+      std::cerr << "blah\n";
+      for (auto const& p : face_overlaps.contents_) {
+        std::cerr << (p.first.nums / p.first.shared_denom) << ", ";
+        std::cerr << (p.second.nums / p.second.shared_denom) << "\n";
+      }
+    }
+#endif
     
     std::vector<std::vector<silly_rational_loc>> result;
     while (!face_overlaps.empty()) {
