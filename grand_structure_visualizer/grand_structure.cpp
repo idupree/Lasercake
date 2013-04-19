@@ -309,17 +309,35 @@ struct face {
   }
 };
 
+struct silly_rational_loc {
+  vector3<distance> nums;
+  mpz shared_denom;
+  bool operator<(silly_rational_loc const& o)const {
+    mpz negative_factor = (is_negative(shared_denom) == is_negative(o.shared_denom)) ? 1 : -1;
+    for (which_dimension_type dim = 0; dim < 3; ++dim) {
+      const auto prod = negative_factor * (nums(X) * o.shared_denom - o.nums(X) * shared_denom);
+      if (prod < 0) return true;
+      if (prod > 0) return false;
+    }
+    return false;
+  }
+};
+
 mpz scalar_triple_product(vector3<mpz> v1, vector3<mpz> v2, vector3<mpz> v3) {
   return v1(X)*v2(Y)*v3(Z) - v1(X)*v3(Y)*v2(Z) + v2(X)*v3(Y)*v1(Z) - v2(X)*v1(Y)*v3(Z) + v3(X)*v1(Y)*v2(Z) - v3(X)*v2(Y)*v1(Z);
 }
-vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
+silly_rational_loc exact_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
   mpz p = scalar_triple_product(f1.ABC, f2.ABC, f3.ABC);
   assert(p != 0);
-  return vector3<distance>(
+  return silly_rational_loc{ vector3<distance>(
     f1.D * (f2.ABC(1)*f3.ABC(2) - f3.ABC(1)*f2.ABC(2)) + f2.D * (f3.ABC(1)*f1.ABC(2) - f1.ABC(1)*f3.ABC(2)) + f3.D * (f1.ABC(1)*f2.ABC(2) - f2.ABC(1)*f1.ABC(2)),
     f1.D * (f2.ABC(2)*f3.ABC(0) - f3.ABC(2)*f2.ABC(0)) + f2.D * (f3.ABC(2)*f1.ABC(0) - f1.ABC(2)*f3.ABC(0)) + f3.D * (f1.ABC(2)*f2.ABC(0) - f2.ABC(2)*f1.ABC(0)),
     f1.D * (f2.ABC(0)*f3.ABC(1) - f3.ABC(0)*f2.ABC(1)) + f2.D * (f3.ABC(0)*f1.ABC(1) - f1.ABC(0)*f3.ABC(1)) + f3.D * (f1.ABC(0)*f2.ABC(1) - f2.ABC(0)*f1.ABC(1))
-                 ) / p;
+                 ), p};
+}
+vector3<distance> approx_loc_of_triple_intersection_of_up_to_date_faces(face const& f1, face const& f2, face const& f3) {
+  silly_rational_loc l = exact_loc_of_triple_intersection_of_up_to_date_faces(f1, f2, f3);
+  return l.nums / l.shared_denom;
 }
 // Note: This function will need to change a LOT more than the above function if the change stuff gets more complicated.
 // Perhaps it should just be approximated experimentally (dv/dt for very small t).
@@ -971,11 +989,11 @@ public:
     /*
      * Pseudocode for this function:
      * 
-  std::vector<std::vector<face triple>> find_self_overlaps(region const& r)const {
+  std::vector<std::vector<face_triple>> find_self_overlaps(region const& r)const {
     face_face_overlap_segment_collection face_overlaps;
     for (each pair (f1, f2) of nonadjacent faces of r) {
-      priority_queue f1_transition_points;
-      priority_queue f2_transition_points;
+      std::priority_queue<silly_rational_loc> f1_transition_points;
+      std::priority_queue<silly_rational_loc> f2_transition_points;
       for (each triple (n1, n2, n3) of consecutive faces adjacent to f1, constituting a pair of adjacent vertices (v1, v2) of f1) {
         if (v1 and v2 are on opposite sides of f2) {
           record the triple intersection (f1, f2, n2) in f1_transition_points;
@@ -984,9 +1002,9 @@ public:
       do the same with f2 {}
       Compute the intersection of the line-subsets described in f1_transition_points, f2_transition_points; insert them into face_overlaps;
     }
-    std::vector<std::vector<face triple>> result;
+    std::vector<std::vector<face_triple>> result;
     while (!face_overlaps.empty()) {
-      std::vector<face triple> loop;
+      std::vector<face_triple> loop;
       loop.push_back(face_overlaps.arbitrary_triple());
       do {
         face_triple* nextp = face_overlaps.arbitrary_other_end(loop.back());
