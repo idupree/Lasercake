@@ -605,6 +605,7 @@ struct face_triple {
   face_idx_type f2_;
   face_idx_type f3_;
   bool operator==(face_triple const& o)const{return (f1_ == o.f1_) && (f2_ == o.f2_) && (f3_ == o.f3_);}
+  bool operator!=(face_triple const& o)const{return (f1_ != o.f1_) || (f2_ != o.f2_) || (f3_ != o.f3_);}
 };
 
 } // namespace YO 
@@ -986,22 +987,63 @@ public:
   }
 
   
-    /*
-     * Pseudocode for this function:
-     * 
   std::vector<std::vector<face_triple>> find_self_overlaps(region const& r)const {
     face_face_overlap_segment_collection face_overlaps;
-    for (each pair (f1, f2) of nonadjacent faces of r) {
+
+    
+    //for (each pair (f1, f2) of nonadjacent faces of r) {
+    for (size_t f1ii =        0; f1ii < r.faces_.size(); ++f1ii) {
+      const face_idx_type f1i = r.faces_[f1ii];
+      const face f1 = faces_[f1i].updated_to_time(present_time_);
+    for (size_t f2ii = f1ii + 1; f2ii < r.faces_.size(); ++f2ii) {
+      const face_idx_type f2i = r.faces_[f2ii];
+      bool is_neighboring = false;
+      for (auto q : f1.neighboring_faces_) { if (q == f2i) { is_neighboring = true; break; } }
+      if (is_neighboring) { continue; }
+      const face f2 = faces_[f2i].updated_to_time(present_time_);
+      
+      
       std::priority_queue<silly_rational_loc> f1_transition_points;
       std::priority_queue<silly_rational_loc> f2_transition_points;
-      for (each triple (n1, n2, n3) of consecutive faces adjacent to f1, constituting a pair of adjacent vertices (v1, v2) of f1) {
-        if (v1 and v2 are on opposite sides of f2) {
-          record the triple intersection (f1, f2, n2) in f1_transition_points;
+
+      for (int i = 0; i < 2; ++i) {
+        face const& fA = i ? f2 : f1;
+        face const& fB = i ? f1 : f2;
+        std::priority_queue<silly_rational_loc>& fA_transition_points = i ? f2_transition_points : f1_transition_points;
+
+        
+        //for (each triple (fAn1, fAn2, fAn3) of consecutive faces adjacent to fA, constituting a pair of adjacent vertices (v1, v2) of fA) {
+        for (size_t fAn1ii = 0; fAn1ii < fA.neighboring_faces_.size(); ++fAn1ii) {
+          const size_t fAn2ii = (fAn1ii + 1) % fA.neighboring_faces_.size();
+          const size_t fAn3ii = (fAn1ii + 2) % fA.neighboring_faces_.size();
+          const face_idx_type fAn1i = fA.neighboring_faces_[fAn1ii];
+          const face_idx_type fAn2i = fA.neighboring_faces_[fAn2ii];
+          const face_idx_type fAn3i = fA.neighboring_faces_[fAn3ii];
+          const face fAn1 = faces_[fAn1i].updated_to_time(present_time_);
+          const face fAn2 = faces_[fAn2i].updated_to_time(present_time_);
+          const face fAn3 = faces_[fAn3i].updated_to_time(present_time_);
+          const silly_rational_loc v1 = exact_loc_of_triple_intersection_of_up_to_date_faces(fA, fAn1, fAn2);
+          const silly_rational_loc v2 = exact_loc_of_triple_intersection_of_up_to_date_faces(fA, fAn2, fAn3);
+          
+          //if (v1 and v2 are on opposite sides of fB) {
+          if ((v1.nums.dot<mpz>(fB.ABC) < fB.D) != (v2.nums.dot<mpz>(fB.ABC) < fB.D)) {
+
+            fA_transition_points.push(v1);
+            fA_transition_points.push(v2);
+            //record the triple intersection (fA, fB, fAn2) in fA_transition_points;
+
+          //}
+          }
+          
+        //}
         }
+      
       }
-      do the same with f2 {}
-      Compute the intersection of the line-subsets described in f1_transition_points, f2_transition_points; insert them into face_overlaps;
-    }
+      //Compute the intersection of the line-subsets described in f1_transition_points, f2_transition_points; insert them into face_overlaps;
+    
+    //}
+    }}
+    
     std::vector<std::vector<face_triple>> result;
     while (!face_overlaps.empty()) {
       std::vector<face_triple> loop;
@@ -1017,7 +1059,6 @@ public:
     }
     return result;
   }
-    */
   
   void display_face(face const& f, gl_triangles& triangles, gl_data_format::color c, float width) {
     gl_polygon polygon;
