@@ -958,10 +958,11 @@ public:
   // TODO thing-ness e.g. robots
   //void player_input_becomes(time_type when, );
   //void insert_event(time_type when, );
-  void update_to_time(time_type when) {
+  void update_to_time(time_type when, bool do_events = true) {
     assert(when >= present_time_);
     while(!next_events_.empty() && next_events_.top()->when_event_occurs_ < when) {
-      do_next_event();
+      if (do_events) do_next_event();
+      else next_events_.pop();
     }
     present_time_ = when;
   }
@@ -1329,6 +1330,7 @@ large_fast_noncrypto_rng rng(time(NULL));
   
 int frame = 0;
 time_type when = 0;
+bool do_events = true;
 shared_ptr<event> current_event;
 
   grand_structure_of_lasercake simulated_world;
@@ -1352,6 +1354,7 @@ shared_ptr<event> current_event;
             current_event = simulated_world.advance_to_next_real_event();
             if (current_event) when = current_event->when_event_occurs_;
           }
+          if(sdle.key.keysym.sym == SDLK_q) do_events = !do_events;
           //if(sdle.key.keysym.sym == SDLK_r) ++view_dist;
           //if(sdle.key.keysym.sym == SDLK_f) --view_dist;
           if(sdle.key.keysym.sym != SDLK_ESCAPE)break;
@@ -1371,7 +1374,7 @@ shared_ptr<event> current_event;
     
     __attribute__((unused)) int before_GL = SDL_GetTicks();
 
-    simulated_world.update_to_time(when);
+    simulated_world.update_to_time(when, do_events);
     do_gl(simulated_world, frame, current_event);
     glFinish();	
     SDL_GL_SwapBuffers();
