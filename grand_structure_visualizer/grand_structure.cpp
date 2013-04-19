@@ -654,12 +654,12 @@ struct segment_collection {
   bool empty() {
     return contents_.empty();
   }
-  JoinedType* arbitrary_other_end(JoinedType const& t) {
+  JoinedType const* arbitrary_other_end(JoinedType const& t)const {
     auto result = contents_.find(t);
     if (result == contents_.end()) return nullptr;
     else return &result->second;
   }
-  JoinedType arbitrary_triple() {
+  JoinedType arbitrary_triple()const {
     return contents_.begin()->first;
   }
 };
@@ -1055,6 +1055,8 @@ public:
       bool f1_on = false;
       bool f2_on = false;
       faux_optional<silly_rational_loc> segment_forming;
+      assert(!(f1_transition_points.size() % 2));
+      assert(!(f2_transition_points.size() % 2));
       while ((!f1_transition_points.empty()) && (!f2_transition_points.empty())) {
         bool really_transitioning;
         silly_rational_loc l;
@@ -1093,7 +1095,7 @@ public:
       std::vector<silly_rational_loc> loop;
       loop.push_back(face_overlaps.arbitrary_triple());
       do {
-        silly_rational_loc* nextp = face_overlaps.arbitrary_other_end(loop.back());
+        silly_rational_loc const* nextp = face_overlaps.arbitrary_other_end(loop.back());
         assert(nextp);
         silly_rational_loc next = *nextp;
         face_overlaps.erase(std::make_pair(loop.back(), next));
