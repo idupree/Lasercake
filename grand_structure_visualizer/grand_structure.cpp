@@ -1325,7 +1325,7 @@ private:
 
 
 
-void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, shared_ptr<event> current_event) {
+void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, shared_ptr<event> current_event, double wid) {
   //std::cerr<<"hi.\n";
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -1334,7 +1334,6 @@ void do_gl(grand_structure_of_lasercake& simulated_world, uint64_t frame, shared
   //gluPerspective(90, 1, 1, 1000);
   //gluLookAt(20,20,20,0,0,0,0,0,1);
   //gluLookAt(0,0,0,1,1,1,0,0,1);
-  const double wid = 100e9;
   gluPerspective(80, 1, 1e9, 2.0*wid);
   const vector3<double> viewcenter(0+wid*std::cos(double(frame) / 200), 0+wid*std::sin(double(frame) / 200), 0);
   gluLookAt(viewcenter.x, viewcenter.y, viewcenter.z,
@@ -1456,6 +1455,7 @@ int frame = 0;
 time_type when = 0;
 bool do_events = true;
 shared_ptr<event> current_event;
+double view_length = 100e9;
 
   grand_structure_of_lasercake simulated_world;
   
@@ -1479,8 +1479,8 @@ shared_ptr<event> current_event;
             if (current_event) when = current_event->when_event_occurs_;
           }
           if(sdle.key.keysym.sym == SDLK_q) do_events = false;
-          //if(sdle.key.keysym.sym == SDLK_r) ++view_dist;
-          //if(sdle.key.keysym.sym == SDLK_f) --view_dist;
+          if(sdle.key.keysym.sym == SDLK_a) view_length *= 0.9;
+          if(sdle.key.keysym.sym == SDLK_s) view_length /= 0.9;
           if(sdle.key.keysym.sym != SDLK_ESCAPE)break;
           
         case SDL_QUIT:
@@ -1499,7 +1499,7 @@ shared_ptr<event> current_event;
     __attribute__((unused)) int before_GL = SDL_GetTicks();
 
     simulated_world.update_to_time(when, do_events);
-    do_gl(simulated_world, frame, current_event);
+    do_gl(simulated_world, frame, current_event, view_length);
     glFinish();	
     SDL_GL_SwapBuffers();
    
