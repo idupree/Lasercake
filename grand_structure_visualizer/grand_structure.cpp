@@ -1062,7 +1062,7 @@ public:
           l = f2_transition_points.top();
           f2_on = !f2_on;
           really_transitioning = f1_on;
-          f1_transition_points.pop();
+          f2_transition_points.pop();
         }
         else {
           l = f1_transition_points.top();
