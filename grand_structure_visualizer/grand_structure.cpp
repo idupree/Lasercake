@@ -1147,38 +1147,48 @@ private:
             }
           }
           if (bounded_edges_cross__hack(eec->when_event_occurs_, e11, e12, n1, e21, e22, n2)) {
-            //std::cerr << "eec.\n";
-            // Haaaaaaack
-            region_idx_type ri1 = 0;
-            region_idx_type ri2 = 0;
-            for (auto ri : e11.neighboring_regions_) {
-              if (regions_[ri].contents == ROCK) ri1 = ri;
+            face p11 = e11.updated_to_time(eec->when_event_occurs_);
+            face p12 = e12.updated_to_time(eec->when_event_occurs_);
+            face p21 = e21.updated_to_time(eec->when_event_occurs_);
+            face p22 = e22.updated_to_time(eec->when_event_occurs_);
+#if 0
+            vector3<mpz> normal = sf.updated_to_time(vfc->when_event_occurs_).ABC;
+            vector3<velocity1d> problem_velocity = normal*(approx_velocity_of_triple_intersection_of_up_to_date_faces(vf1.updated_to_time(vfc->when_event_occurs_), vf2.updated_to_time(vfc->when_event_occurs_), vf3.updated_to_time(vfc->when_event_occurs_)).dot<mpz>(normal) - sf.D_velocity) / normal.dot<mpz>(normal);
+            if () {
+              //std::cerr << "eec.\n";
+              // Haaaaaaack
+              region_idx_type ri1 = 0;
+              region_idx_type ri2 = 0;
+              for (auto ri : e11.neighboring_regions_) {
+                if (regions_[ri].contents == ROCK) ri1 = ri;
+              }
+              for (auto ri : e21.neighboring_regions_) {
+                if (regions_[ri].contents == ROCK) ri2 = ri;
+              }
+              region& r1 = regions_[ri1];
+              region& r2 = regions_[ri2];
+              assert(r1.contents = ROCK); assert(r2.contents = ROCK);
+              //vector3<mpz> normal = ;
+              // Hack, this is COMPLETELY wrong
+              //vector3<velocity1d> vel_thing = normal * (mpz(1000000000)*distance_units/seconds) / normal.magnitude_using<mpz>();
+              for (face_idx_type fi : r1.faces_) {
+                faces_[fi] = faces_[fi].updated_to_time(eec->when_event_occurs_);
+                faces_[fi].D_velocity *= -1; //= faces_[fi].ABC.dot<mpz>(vel_thing);
+              }
+              for (face_idx_type fi : r2.faces_) {
+                faces_[fi] = faces_[fi].updated_to_time(eec->when_event_occurs_);
+                faces_[fi].D_velocity *= -1; // = -faces_[fi].ABC.dot<mpz>(vel_thing);
+              }
+              // TODO : have the recomputation be automated somehow
+              for (face_idx_type fi : r1.faces_) {
+                insert_events_involving(fi);
+              }
+              for (face_idx_type fi : r2.faces_) {
+                insert_events_involving(fi);
+              }
+              return true;
             }
-            for (auto ri : e21.neighboring_regions_) {
-              if (regions_[ri].contents == ROCK) ri2 = ri;
-            }
-            region& r1 = regions_[ri1];
-            region& r2 = regions_[ri2];
-            assert(r1.contents = ROCK); assert(r2.contents = ROCK);
-            //vector3<mpz> normal = ;
-            // Hack, this is COMPLETELY wrong
-            //vector3<velocity1d> vel_thing = normal * (mpz(1000000000)*distance_units/seconds) / normal.magnitude_using<mpz>();
-            for (face_idx_type fi : r1.faces_) {
-              faces_[fi] = faces_[fi].updated_to_time(eec->when_event_occurs_);
-              faces_[fi].D_velocity *= -1; //= faces_[fi].ABC.dot<mpz>(vel_thing);
-            }
-            for (face_idx_type fi : r2.faces_) {
-              faces_[fi] = faces_[fi].updated_to_time(eec->when_event_occurs_);
-              faces_[fi].D_velocity *= -1; // = -faces_[fi].ABC.dot<mpz>(vel_thing);
-            }
-            // TODO : have the recomputation be automated somehow
-            for (face_idx_type fi : r1.faces_) {
-              insert_events_involving(fi);
-            }
-            for (face_idx_type fi : r2.faces_) {
-              insert_events_involving(fi);
-            }
-            return true;
+#endif
           }
         }
       }
