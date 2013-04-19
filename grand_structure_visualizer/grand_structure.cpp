@@ -1103,6 +1103,22 @@ public:
     }
     return result;
   }
+
+  void display_self_overlaps(region const& r, gl_triangles& triangles, gl_data_format::color c, float width) {
+    auto foo = find_self_overlaps(r);
+    for (auto const& bar : foo) {
+      gl_polygon polygon;
+      for (auto const& baz : bar) {
+        const vector3<distance> loc = baz.nums / baz.shared_denom;
+        polygon.vertices_.push_back(gl_data_format::vertex_with_color(
+          get_primitive_float(loc.x/distance_units),
+          get_primitive_float(loc.y/distance_units),
+          get_primitive_float(loc.z/distance_units),
+          c));
+      }
+      push_wireframe_polygon(triangles, width, polygon);
+    }
+  }
   
   void display_face(face const& f, gl_triangles& triangles, gl_data_format::color c, float width) {
     gl_polygon polygon;
@@ -1127,6 +1143,9 @@ public:
     gl_triangles triangles;
     for (face const& f : faces_) {
       display_face(f, triangles, gl_data_format::color(0xffff0080), 1e9);
+    }
+    for (region const& r : regions_) {
+      display_self_overlaps(r, triangles, gl_data_format::color(0xffffff80), 3e9);
     }
     if (current_event) {
       if (const shared_ptr<collision> c = dynamic_pointer_cast<collision>(current_event)) {
