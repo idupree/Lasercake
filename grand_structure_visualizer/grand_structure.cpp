@@ -1372,7 +1372,7 @@ shared_ptr<event> current_event;
             current_event = simulated_world.advance_to_next_real_event();
             if (current_event) when = current_event->when_event_occurs_;
           }
-          if(sdle.key.keysym.sym == SDLK_q) do_events = !do_events;
+          if(sdle.key.keysym.sym == SDLK_q) do_events = false;
           //if(sdle.key.keysym.sym == SDLK_r) ++view_dist;
           //if(sdle.key.keysym.sym == SDLK_f) --view_dist;
           if(sdle.key.keysym.sym != SDLK_ESCAPE)break;
