@@ -573,8 +573,7 @@ struct shift_right_by_milliodigits<nat<Milliodigit0, Milliodigits...>, 0> { type
 template<milliodigit... Milliodigits>
 struct shift_right_by_milliodigits<nat<Milliodigits...>, 0> { typedef nat<Milliodigits...> type; };
 template<> struct shift_right_by_milliodigits<nat<>, 0> { typedef nat<> type; };
-// TODO this rounds towards zero not -Inf.. is that what we want?
-// Now changed to round towards -Inf
+// This rounds towards -Inf as ordinary twos-complement right-shifts do
 template<milliodigit... Milliodigits, shift_type Shift>
 struct shift_right_by_milliodigits<negative<nat<Milliodigits...>>, Shift> {
   typedef negative<typename shift_right_by_milliodigits<typename add<nat<Milliodigits...>, nat<(base-1)>>::type, Shift>::type> type;
@@ -1616,9 +1615,6 @@ template<typename Estimate>
 struct root_impl5<Estimate, 1> {
   typedef typename subtract<Estimate, rational<nat<1>, nat<2>>>::type type;
 };
-
-//TODO even roots of negative numbers should be banned (return "imaginary"/nan/something)
-//and odd roots of negative numbers should work
 
 template<typename Num, typename Root, typename RoundingStrategy> struct root
   : power<Num, typename reciprocal_<Root>::type, RoundingStrategy> {};
