@@ -46,6 +46,8 @@
 #include "../config.hpp"
 #include "../data_structures/numbers.hpp" //struct comparators
 
+//#include <typeinfo> //only necessary for more debug info (typeid(e).name())
+
 typedef int tests_file_id;
 template<tests_file_id File> struct register_test_file;
 #define DECLARE_TESTS_FILES_BEGIN \
@@ -131,6 +133,7 @@ struct test_cases_state_t {
   int64_t num_checks_failed;
   std::ostream* error_log;
   bool finished_without_crashing;
+  bool verbose;
 };
 
 // Not threadsafe to run tests in more than one thread at once,
@@ -155,12 +158,16 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
   const char* step = "beginning";
   bool success = false;
   state.checkpoint = desc;
+  if(state.verbose) { *state.error_log << desc << std::endl; }
   try {
     step = "evaluating A";
+    if(state.verbose) { *state.error_log << step << std::endl; }
     auto&& a(af());
     step = "evaluating B";
+    if(state.verbose) { *state.error_log << step << std::endl; }
     auto&& b(bf());
     step = "evaluating comparison";
+    if(state.verbose) { *state.error_log << step << std::endl; }
     success = p(a, b);
     if(!success && state.error_log) {
       *state.error_log << "Failed: " << desc << ":\n    A = " << std::flush;
@@ -177,12 +184,16 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
     success = false;
     if(state.error_log) {
       *state.error_log << desc << ":\n  caught unexpected exception when " << step << ":\n    " << std::flush;
+      //step = "caught unexpected exception; evaluating typeid(e).name()";
+      //*state.error_log << typeid(e).name() << " :  ";
       step = "caught unexpected exception; evaluating e.what()";
       *state.error_log << e.what();
     }
   }
   if(!success && state.error_log) {*state.error_log << std::endl;}
   ++state.num_checks_run;
+
+  if(state.verbose) { *state.error_log << "." << std::endl; }
 
   if(!success) {++state.num_checks_failed;}
 }

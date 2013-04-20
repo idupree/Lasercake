@@ -49,6 +49,7 @@ int lasercake_test_main(int, char**) {
   logger_impl::log log; // HACK
   std::ostream& os = log << "Running tests..." << std::endl;
   test_cases_state.error_log = &os;
+  test_cases_state.verbose = false; //manually edit this line to make it verbose
 #if 0
   try {    // Don't try to catch exceptions, because the run-time system
            // does a better job of reporting them than we can.
