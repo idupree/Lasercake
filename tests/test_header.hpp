@@ -46,7 +46,6 @@
 #include "../config.hpp"
 #include "../data_structures/numbers.hpp" //struct comparators
 
-//#include <typeinfo> //only necessary for more debug info (typeid(e).name())
 
 typedef int tests_file_id;
 template<tests_file_id File> struct register_test_file;
@@ -70,6 +69,18 @@ DECLARE_TESTS_FILE(units_tests)
 
 DECLARE_TESTS_FILES_END
 
+
+// Change TEST_CONFIG_COMPILE_QUICKLY to 0 to debug thrown exceptions/errors
+// as if they're regular incorrect results.
+// TODO: change to 0 for release builds?
+#define TEST_CONFIG_COMPILE_QUICKLY 1
+// Change TEST_CONFIG_VERBOSE to 1 to output & flush some debug info as
+// every test runs.
+#define TEST_CONFIG_VERBOSE 0
+
+#if !TEST_CONFIG_COMPILE_QUICKLY
+#include <typeinfo> //only necessary for more debug info (typeid(e).name())
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 //////// Test-registration code that uses no global constructors /////////
@@ -133,7 +144,6 @@ struct test_cases_state_t {
   int64_t num_checks_failed;
   std::ostream* error_log;
   bool finished_without_crashing;
-  bool verbose;
 };
 
 // Not threadsafe to run tests in more than one thread at once,
@@ -153,21 +163,39 @@ inline std::ostream& operator<<(std::ostream& os, msg m){
 }
 
 template<typename AF, typename BF, typename Predicate>
-inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
+inline void do_test(
+#if !TEST_CONFIG_COMPILE_QUICKLY
+   AF&& af, BF&& bf,
+#else
+   AF&& a, BF&& b,
+#endif
+   Predicate&& p, const char* desc) {
   test_cases_state_t& state = test_cases_state;
   const char* step = "beginning";
   bool success = false;
   state.checkpoint = desc;
-  if(state.verbose) { *state.error_log << desc << std::endl; }
+#if TEST_CONFIG_VERBOSE
+  *state.error_log << desc << std::endl;
+#endif
+#if !TEST_CONFIG_COMPILE_QUICKLY
   try {
+#endif
+#if !TEST_CONFIG_COMPILE_QUICKLY
     step = "evaluating A";
-    if(state.verbose) { *state.error_log << step << std::endl; }
+#if TEST_CONFIG_VERBOSE
+    *state.error_log << step << std::endl;
+#endif
     auto&& a(af());
     step = "evaluating B";
-    if(state.verbose) { *state.error_log << step << std::endl; }
+#if TEST_CONFIG_VERBOSE
+    *state.error_log << step << std::endl;
+#endif
     auto&& b(bf());
+#endif /*!TEST_CONFIG_COMPILE_QUICKLY*/
     step = "evaluating comparison";
-    if(state.verbose) { *state.error_log << step << std::endl; }
+#if TEST_CONFIG_VERBOSE
+    *state.error_log << step << std::endl;
+#endif
     success = p(a, b);
     if(!success && state.error_log) {
       *state.error_log << "Failed: " << desc << ":\n    A = " << std::flush;
@@ -179,21 +207,29 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
         *state.error_log << b;
       }
     }
+#if !TEST_CONFIG_COMPILE_QUICKLY
   }
   catch(std::exception& e) {
     success = false;
     if(state.error_log) {
       *state.error_log << desc << ":\n  caught unexpected exception when " << step << ":\n    " << std::flush;
-      //step = "caught unexpected exception; evaluating typeid(e).name()";
-      //*state.error_log << typeid(e).name() << " :  ";
+#if !TEST_CONFIG_COMPILE_QUICKLY
+      step = "caught unexpected exception; evaluating typeid(e).name()";
+      *state.error_log << typeid(e).name() << " :  ";
+#endif
       step = "caught unexpected exception; evaluating e.what()";
       *state.error_log << e.what();
     }
   }
+#else /*!TEST_CONFIG_COMPILE_QUICKLY*/
+  static_cast<void>(step); /*eliminate variable-unused warning*/
+#endif /*!TEST_CONFIG_COMPILE_QUICKLY*/
   if(!success && state.error_log) {*state.error_log << std::endl;}
   ++state.num_checks_run;
 
-  if(state.verbose) { *state.error_log << "." << std::endl; }
+#if TEST_CONFIG_VERBOSE
+  *state.error_log << "." << std::endl;
+#endif
 
   if(!success) {++state.num_checks_failed;}
 }
@@ -214,8 +250,20 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
 //      [-Wreturn-stack-address]
 // and because they are used as complete statements so the usual
 // parentheses-for-correct-grouping-in-macros reason isn't a risk here.
+
+#if TEST_CONFIG_COMPILE_QUICKLY
+#define TEST_CONFIG_LAMBDA_POSTFIX ()
+#define TEST_CONFIG_AN_UNINTERESTING uninteresting()
+#else
+#define TEST_CONFIG_LAMBDA_POSTFIX
+#define TEST_CONFIG_AN_UNINTERESTING &make_uninteresting
+#endif
+
 #define BINARY_CHECK_IMPL(a, b, comparator_type, comparator_str) \
-  do_test([&]()->decltype(a){return a;}, [&]()->decltype(b){return b;}, comparator_type(), \
+  do_test( \
+    [&]()->decltype(a){return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    [&]()->decltype(b){return b;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    comparator_type(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "` " comparator_str " `" BOOST_PP_STRINGIZE(b) "`" \
   )
 #define BOOST_CHECK_EQUAL(a, b) BINARY_CHECK_IMPL(a, b, comparators::equal_to, "==")
@@ -225,18 +273,27 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
 #define BOOST_CHECK_LE(a, b)    BINARY_CHECK_IMPL(a, b, comparators::less_equal, "<=")
 #define BOOST_CHECK_NE(a, b)    BINARY_CHECK_IMPL(a, b, comparators::not_equal_to, "!=")
 #define BOOST_CHECK(a) \
-  do_test([&]()->decltype(a){return a;}, &make_uninteresting, comparators::first_is_true(), \
+  do_test( \
+    [&]()->decltype(a){return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    TEST_CONFIG_AN_UNINTERESTING, \
+    comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "`" \
   )
 #define BOOST_CHECK_NO_THROW(a) \
-  do_test([&]{a; return true;}, &make_uninteresting, comparators::first_is_true(), \
+  do_test( \
+    [&]{a; return true;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    TEST_CONFIG_AN_UNINTERESTING, \
+    comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "`" \
   )
 #define BOOST_CHECK_THROW(a, e) \
-  do_test([&]() -> msg { \
-      try{ a; } catch(e const& test_suite_expected_exception){return msg{true, test_suite_expected_exception.what()};} \
-      return msg{false, "(something)"}; \
-    }, &make_uninteresting, comparators::first_is_true(), \
+  do_test( \
+    [&]() -> msg { \
+      try{ a; } catch(e const& test_suite_expected_exception){return (msg{true, test_suite_expected_exception.what()});} \
+      return (msg{false, "(something)"}); \
+    }TEST_CONFIG_LAMBDA_POSTFIX, \
+    TEST_CONFIG_AN_UNINTERESTING, \
+    comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "` throws `" BOOST_PP_STRINGIZE(e) "`" \
   )
 
