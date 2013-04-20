@@ -26,7 +26,6 @@
 #include <assert.h>
 
 #include <stdexcept>
-#include <boost/throw_exception.hpp>
 
 #include <streambuf>
 #include <ostream>
@@ -140,7 +139,7 @@
 inline ATTRIBUTE_NORETURN void caller_error(const char* error) {
   // If exceptions prove worse for debugging than asserts/segfaults,
   // feel free to comment this out and use asserts/segfaults/breakpoints.
-  boost::throw_exception(std::logic_error(error));
+  throw std::logic_error(error);
 }
 // You must provide an explanatory string so that the user of the library
 // will know what *they* did wrong, and not have to interpret an assert() expression
