@@ -343,26 +343,14 @@ struct make_nat_from_milliodigit<0> {
 };
 
 template<uintmax_t Int> struct uinteger_literal {
-  // TODO do this more generically
-  // This supports 64 bit literals
-  static_assert(std::numeric_limits<uintmax_t>::max()/base/base/base/base == 0, "bug");
-  typedef
-    typename make_nat_from_rest_and_least<
-      typename make_nat_from_rest_and_least<
-        typename make_nat_from_rest_and_least<
-          typename make_nat_from_rest_and_least<
-            nat<>,
-            (Int/base/base/base%base)>::type,
-          (Int/base/base%base)>::type,
-        (Int/base%base)>::type,
-      (Int%base)>::type type;
+  typedef typename make_nat_from_rest_and_least<
+    typename uinteger_literal<(Int/base)>::type,
+    (Int%base)>::type type;
 };
-/*
-template<intmax_t Int> struct integer_literal
-  : boost::conditional<(Int < 0),
-      negative<typename uinteger_literal<(-Int)>::type>,
-      typename uinteger_literal<Int>::type> {};
-      */
+template<> struct uinteger_literal<0> {
+  typedef nat<> type;
+};
+
 template<typename Int, Int Value, bool Negative = (Value < 0)> struct literal;
 template<typename Int, Int Value> struct literal<Int, Value, true> {
   typedef negative<typename uinteger_literal<static_cast<uintmax_t>(-Value)>::type> type;
