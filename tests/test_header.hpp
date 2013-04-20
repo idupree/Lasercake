@@ -43,6 +43,7 @@
 // Arch Linux x86_64, Jan 2013).
 
 #include <boost/preprocessor/stringize.hpp>
+#include <boost/type_traits/remove_const.hpp> //to evade GCC -Wignored-qualifiers
 #include "../config.hpp"
 #include "../data_structures/numbers.hpp" //struct comparators
 
@@ -261,8 +262,8 @@ inline void do_test(
 
 #define BINARY_CHECK_IMPL(a, b, comparator_type, comparator_str) \
   do_test( \
-    [&]()->decltype(a){return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
-    [&]()->decltype(b){return b;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    [&]()->typename boost::remove_const<decltype(a)>::type {return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    [&]()->typename boost::remove_const<decltype(b)>::type {return b;}TEST_CONFIG_LAMBDA_POSTFIX, \
     comparator_type(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "` " comparator_str " `" BOOST_PP_STRINGIZE(b) "`" \
   )
@@ -274,7 +275,7 @@ inline void do_test(
 #define BOOST_CHECK_NE(a, b)    BINARY_CHECK_IMPL(a, b, comparators::not_equal_to, "!=")
 #define BOOST_CHECK(a) \
   do_test( \
-    [&]()->decltype(a){return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
+    [&]()->typename boost::remove_const<decltype(a)>::type {return a;}TEST_CONFIG_LAMBDA_POSTFIX, \
     TEST_CONFIG_AN_UNINTERESTING, \
     comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "`" \
