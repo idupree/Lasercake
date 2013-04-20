@@ -68,6 +68,10 @@ BOOST_AUTO_TEST_CASE( unitses ) {
 
   foo64 + foo;
 
+  identity(atto);
+  // When bignum identity() works:
+  //identity(atto*atto);
+
   const physical_quantity<double, meter> foofloating = foo;
   const physical_quantity<double, meter> foofloating2 = 1.0*meters;
   foofloating + foofloating2;
