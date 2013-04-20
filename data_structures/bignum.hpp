@@ -809,9 +809,15 @@ template<size_t LimbsOut, size_t Limbs>
   but make doubly sure it knows this is CSEable (common subexpression elimination).
   Prevent inlining to increase chances of CSE, since reciprocal is not fast
   enough to make inlining worth it anyway.*/
+/*clang 3.2 seems to generate incorrect code for division by zero
+when given __attribute__((const)) here, and I haven't collected evidence
+that it's useful, so: commented-out.  Maybe it thinks that __attribute__((const))
+functions are nothrow?  (GCC documentation does not explicitly say whether
+__attribute__((const)) implies nothrow...)  It'd be easy to lift the throwing
+outside the main body of this function, if that were useful.
 #ifdef __GNUC__
 __attribute__((const,noinline))
-#endif
+#endif*/
 // TODO avoid double's exponent-overflow (roughly +-2^1000)
 // TODO do something faster for single limb
 inline reciprocal_bignum<LimbsOut> reciprocal_unsigned(bignum<Limbs> a) {
@@ -857,6 +863,7 @@ BOOST_FORCEINLINE
 // TODO does the amount of precision of reciprocal needed depend on the size of the dividend?
 // I believe it does.  Does it also depend on the divisor somehow?
 bignum<LimbsOut> divide_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
+  //caller_correct_if(nonzero(b), "division by zero");
   return long_multiply_by_reciprocal_unsigned<LimbsOut>(a, reciprocal_unsigned<LimbsA>(b));
 }
 
