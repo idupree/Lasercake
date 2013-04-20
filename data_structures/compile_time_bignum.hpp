@@ -21,6 +21,14 @@
 
 #ifndef LASERCAKE_COMPILE_TIME_BIGNUM_HPP__
 #define LASERCAKE_COMPILE_TIME_BIGNUM_HPP__
+//TODO once used in units, try changing the base and see the different speeds.
+//then reversey to bigendian, & 'int' for nicer error msgs (;base 1000)
+//Ooh because we only use multiply for high stuff and because
+//it can be emulated with 4 smaller multiplies, we could actually have
+//the impl word size be 10^18!
+//Need to get rid of that last user-facing static_assert so that they don't
+//have to see the intermediate types.
+//Rounding to a rational precision...well there is 'height'...
 
 #include <boost/type_traits/conditional.hpp>
 #include "rounding_strategy.hpp"
@@ -85,6 +93,7 @@
 //   +a
 //   -a
 //   abs(a)
+//   sign(a)         //signum (-1, 0 or 1); sign(a)*abs(a) == a
 //   a + b
 //   a - b
 //   a * b
@@ -92,9 +101,11 @@
 //   reciprocal(a)   //rational reciprocal
 //   div(a, b).quot  //integral division rounding towards zero
 //   div(a, b).rem   //integral remainder rounding towards zero
-//   pow(a, b)       //integer exponents permitted (TODO rational exponents
-//                     (crib from numbers.hpp static_root_nonnegative_integer)
-//                     (though what should it do when the result is irrational))
+//   pow(a, b)       //exact rational results permitted (i.e. all integer b
+//                   //  and some rational (a, b)).
+//   TODO LATER pow(a, b, rounding_strategy)
+//   TODO isqrt(a)        //sqrt rounding down to the nearest integer
+//   TODO LATER sqrt(a, rounding_strategy)
 //   numerator(a)    //negative if a is negative
 //   denominator(a)  //always nonnegative; '1' for integers
 //   floor(a)        //round towards negative infinity to nearest integer
@@ -106,6 +117,8 @@
 //   log(base, number, rounding_strategy)
 //   log2(number, rounding_strategy)
 //   log10(number, rounding_strategy)
+//                   // (TODO fix round-to-nearest-* rounding
+//                   //  and allow different rounding precisions)
 //
 //   is_integer(a)   //these return constexpr bool
 //   is_nonnegative_integer(a)
@@ -115,11 +128,21 @@
 //   is_positive(a)
 //   is_zero(a)
 //
+//   ct::to_int<IntegralType>(a)
+//                   // returns constexpr IntegralType constructed by
+//                   // casts from uintmax_t, addition, multiplication, and
+//                   // negation.
+//                   // "ct::" required because argument-dependent lookup
+//                   // doesn't work with explicit function template arguments.
+//
 //TODO:
 //   a % b  or  fmod(a, b) or remainder(a, b)   //rational modulus
 //   sqrt(a, rounding_strategy)
 //   nth root (also extends pow) (but requires rounding strategy,
 //                       perhaps defaulting to require_exact_answer)
+//   general: https://en.wikipedia.org/wiki/Newton-Raphson#Square_root_of_a_number
+//   can iterate using rationals!
+//   hmm.. simplify<rational<a,b>>? right shifts both a and b by the same amt?
 // Should this support bit-shifts (same as value*pow(INT(2), shift) and
 // value/pow(INT(2), shift); or should they be floor() of those?)?
 // What about bitwise operations |&^~ ? Should they operate on the
@@ -179,6 +202,7 @@ struct rational {};//: number<rational<Num,Den>> {};
 // and we don't need it anymore.
 
 struct divide_by_zero {};
+struct even_root_of_negative {};
 
 //TODO
 //struct in_base
@@ -196,7 +220,11 @@ template<typename NumA, typename NumB> struct subtract;
 template<typename NatA, typename NatB> struct subtract_nat;
 template<typename Num> struct negate;
 template<typename Num> struct abs_;
-template<typename Num, typename Exponent> struct power;
+template<typename Num> struct sign_;
+template<typename Num, typename Exponent,
+  typename RoundingStrategy = rounding_strategy<require_exact_answer> > struct power;
+template<typename Num, typename Root,
+  typename RoundingStrategy = rounding_strategy<require_exact_answer> > struct root;
 // Compare: ::value is -1 if lhs < rhs; 0 if equal; 1 if lhs > rhs
 template<typename NatA, typename NatB> struct compare;
 template<typename Integer> struct even;
@@ -342,6 +370,19 @@ template<typename Int, Int Value> struct literal<Int, Value, true> {
 template<typename Int, Int Value> struct literal<Int, Value, false>
   : uinteger_literal<static_cast<uintmax_t>(Value)> {};
 
+template<typename NumericType, typename CTNum> struct to_int_;
+template<typename NumericType> struct to_int_<NumericType, nat<>> {
+  static constexpr NumericType value() { return NumericType(0); }
+};
+template<typename NumericType, milliodigit...Milliodigits, milliodigit Milliodigit0> struct to_int_<NumericType, nat<Milliodigit0, Milliodigits...>> {
+  static constexpr NumericType value() { return
+    NumericType(NumericType(Milliodigit0) +
+      NumericType(base) * to_int_<NumericType, nat<Milliodigits...>>::value()); }
+};
+template<typename NumericType, typename CTNum> struct to_int_<NumericType, negative<CTNum>> {
+  static constexpr NumericType value() { return NumericType(-to_int_<NumericType, CTNum>::value()); }
+};
+
 // Natural number addition
 // implemented by recursive, low-to-high addition on the digits
 template<milliodigit... MilliodigitsA, milliodigit MilliodigitA0,
@@ -439,7 +480,7 @@ struct compare<nat<MilliodigitsA...>, nat<MilliodigitsB...>>
                                        nat<MilliodigitsB...>>::type> {};
 
 // Exponentiation based on multiplication
-template<typename Base, typename Exponent>
+template<typename Base, typename Exponent, typename RoundingStrategy>
 struct power_impl1;
 template<typename Base, intmax_t Exponent, bool Negative = (Exponent < 0)>
 struct power_impl2;
@@ -464,29 +505,29 @@ template<typename Base, intmax_t Exponent> struct power_impl2<Base, Exponent, fa
 // a bit more than 10^11 bytes, a.k.a. 100 GB.
 // In practice, template-instantiation depth is likely to make the limit
 // much lower.
-template<typename Base, milliodigit ExponentMilliodigit>
-struct power_impl1<Base, nat<ExponentMilliodigit>> : power_impl2<Base, ExponentMilliodigit> {};
-template<typename Base, milliodigit ExponentMilliodigit0, milliodigit ExponentMilliodigit1>
-struct power_impl1<Base, nat<ExponentMilliodigit0, ExponentMilliodigit1>>
+template<typename Base, milliodigit ExponentMilliodigit, typename RS>
+struct power_impl1<Base, nat<ExponentMilliodigit>, RS> : power_impl2<Base, ExponentMilliodigit> {};
+template<typename Base, milliodigit ExponentMilliodigit0, milliodigit ExponentMilliodigit1, typename RS>
+struct power_impl1<Base, nat<ExponentMilliodigit0, ExponentMilliodigit1>, RS>
   : power_impl2<Base, ExponentMilliodigit1*base + ExponentMilliodigit0> {};
-template<typename Base, typename Exponent>
-struct power_impl1<Base, negative<Exponent>>
-  : reciprocal_<typename power_impl1<Base, Exponent>::type> {};
-template<typename Base, typename Exponent>
+template<typename Base, typename Exponent, typename RS>
+struct power_impl1<Base, negative<Exponent>, RS>
+  : reciprocal_<typename power_impl1<Base, Exponent, RS>::type> {};
+template<typename Base, typename Exponent, typename RS>
 struct power_impl1 {
   static_assert(sizeof(Base) && false, "Compile-time-exponentiation overflow");
 };
 
 // Certain combinations work with even huge exponents.
-template<typename Exponent> struct power<nat<>, Exponent> { typedef nat<> type; };
-template<typename Exponent> struct power<nat<1>, Exponent> { typedef nat<1> type; };
-template<typename Base> struct power<Base, nat<>> { typedef nat<1> type; };
-template<typename Exponent> struct power<negative<nat<1>>, Exponent>
+template<typename Exponent, typename RS> struct power<nat<>, Exponent, RS> { typedef nat<> type; };
+template<typename Exponent, typename RS> struct power<nat<1>, Exponent, RS> { typedef nat<1> type; };
+template<typename Base, typename RS> struct power<Base, nat<>, RS> { typedef nat<1> type; };
+template<typename Exponent, typename RS> struct power<negative<nat<1>>, Exponent, RS>
   : boost::conditional<even<Exponent>::value, nat<1>, negative<nat<1>>> {};
 // 0 to the 0 is more often 1 than 0.
-template<> struct power<nat<>, nat<>> { typedef nat<1> type; };
-template<typename Base, typename Exponent>
-struct power : power_impl1<Base, Exponent> {};
+template<typename RS> struct power<nat<>, nat<>, RS> { typedef nat<1> type; };
+template<typename Base, typename Exponent, typename RoundingStrategy>
+struct power : power_impl1<Base, Exponent, RoundingStrategy> {};
 
 template<milliodigit... Milliodigits> struct numerator_<nat<Milliodigits...>> {
   typedef nat<Milliodigits...> type;
@@ -537,6 +578,7 @@ template<> struct shift_right_by_milliodigits<nat<>, 0> { typedef nat<> type; };
 template<milliodigit... Milliodigits, shift_type Shift>
 struct shift_right_by_milliodigits<negative<nat<Milliodigits...>>, Shift> {
   typedef negative<typename shift_right_by_milliodigits<typename add<nat<Milliodigits...>, nat<(base-1)>>::type, Shift>::type> type;
+  //static_assert(!boost::is_same<type, negative<nat<>>>::value, "bug");
 };
 
 template<typename Nat, shift_type Shift, bool Left = (Shift >= 0)> struct shift_by_milliodigits;
@@ -732,9 +774,9 @@ template<typename NatA, typename NatB> struct divide_nat_optimize2 {
 };
 template<milliodigit MilliodigitA, milliodigit MilliodigitB>
 struct divide_nat_optimize2<nat<MilliodigitA>, nat<MilliodigitB>> {
-  typedef nat<(MilliodigitA / MilliodigitB)> quot;
+  typedef typename make_nat_from_milliodigit<(MilliodigitA / MilliodigitB)>::type quot;
   typedef quot type;
-  typedef nat<(MilliodigitA % MilliodigitB)> rem;
+  typedef typename make_nat_from_milliodigit<(MilliodigitA % MilliodigitB)>::type rem;
 };
 template<typename NatA, typename NatB> struct divide_nat_optimize1
   : divide_nat_optimize2<NatA, NatB> {};
@@ -816,8 +858,12 @@ template<typename T1, typename T2> struct compare<negative<T1>, T2> : boost::int
 template<typename T1, typename T2> struct compare<T1, negative<T2>> : boost::integral_constant<int, 1> {};
 
 // (Signed) negation
+// (TODO if we get complex numbers then fix these.)
 template<typename T> struct negate {
   typedef negative<T> type;
+};
+template<> struct negate<nat<>> {
+  typedef nat<> type;
 };
 template<typename T> struct negate<negative<T>> {
   typedef T type;
@@ -827,6 +873,15 @@ template<typename T> struct abs_ {
 };
 template<typename T> struct abs_<negative<T>> {
   typedef T type;
+};
+template<typename T> struct sign_ {
+  typedef nat<1> type;
+};
+template<> struct sign_<nat<>> {
+  typedef nat<> type;
+};
+template<typename T> struct sign_<negative<T>> {
+  typedef negative<nat<1>> type;
 };
 
 // Signed numerator/denominator
@@ -845,16 +900,16 @@ struct divide_integer<nat<MilliodigitsA...>, nat<MilliodigitsB...>>
 template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
 struct divide_integer<negative<nat<MilliodigitsA...>>, nat<MilliodigitsB...>> {
   typedef divide_nat<nat<MilliodigitsA...>, nat<MilliodigitsB...>> unsigned_result_;
-  typedef negative<typename unsigned_result_::quot> type;
-  typedef negative<typename unsigned_result_::quot> quot;
-  typedef negative<typename unsigned_result_::rem> rem;
+  typedef typename negate<typename unsigned_result_::quot>::type type;
+  typedef type quot;
+  typedef typename negate<typename unsigned_result_::rem>::type rem;
 };
 
 template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
 struct divide_integer<nat<MilliodigitsA...>, negative<nat<MilliodigitsB...>>> {
   typedef divide_nat<nat<MilliodigitsA...>, nat<MilliodigitsB...>> unsigned_result_;
-  typedef negative<typename unsigned_result_::quot> type;
-  typedef negative<typename unsigned_result_::quot> quot;
+  typedef typename negate<typename unsigned_result_::quot>::type type;
+  typedef type quot;
   typedef typename unsigned_result_::rem rem;
 };
 
@@ -862,8 +917,8 @@ template<milliodigit... MilliodigitsA, milliodigit... MilliodigitsB>
 struct divide_integer<negative<nat<MilliodigitsA...>>, negative<nat<MilliodigitsB...>>> {
   typedef divide_nat<nat<MilliodigitsA...>, nat<MilliodigitsB...>> unsigned_result_;
   typedef typename unsigned_result_::quot type;
-  typedef typename unsigned_result_::quot quot;
-  typedef negative<typename unsigned_result_::rem> rem;
+  typedef type quot;
+  typedef typename negate<typename unsigned_result_::rem>::type rem;
 };
 
 
@@ -1199,28 +1254,23 @@ template<typename Num, rounding_strategy_for_positive_numbers Strategy>
 struct round_<negative<Num>, rounding_strategy<Strategy, negative_variant_doesnt_make_a_difference>> {
   static_assert(Strategy >= round_to_nearest_with_ties_rounding_to_even,
                 "You lied! The negative variant does make a difference.");
-  typedef negative<typename round_nonnegative<Num, Strategy>::type> type;
+  typedef typename negate<typename round_nonnegative<Num, Strategy>::type>::type type;
 };
 template<typename Num, rounding_strategy_for_positive_numbers Strategy>
-struct round_<negative<Num>, rounding_strategy<Strategy, negative_mirrors_positive>> {
-  typedef negative<typename round_nonnegative<Num, Strategy>::type> type;
-};
+struct round_<negative<Num>, rounding_strategy<Strategy, negative_mirrors_positive>>
+  : negate<typename round_nonnegative<Num, Strategy>::type> {};
 template<typename Num>
-struct round_<negative<Num>, rounding_strategy<round_up, negative_continuous_with_positive>> {
-  typedef negative<typename round_nonnegative<Num, round_down>::type> type;
-};
+struct round_<negative<Num>, rounding_strategy<round_up, negative_continuous_with_positive>>
+  : negate<typename round_nonnegative<Num, round_down>::type> {};
 template<typename Num>
-struct round_<negative<Num>, rounding_strategy<round_down, negative_continuous_with_positive>> {
-  typedef negative<typename round_nonnegative<Num, round_up>::type> type;
-};
+struct round_<negative<Num>, rounding_strategy<round_down, negative_continuous_with_positive>>
+  : negate<typename round_nonnegative<Num, round_up>::type> {};
 template<typename Num>
-struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_up, negative_continuous_with_positive>> {
-  typedef negative<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_down>::type> type;
-};
+struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_up, negative_continuous_with_positive>>
+  : negate<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_down>::type> {};
 template<typename Num>
-struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_down, negative_continuous_with_positive>> {
-  typedef negative<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_up>::type> type;
-};
+struct round_<negative<Num>, rounding_strategy<round_to_nearest_with_ties_rounding_down, negative_continuous_with_positive>>
+  : negate<typename round_nonnegative<Num, round_to_nearest_with_ties_rounding_up>::type> {};
 template<typename Num, rounding_strategy_for_positive_numbers PositiveStrategy,
   rounding_strategy_for_negative_numbers NegativeStrategy>
 struct round_<Num, rounding_strategy<PositiveStrategy, NegativeStrategy>> {
@@ -1477,6 +1527,107 @@ template<
 };
 
 
+template<typename Base, typename NatRoot> struct root_impl2;
+template<typename Base, typename NatRoot, typename Estimate> struct root_impl3;
+template<typename Base, typename NatRoot, typename OldEstimate, typename Delta> struct root_impl4;
+template<typename Estimate, int EstimateVsActual> struct root_impl5;
+
+template<typename Base, typename NatRoot, typename RoundingStrategy, bool OddRoot = odd<NatRoot>::value>
+struct root_impl1 {
+  typedef typename round_<
+    typename root_impl2<Base, NatRoot>::type
+  , RoundingStrategy>::type type;
+};
+template<typename Base, typename NatRoot, typename RoundingStrategy>
+struct root_impl1<negative<Base>, NatRoot, RoundingStrategy, true> {
+  typedef typename round_<
+    negative<typename root_impl2<Base, NatRoot>::type>
+  , RoundingStrategy>::type type;
+};
+template<typename Base, typename NatRoot, typename RoundingStrategy>
+struct root_impl1<negative<Base>, NatRoot, RoundingStrategy, false> {
+  typedef even_root_of_negative type;
+};
+template<typename NatRoot, typename RoundingStrategy, bool OddRoot>
+struct root_impl1<nat<>, NatRoot, RoundingStrategy, OddRoot> {
+  typedef nat<> type;
+};
+
+template<typename BaseNum, typename BaseDen, typename NatRoot, bool OddRoot>
+struct root_impl1<rational<BaseNum, BaseDen>, NatRoot, rounding_strategy<require_exact_answer>, OddRoot> {
+  typedef typename root_impl2<BaseNum, NatRoot>::type num_root_;
+  typedef typename root_impl2<BaseDen, NatRoot>::type den_root_;
+  static_assert(compare<BaseNum, typename power<num_root_, NatRoot>::type>::value
+    == 0, "inexact root that was required to be exact");
+  //static_assert(den_root_() == 5789345789, "dfsdfshk");
+  static_assert(compare<BaseDen, typename power<den_root_, NatRoot>::type>::value
+    == 0, "inexact root that was required to be exact");
+  typedef rational<num_root_, den_root_> type;
+};
+template<typename BaseNum, typename BaseDen, typename NatRoot>
+struct root_impl1<negative<rational<BaseNum, BaseDen>>, NatRoot, rounding_strategy<require_exact_answer>, true> {
+  typedef typename root_impl2<BaseNum, NatRoot>::type num_root_;
+  typedef typename root_impl2<BaseDen, NatRoot>::type den_root_;
+  static_assert(compare<BaseNum, typename power<num_root_, NatRoot>::type>::value
+    == 0, "inexact root that was required to be exact");
+  static_assert(compare<BaseDen, typename power<den_root_, NatRoot>::type>::value
+    == 0, "inexact root that was required to be exact");
+  typedef negative<rational<num_root_, den_root_>> type;
+};
+
+template<typename Base, typename NatRoot>
+struct root_impl2 {
+  typedef typename logarithm<nat<2>, Base, rounding_strategy<round_down>>::type log2_base_;
+  typedef typename power<nat<2>,
+    //typename round<
+      typename divide_nat<log2_base_, NatRoot>::type
+    //, rounding_strategy<round_down>>::type
+      >::type initial_estimate_;
+  typedef typename root_impl3<Base, NatRoot, initial_estimate_>::type type;
+};
+template<typename Base, typename NatRoot, typename Estimate>
+struct root_impl3 {
+  typedef typename round_<
+    typename divide_rational<
+      typename subtract<typename power<Estimate, NatRoot>::type, Base>::type,
+      typename multiply<NatRoot,
+        typename power<Estimate, typename subtract<NatRoot, nat<1>>::type>::type>::type
+    >::type,
+    rounding_strategy<round_up, negative_continuous_with_positive> >::type new_delta_;
+  typedef typename root_impl4<Base, NatRoot, Estimate, new_delta_>::type type;
+};
+template<typename Base, typename NatRoot, typename OldEstimate, typename Delta>
+struct root_impl4
+: root_impl3<Base, NatRoot, typename subtract<OldEstimate, Delta>::type> {};
+template<typename Base, typename NatRoot, typename OldEstimate>
+struct root_impl4<Base, NatRoot, OldEstimate, nat<>>
+: root_impl5<OldEstimate, compare<typename power<OldEstimate, NatRoot>::type, Base>::value> {};
+template<typename Estimate>
+struct root_impl5<Estimate, 0> {
+  typedef Estimate type;
+};
+template<typename Estimate>
+struct root_impl5<Estimate, (-1)> {
+  //typedef typename add<Estimate, nat<1>>::type may_be_exact_;
+  //typename power<may_be_exact_, NatRoot>::type
+  typedef typename add<Estimate, rational<nat<1>, nat<2>>>::type type;
+};
+template<typename Estimate>
+struct root_impl5<Estimate, 1> {
+  typedef typename subtract<Estimate, rational<nat<1>, nat<2>>>::type type;
+};
+
+//TODO even roots of negative numbers should be banned (return "imaginary"/nan/something)
+//and odd roots of negative numbers should work
+
+template<typename Num, typename Root, typename RoundingStrategy> struct root
+  : power<Num, typename reciprocal_<Root>::type, RoundingStrategy> {};
+
+template<typename Base, typename ExpNum, typename ExpDen, typename RoundingStrategy>
+struct power_impl1<Base, rational<ExpNum, ExpDen>, RoundingStrategy>
+  : root_impl1<typename power_impl1<Base, ExpNum, RoundingStrategy>::type, ExpDen, RoundingStrategy> {};
+
+//template<typename Num, typename Root, typename RoundingStrategy> struct power
 
 // digit<base, exp>
 
@@ -1554,6 +1705,8 @@ template<typename A> constexpr inline number<typename impl::negate<A>::type>
 operator-(number<A>) { return impl::make_any_number(); }
 template<typename A> constexpr inline number<typename impl::abs_<A>::type>
 abs(number<A>) { return impl::make_any_number(); }
+template<typename A> constexpr inline number<typename impl::sign_<A>::type>
+sign(number<A>) { return impl::make_any_number(); }
 
 template<typename A, typename B> constexpr inline number<typename impl::add<A, B>::type>
 operator+(number<A>, number<B>) { return impl::make_any_number(); }
@@ -1627,6 +1780,14 @@ struct from_int {
   static constexpr type value = type();
 };
 
+template<typename IntegralType, typename A> constexpr inline IntegralType
+to_int(number<A>) {
+  static_assert(impl::is_integer_<A>::value, "to_int on non-integer");
+  // TODO assert no overflow?
+  // TODO choose smallest reasonable int type by default?
+  return impl::to_int_<IntegralType, A>::value();
+}
+
 template<typename A> constexpr inline
 number<typename impl::round_<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type>
 floor(number<A>) { return impl::make_any_number(); }
@@ -1655,6 +1816,7 @@ template<typename Number, typename RoundingStrategy> constexpr inline
 number<typename impl::logarithm<nat<10>, Number, RoundingStrategy>::type>
 log10(number<Number>, RoundingStrategy) { return impl::make_any_number(); }
 
+//typedef nat<> zero;
 
 // and operator bool, maybe explicit operator float, etc.
 // I suppose the user-visible types should *anyway* be different from the intermediates...
