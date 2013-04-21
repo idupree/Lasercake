@@ -213,6 +213,11 @@ struct array {
   }
 };
 
+template<char...Values>
+constexpr inline const char* to_string(array<char, Values...>) {
+  return array<char, Values..., '\0'>::values();
+}
+
 //convert_to_little_endian_unsigned<uint32_t>
 //TODO
 //struct in_base
@@ -1797,6 +1802,32 @@ struct convert_to_base<negative<nat<Milliodigits...>>, UInt,
 //okay, staying with "two's complement" and only power-of-two negative numbers
 //handled for now.
 
+template<typename BasePrefixArray, typename Array>
+struct show_as_base_impl_positive;
+template<char...Prefix, uint8_t...Digit>
+struct show_as_base_impl_positive<array<char, Prefix...>, array<uint8_t, Digit...>> {
+  typedef array<char, Prefix..., ((Digit<10) ? ('0'+char(Digit)) : ('a'+char(Digit-10)))...> type;
+};
+
+template<typename BasePrefixArray, typename Array>
+struct show_as_base_impl_negative;
+template<char...Prefix, uint8_t...Digit>
+struct show_as_base_impl_negative<array<char, Prefix...>, array<uint8_t, Digit...>> {
+  typedef array<char, '-', Prefix..., ((Digit<10) ? ('0'+char(Digit)) : ('a'+char(Digit-10)))...> type;
+};
+
+template<typename Integer, uintmax_t Base, char...BasePrefix>
+struct show_as_base
+: show_as_base_impl_positive<
+    array<char, BasePrefix...>,
+    typename convert_to_base<Integer, uint8_t, true, false, true, true, false, 0, Base-1>::type
+> {};
+template<typename Nat, uintmax_t Base, char...BasePrefix>
+struct show_as_base<negative<Nat>, Base, BasePrefix...>
+: show_as_base_impl_negative<
+    array<char, BasePrefix...>,
+    typename convert_to_base<Nat, uint8_t, true, false, true, true, false, 0, Base-1>::type
+> {};
 
 
 template<char...Digits> struct parse_nat;
@@ -1962,7 +1993,7 @@ template<
   bool ZeroHasADigit = true,
   UInt BaseMinusOne = std::numeric_limits<UInt>::max(),
   typename A>
-static constexpr typename
+constexpr inline typename
 impl::convert_to_base<A, UInt, BigEndian, Signed,
     true, ZeroHasADigit, false, 0, BaseMinusOne>::type
 convert_to_base_auto_sized(number<A>) { return impl::make_any_number(); }
@@ -1975,12 +2006,23 @@ template<
   bool ModuloIfOverflow = false /*non-modulo: error if overflow*/,
   UInt BaseMinusOne = std::numeric_limits<UInt>::max(),
   typename A>
-static constexpr typename
+constexpr inline typename
 impl::convert_to_base<A, UInt, BigEndian, Signed,
     false, false, ModuloIfOverflow, ExactSize, BaseMinusOne>::type
 convert_to_base_manually_sized(number<A>) { return impl::make_any_number(); }
 //TODO document these
 
+// TODO maybe allow exact decimals
+// TODO allow e.g. 0x prefixes in the interface somehow
+// TODO operator<<(std::ostream, number<>)
+template<int Base = 10, typename A>
+constexpr inline typename
+impl::show_as_base<A, Base>::type
+to_chars(number<A>) { return impl::make_any_number(); }
+
+template<int Base = 10, typename A>
+constexpr inline const char*
+to_string(number<A> a) { return to_string(to_chars<Base>(a)); }
 
 
 

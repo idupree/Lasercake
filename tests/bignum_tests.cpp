@@ -413,6 +413,26 @@ CHECK_SAME_TYPE(
   (ct::array<uint8_t, ~0, ~2, ~7>())
 )
 
+CHECK_SAME_TYPE(
+  to_chars(INTEGER(520)),
+  (ct::array<char, '5', '2', '0'>())
+)
+CHECK_SAME_TYPE(
+  to_chars(INTEGER(-520)),
+  (ct::array<char, '-', '5', '2', '0'>())
+)
+CHECK_SAME_TYPE(
+  to_chars(INTEGER(-0)),
+  (ct::array<char, '0'>())
+)
+CHECK_SAME_TYPE(
+  to_chars(INTEGER(-1)),
+  (ct::array<char, '-', '1'>())
+)
+CHECK_SAME_TYPE(
+  ct::to_chars<16>(INTEGER(-31)),
+  (ct::array<char, '-', '1', 'f'>())
+)
 
 
 //TODO logarithm with round-to-nearest rounding modes
