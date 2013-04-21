@@ -204,11 +204,39 @@ struct rational {};//: number<rational<Num,Den>> {};
 struct divide_by_zero {};
 struct even_root_of_negative {};
 
+template<typename UInt, UInt...Values>
+struct array {
+  typedef UInt values_type[sizeof...(Values)];
+  static constexpr values_type const& values() {
+    static const values_type values_ = { Values... };
+    return values_;
+  }
+};
+
+//convert_to_little_endian_unsigned<uint32_t>
 //TODO
 //struct in_base
 //struct integer_to_base
 
+//big/little
+
+// can be a wrapper fn:
+// except then it needs to know whether twos-complement..
+//auto-sized/num-limbs-and-??-if-overflow
+//  error-if-overflow/modulo-if-overflow
+
+//twos-complement/error-if-negative
+//...I suppose this can be a wrapper:
+//if negative, -x-1 (i.e. ~x), then
+//compl all bits of the result
+
+//zero-has-a-digit
+
+//uint type
+//base (default to max uint-type + 1)
+
 namespace impl {
+
 
 // Operations that have the same name as a function on numbers
 // (e.g. abs) have an underscore appended, because otherwise the
@@ -384,8 +412,10 @@ struct add<nat<MilliodigitA0, MilliodigitsA...>,
           ((MilliodigitA0 + MilliodigitB0) / base)>::type>::type>::type,
     ((MilliodigitA0 + MilliodigitB0) % base)> {};
 // recursion base cases
-template<typename NatA> struct add<NatA, nat<>> { typedef NatA type; };
-template<typename NatB> struct add<nat<>, NatB> { typedef NatB type; };
+template<milliodigit... MilliodigitsA> struct add<nat<MilliodigitsA...>, nat<>> {
+  typedef nat<MilliodigitsA...> type; };
+template<milliodigit... MilliodigitsB> struct add<nat<>, nat<MilliodigitsB...>> {
+  typedef nat<MilliodigitsB...> type; };
 template<> struct add<nat<>, nat<>> { typedef nat<> type; };
 
 // Natural number subtraction (negative results become 'below_zero')
@@ -417,8 +447,10 @@ struct subtract_nat_aux<nat<MilliodigitA0, MilliodigitsA...>,
           typename add<nat<MilliodigitsB...>, nat<1> >::type>::type,
         (base - (MilliodigitB0 - MilliodigitA0))> {};
 // recursion base cases
-template<typename NatA> struct subtract_nat<NatA, nat<>> { typedef NatA type; };
-template<typename NatB> struct subtract_nat<nat<>, NatB> { typedef below_zero type; };
+template<milliodigit... MilliodigitsA> struct subtract_nat<nat<MilliodigitsA...>, nat<>> {
+  typedef nat<MilliodigitsA...> type; };
+template<milliodigit... MilliodigitsB> struct subtract_nat<nat<>, nat<MilliodigitsB...>> {
+  typedef below_zero type; };
 template<> struct subtract_nat<nat<>, nat<>> { typedef nat<> type; };
 
 // Natural number multiplication
@@ -454,7 +486,7 @@ struct multiply<nat<MilliodigitsA...>,
         0>::type
     > {};
 // recursion base case
-template<typename NatA> struct multiply<NatA, nat<>> { typedef nat<> type; };
+template<milliodigit... MilliodigitsA> struct multiply<nat<MilliodigitsA...>, nat<>> { typedef nat<> type; };
 
 // Natural number comparison
 // -1 if lhs < rhs; 0 if equal; 1 if lhs > rhs
@@ -1611,9 +1643,160 @@ template<typename Base, typename ExpNum, typename ExpDen, typename RoundingStrat
 struct power_impl1<Base, rational<ExpNum, ExpDen>, RoundingStrategy>
   : root_impl1<typename power_impl1<Base, ExpNum, RoundingStrategy>::type, ExpDen, RoundingStrategy> {};
 
-//template<typename Num, typename Root, typename RoundingStrategy> struct power
 
-// digit<base, exp>
+
+template<uintmax_t NumRemainingDigits, typename RemainingNat,
+  typename UInt, typename Base, typename DigitAppender, typename Accum = array<UInt> >
+struct convert_impl;
+
+template<typename RemainingNat,
+  typename UInt, typename Base, typename DigitAppender, typename Accum>
+struct convert_impl<0, RemainingNat, UInt, Base, DigitAppender, Accum> {
+  typedef Accum type;
+  static const bool overflow = true;
+};
+template<typename UInt, typename Base, typename DigitAppender, typename Accum>
+struct convert_impl<0, nat<>, UInt, Base, DigitAppender, Accum> {
+  typedef Accum type;
+  static const bool overflow = false;
+};
+template<uintmax_t NumRemainingDigits, typename RemainingNat,
+  typename UInt, typename Base, typename DigitAppender, typename Accum>
+struct convert_impl//<NumRemainingDigits, RemainingNat, UInt, Base, DigitAppender, Accum>
+: convert_impl<
+    (NumRemainingDigits-1),
+    typename divide_nat<RemainingNat, Base>::quot,
+    UInt, Base, DigitAppender,
+    typename DigitAppender::template append<
+      to_int_<UInt, typename divide_nat<RemainingNat, Base>::rem>::value(),
+      Accum>::type
+    > {};
+
+template<uintmax_t NumRemainingDigits,
+  typename UInt, typename Base, typename DigitAppender, typename Accum>
+struct convert_impl<NumRemainingDigits, nat<>, UInt, Base, DigitAppender, Accum>
+: convert_impl<
+    (NumRemainingDigits-1),
+    nat<>, UInt, Base, DigitAppender,
+    typename DigitAppender::template append<UInt(0), Accum>::type
+    > {};
+
+
+template<typename UInt, bool BigEndian> struct convert_impl_append_to_positive;
+
+template<typename UInt> struct convert_impl_append_to_positive<UInt, true> {
+  template<UInt Value, typename Array> struct append;
+  template<UInt Value, UInt...Values>
+  struct append<Value, array<UInt, Values...>> {
+    typedef array<UInt, Value, Values...> type;
+  };
+};
+template<typename UInt> struct convert_impl_append_to_positive<UInt, false> {
+  template<UInt Value, typename Array> struct append;
+  template<UInt Value, UInt...Values>
+  struct append<Value, array<UInt, Values...>> {
+    typedef array<UInt, Values..., Value> type;
+  };
+};
+
+template<typename UInt, UInt BaseMinusOne, bool BigEndian> struct convert_impl_append_to_negative;
+template<typename UInt, UInt BaseMinusOne> struct convert_impl_append_to_negative<UInt, BaseMinusOne, true> {
+  template<UInt Value, typename Array> struct append;
+  template<UInt Value, UInt...Values>
+  struct append<Value, array<UInt, Values...>> {
+    typedef array<UInt, (BaseMinusOne - Value), Values...> type;
+  };
+};
+template<typename UInt, UInt BaseMinusOne> struct convert_impl_append_to_negative<UInt, BaseMinusOne, false> {
+  template<UInt Value, typename Array> struct append;
+  template<UInt Value, UInt...Values>
+  struct append<Value, array<UInt, Values...>> {
+    typedef array<UInt, Values..., (BaseMinusOne - Value)> type;
+  };
+};
+
+
+
+// i suspect it should have two interfaces, auto-sized and manually-sized,
+// user wise
+template<
+  typename Integer,
+  typename UInt,
+  bool BigEndian, // the order of the UInt digits; each UInt is internally the native bit-order
+  bool Signed, // represented as radix complement, typically two's complement
+  bool AutoSized = true,
+  bool ZeroHasADigit = true /*relevant if AutoSized*/,
+  bool ModuloIfOverflow = false /*relevant if !AutoSized*/,
+  uintmax_t ExactSize = 0 /*used if !AutoSized*/,
+  UInt BaseMinusOne = std::numeric_limits<UInt>::max()>
+struct convert_to_base {
+  static_assert(sizeof(Integer) && false, "convert_to_base not valid for non-integers");
+};
+template<typename UInt, bool BigEndian, bool Signed,
+  bool ModuloIfOverflow, uintmax_t ExactSize, UInt BaseMinusOne>
+struct convert_to_base<nat<>, UInt, BigEndian, Signed, true, true,
+    ModuloIfOverflow, ExactSize, BaseMinusOne> {
+  typedef array<UInt, UInt(0)> type;
+};
+template<typename UInt, bool BigEndian, bool Signed,
+  bool ModuloIfOverflow, uintmax_t ExactSize, UInt BaseMinusOne>
+struct convert_to_base<nat<>, UInt, BigEndian, Signed, true, false,
+    ModuloIfOverflow, ExactSize, BaseMinusOne> {
+  typedef array<UInt> type;
+};
+template<milliodigit...Milliodigits, typename UInt,
+  bool BigEndian, bool Signed, bool AutoSized, bool ZeroHasADigit,
+  bool ModuloIfOverflow, uintmax_t ExactSize, UInt BaseMinusOne>
+struct convert_to_base<nat<Milliodigits...>, UInt,
+    BigEndian, Signed, AutoSized, ZeroHasADigit, ModuloIfOverflow,
+    ExactSize, BaseMinusOne> {
+  typedef nat<Milliodigits...> Nat;
+  typedef typename add<typename uinteger_literal<BaseMinusOne>::type, nat<1>>::type Base;
+  typedef typename boost::conditional<
+    Signed, typename twice<Nat>::type, Nat>::type space_needed_for_sign_;
+  static const uintmax_t num_native_digits_ = to_int_<uintmax_t,
+    typename logarithm<Base, typename add<space_needed_for_sign_, nat<1>>::type, rounding_strategy<round_up>>::type
+    >::value();
+  static_assert(AutoSized || ModuloIfOverflow || num_native_digits_ <= ExactSize,
+    "overflow when converting compile-time-integer");
+  static const uintmax_t num_digits_ = (AutoSized ? num_native_digits_ : ExactSize);
+  typedef typename convert_impl<num_digits_, Nat, UInt, Base,
+    convert_impl_append_to_positive<UInt, BigEndian> >::type type;
+};
+template<milliodigit...Milliodigits, typename UInt,
+  bool BigEndian, bool Signed, bool AutoSized, bool ZeroHasADigit,
+  bool ModuloIfOverflow, uintmax_t ExactSize, UInt BaseMinusOne>
+struct convert_to_base<negative<nat<Milliodigits...>>, UInt,
+    BigEndian, Signed, AutoSized, ZeroHasADigit, ModuloIfOverflow,
+    ExactSize, BaseMinusOne> {
+  static_assert(Signed, "unsigned convert_to_base called on negative integer");
+  typedef nat<Milliodigits...> Nat;
+  typedef typename add<typename uinteger_literal<BaseMinusOne>::type, nat<1>>::type Base;
+  typedef typename subtract<Nat, nat<1>>::type complement_value_;
+  typedef typename twice<complement_value_>::type space_needed_for_sign_;
+  static const uintmax_t num_native_digits_a_ = to_int_<uintmax_t,
+    typename logarithm<Base, typename add<space_needed_for_sign_, nat<1>>::type, rounding_strategy<round_up>>::type
+    >::value();
+  static const uintmax_t num_native_digits_ =
+    ((num_native_digits_a_ == 0) ? 1 : num_native_digits_a_);
+  static_assert(AutoSized || ModuloIfOverflow || num_native_digits_ <= ExactSize,
+    "overflow when converting compile-time-integer");
+  static const uintmax_t num_digits_ = (AutoSized ? num_native_digits_ : ExactSize);
+  typedef typename convert_impl<num_digits_, complement_value_, UInt, Base,
+    convert_impl_append_to_negative<UInt, BaseMinusOne, BigEndian> >::type type;
+};
+
+//if twoscompl,
+//when making unsigned pre compl val
+//first digit must be 0
+//(..probably twoscompl only makes sense for power-of-two bases)
+//oh ah compl: (base-1)-val
+//and the +1 / -1 overall for negation stays.
+//  http://homepage.cs.uiowa.edu/~jones/ternary/numbers.shtml
+//how do we decide whether it's negative
+//okay, staying with "two's complement" and only power-of-two negative numbers
+//handled for now.
+
 
 
 template<char...Digits> struct parse_nat;
@@ -1771,6 +1954,64 @@ to_int(number<A>) {
   // TODO choose smallest reasonable int type by default?
   return impl::to_int_<IntegralType, A>::value();
 }
+
+template<
+  typename UInt,
+  bool BigEndian, // the order of the UInt digits; each UInt is internally the native bit-order
+  bool Signed, // represented as radix complement, typically two's complement
+  bool ZeroHasADigit = true,
+  UInt BaseMinusOne = std::numeric_limits<UInt>::max(),
+  typename A>
+static constexpr typename
+impl::convert_to_base<A, UInt, BigEndian, Signed,
+    true, ZeroHasADigit, false, 0, BaseMinusOne>::type
+convert_to_base_auto_sized(number<A>) { return impl::make_any_number(); }
+
+template<
+  typename UInt,
+  bool BigEndian, // the order of the UInt digits; each UInt is internally the native bit-order
+  bool Signed, // represented as radix complement, typically two's complement
+  uintmax_t ExactSize,
+  bool ModuloIfOverflow = false /*non-modulo: error if overflow*/,
+  UInt BaseMinusOne = std::numeric_limits<UInt>::max(),
+  typename A>
+static constexpr typename
+impl::convert_to_base<A, UInt, BigEndian, Signed,
+    false, false, ModuloIfOverflow, ExactSize, BaseMinusOne>::type
+convert_to_base_manually_sized(number<A>) { return impl::make_any_number(); }
+//TODO document these
+
+
+
+
+#if 0
+template<
+  typename Integer,
+  typename UInt,
+  bool BigEndian, // the order of the UInt digits; each UInt is internally the native bit-order
+  bool Signed, // represented as radix complement, typically two's complement
+  bool ZeroHasADigit = true,
+  UInt BaseMinusOne = std::numeric_limits<UInt>::max()>
+struct convert_to_base_auto_sized {
+  typedef typename impl::convert_to_base<Integer, UInt, BigEndian, Signed,
+    true, ZeroHasADigit, false, 0, BaseMinusOne>::type type;
+  static constexpr type value = type();
+};
+
+template<
+  typename Integer,
+  typename UInt,
+  bool BigEndian, // the order of the UInt digits; each UInt is internally the native bit-order
+  bool Signed, // represented as radix complement, typically two's complement
+  uintmax_t ExactSize,
+  bool ModuloIfOverflow = false /*non-modulo: error if overflow*/,
+  UInt BaseMinusOne = std::numeric_limits<UInt>::max()>
+struct convert_to_base_manually_sized {
+  typedef typename impl::convert_to_base<Integer, UInt, BigEndian, Signed,
+    false, false, ModuloIfOverflow, ExactSize, BaseMinusOne>::type type;
+  static constexpr type value = type();
+};
+#endif
 
 template<typename A> constexpr inline
 number<typename impl::round_<A, rounding_strategy<round_down, negative_continuous_with_positive>>::type>

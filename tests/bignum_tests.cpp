@@ -311,6 +311,110 @@ CHECK_SAME_TYPE(pow(INTEGER(32), RATIONAL(7, 5)), INTEGER(128))
 CHECK_SAME_TYPE(pow(RATIONAL(9, 4), RATIONAL(1, 2)), RATIONAL(3, 2))
 CHECK_SAME_TYPE(pow(INTEGER(40000), RATIONAL(1, 2)), INTEGER(200))
 
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, false>(INTEGER(66))),
+  (ct::array<uint8_t, 66>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, false>(INTEGER(519))),
+  (ct::array<uint8_t, 2, 7>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, false, false>(INTEGER(519))),
+  (ct::array<uint8_t, 7, 2>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, false, false>(INTEGER(0))),
+  (ct::array<uint8_t, 0>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, false, false, false>(INTEGER(0))),
+  (ct::array<uint8_t>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true>(INTEGER(-3))),
+  (ct::array<uint8_t, uint8_t(-3)>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true>(INTEGER(-1))),
+  (ct::array<uint8_t, uint8_t(-1)>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true>(INTEGER(-520))),
+  (ct::array<uint8_t, ~2, ~7>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, false, true>(INTEGER(-520))),
+  (ct::array<uint8_t, ~7, ~2>())
+)
+
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, false, true, 2-1>(INTEGER(21))),
+  (ct::array<uint8_t, 1, 0, 1, 0, 1>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 2-1>(INTEGER(21))),
+  (ct::array<uint8_t, 0, 1, 0, 1, 0, 1>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 2-1>(INTEGER(31))),
+  (ct::array<uint8_t, 0, 1, 1, 1, 1, 1>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 2-1>(INTEGER(32))),
+  (ct::array<uint8_t, 0, 1, 0, 0, 0, 0, 0>())
+)
+
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, false, true, 3-1>(INTEGER(21))),
+  (ct::array<uint8_t, 2, 1, 0>())
+)
+// see http://homepage.cs.uiowa.edu/~jones/ternary/numbers.shtml
+// for justification of three's complement
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 3-1>(INTEGER(21))),
+  (ct::array<uint8_t, 0, 2, 1, 0>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 3-1>(INTEGER(12))),
+  (ct::array<uint8_t, 1, 1, 0>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 3-1>(INTEGER(13))),
+  (ct::array<uint8_t, 1, 1, 1>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_auto_sized<uint8_t, true, true, true, 3-1>(INTEGER(14))),
+  (ct::array<uint8_t, 0, 1, 1, 2>())
+)
+
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, false, 3>(INTEGER(66))),
+  (ct::array<uint8_t, 0, 0, 66>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, false, 0>(INTEGER(0))),
+  (ct::array<uint8_t>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, false, 2>(INTEGER(0))),
+  (ct::array<uint8_t, 0, 0>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, false, 3, true>(INTEGER(66))),
+  (ct::array<uint8_t, 0, 0, 66>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, false, 0, true>(INTEGER(66))),
+  (ct::array<uint8_t>())
+)
+CHECK_SAME_TYPE(
+  (ct::convert_to_base_manually_sized<uint8_t, true, true, 3>(INTEGER(-520))),
+  (ct::array<uint8_t, ~0, ~2, ~7>())
+)
+
+
+
 //TODO logarithm with round-to-nearest rounding modes
 //c*sqrt(base) <=> d   (c,base,d >= 1)
 //c^2 * base <=> d^2
