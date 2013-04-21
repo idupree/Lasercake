@@ -761,6 +761,23 @@ template<uintmax_t Factoree> struct static_extract_factor<1, Factoree>;
 template<uintmax_t Factor> struct static_extract_factor<Factor, 0>;
 #endif
 
+template<bool B, typename T1, typename T2>
+struct static_if_impl;
+template<typename T1, typename T2>
+struct static_if_impl<true, T1, T2> {
+  typedef T1 type;
+  static constexpr T1 static_if(T1 t1, T2) { return t1; }
+};
+template<typename T1, typename T2>
+struct static_if_impl<false, T1, T2> {
+  typedef T2 type;
+  static constexpr T2 static_if(T1, T2 t2) { return t2; }
+};
+template<bool B, typename T1, typename T2>
+constexpr inline typename static_if_impl<B, T1, T2>::type
+static_if(T1 t1, T2 t2) {
+  return static_if_impl<B, T1, T2>::static_if(t1, t2);
+}
 
 
 template<typename result_t, typename lower_bound_and_mid_t, typename upper_bound_t, typename test_multiply_t, typename radicand_t>
