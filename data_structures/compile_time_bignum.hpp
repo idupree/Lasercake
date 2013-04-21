@@ -207,14 +207,21 @@ struct even_root_of_negative {};
 template<typename UInt, UInt...Values>
 struct array {
   typedef UInt values_type[sizeof...(Values)];
-  static constexpr values_type const& values() {
+  static values_type const& values() {
     static const values_type values_ = { Values... };
     return values_;
   }
 };
+template<typename...Array> struct concat;
+template<typename Array> struct concat<Array> {
+  typedef Array type;
+};
+template<typename UInt, UInt...ValuesA, UInt...ValuesB, typename...Arrays>
+struct concat<array<UInt, ValuesA...>, array<UInt, ValuesB...>, Arrays...>
+: concat<array<UInt, ValuesA..., ValuesB...>, Arrays...> {};
 
 template<char...Values>
-constexpr inline const char* to_string(array<char, Values...>) {
+inline const char* to_string(array<char, Values...>) {
   return array<char, Values..., '\0'>::values();
 }
 
@@ -1016,17 +1023,17 @@ template<typename NatA, typename NatB> struct gcd_aux_2<NatA, NatB, (-1)>
 
 template<typename IntNum, typename IntDen> struct make_rational;
 template<typename Num, typename Den>
-struct make_rational_impl1 {
+struct make_rational_from_coprime_positive_nats {
   typedef rational<Num, Den> type;
 };
 template<typename Num>
-struct make_rational_impl1<Num, nat<1>> {
+struct make_rational_from_coprime_positive_nats<Num, nat<1>> {
   typedef Num type;
 };
 template<typename Num, typename Den>
 struct make_rational {
   typedef typename gcd<Num, Den>::type gcd_;
-  typedef typename make_rational_impl1<
+  typedef typename make_rational_from_coprime_positive_nats<
     typename divide_nat<Num, gcd_>::type,
     typename divide_nat<Den, gcd_>::type>::type type;
 };
@@ -1648,6 +1655,37 @@ template<typename Base, typename ExpNum, typename ExpDen, typename RoundingStrat
 struct power_impl1<Base, rational<ExpNum, ExpDen>, RoundingStrategy>
   : root_impl1<typename power_impl1<Base, ExpNum, RoundingStrategy>::type, ExpDen, RoundingStrategy> {};
 
+template<typename Factor, typename Factoree,
+  typename AccumExponent = nat<>,
+  typename Quot = typename divide_nat<Factoree, Factor>::quot,
+  typename Rem = typename divide_nat<Factoree, Factor>::rem>
+struct extract_factor_impl {
+  typedef Factoree rest_of_factoree;
+  typedef AccumExponent factor_exponent;
+};
+template<typename Factor, typename Factoree, typename AccumExponent, typename Quot>
+struct extract_factor_impl<Factor, Factoree, AccumExponent, Quot, nat<>>
+: extract_factor_impl<Factor, Quot, typename add<AccumExponent, nat<1>>::type> {};
+
+template<typename Factor, typename Factoree>
+struct extract_factor_ : extract_factor_impl<Factor, Factoree> {};
+template<typename Factor, typename FactoreeNum, typename FactoreeDen>
+struct extract_factor_<Factor, rational<FactoreeNum, FactoreeDen>> {
+  typedef extract_factor_<Factor, FactoreeNum> extracted_num_;
+  typedef extract_factor_<Factor, FactoreeDen> extracted_den_;
+  typedef typename make_rational_from_coprime_positive_nats<
+    typename extracted_num_::rest_of_factoree,
+    typename extracted_den_::rest_of_factoree>::type rest_of_factoree;
+  typedef typename subtract<
+    typename extracted_num_::factor_exponent,
+    typename extracted_den_::factor_exponent>::type factor_exponent;
+};
+template<typename Factor, typename Factoree>
+struct extract_factor_<Factor, negative<Factoree>> {
+  typedef extract_factor_<Factor, Factoree> extracted_;
+  typedef negative<typename extracted_::rest_of_factoree> rest_of_factoree;
+  typedef typename extracted_::factor_exponent factor_exponent;
+};
 
 
 template<uintmax_t NumRemainingDigits, typename RemainingNat,
@@ -1803,32 +1841,30 @@ struct convert_to_base<negative<nat<Milliodigits...>>, UInt,
 //handled for now.
 
 template<typename BasePrefixArray, typename Array>
-struct show_as_base_impl_positive;
+struct show_as_base_impl_nat;
 template<char...Prefix, uint8_t...Digit>
-struct show_as_base_impl_positive<array<char, Prefix...>, array<uint8_t, Digit...>> {
+struct show_as_base_impl_nat<array<char, Prefix...>, array<uint8_t, Digit...>> {
   typedef array<char, Prefix..., ((Digit<10) ? ('0'+char(Digit)) : ('a'+char(Digit-10)))...> type;
-};
-
-template<typename BasePrefixArray, typename Array>
-struct show_as_base_impl_negative;
-template<char...Prefix, uint8_t...Digit>
-struct show_as_base_impl_negative<array<char, Prefix...>, array<uint8_t, Digit...>> {
-  typedef array<char, '-', Prefix..., ((Digit<10) ? ('0'+char(Digit)) : ('a'+char(Digit-10)))...> type;
 };
 
 template<typename Integer, uintmax_t Base, char...BasePrefix>
 struct show_as_base
-: show_as_base_impl_positive<
+: show_as_base_impl_nat<
     array<char, BasePrefix...>,
     typename convert_to_base<Integer, uint8_t, true, false, true, true, false, 0, Base-1>::type
 > {};
 template<typename Nat, uintmax_t Base, char...BasePrefix>
 struct show_as_base<negative<Nat>, Base, BasePrefix...>
-: show_as_base_impl_negative<
-    array<char, BasePrefix...>,
-    typename convert_to_base<Nat, uint8_t, true, false, true, true, false, 0, Base-1>::type
-> {};
-
+: concat<array<char, '-'>, typename show_as_base<Nat, Base, BasePrefix...>::type> {};
+template<typename Num, typename Den, uintmax_t Base, char...BasePrefix>
+struct show_as_base<rational<Num, Den>, Base, BasePrefix...>
+: concat<typename show_as_base<Num, Base, BasePrefix...>::type, array<char, '/'>,
+         typename show_as_base<Den, Base, BasePrefix...>::type> {};
+template<typename Num, typename Den, uintmax_t Base, char...BasePrefix>
+struct show_as_base<negative<rational<Num, Den>>, Base, BasePrefix...>
+: concat<array<char, '-'>,
+         typename show_as_base<Num, Base, BasePrefix...>::type, array<char, '/'>,
+         typename show_as_base<Den, Base, BasePrefix...>::type> {};
 
 template<char...Digits> struct parse_nat;
 
@@ -2012,7 +2048,6 @@ impl::convert_to_base<A, UInt, BigEndian, Signed,
 convert_to_base_manually_sized(number<A>) { return impl::make_any_number(); }
 //TODO document these
 
-// TODO maybe allow exact decimals
 // TODO allow e.g. 0x prefixes in the interface somehow
 // TODO operator<<(std::ostream, number<>)
 template<int Base = 10, typename A>
@@ -2024,7 +2059,19 @@ template<int Base = 10, typename A>
 constexpr inline const char*
 to_string(number<A> a) { return to_string(to_chars<Base>(a)); }
 
+template<typename FactorExponent, typename RestOfFactoree>
+struct extracted_factor {
+  number<FactorExponent> factor_exponent;
+  number<RestOfFactoree> rest_of_factoree;
+};
 
+template<typename Factor, typename Factoree>
+constexpr inline
+extracted_factor<
+  typename impl::extract_factor_<Factor, Factoree>::factor_exponent,
+  typename impl::extract_factor_<Factor, Factoree>::rest_of_factoree
+>
+extract_factor(number<Factor>, number<Factoree>) { return impl::make_any_number(); }
 
 #if 0
 template<

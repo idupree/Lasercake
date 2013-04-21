@@ -434,6 +434,15 @@ CHECK_SAME_TYPE(
   (ct::array<char, '-', '1', 'f'>())
 )
 
+CHECK_SAME_TYPE(
+  to_chars(RATIONAL(1, 3)),
+  (ct::array<char, '1', '/', '3'>())
+)
+
+CHECK_SAME_TYPE(
+  to_chars(-RATIONAL(7, 3)),
+  (ct::array<char, '-', '7', '/', '3'>())
+)
 
 //TODO logarithm with round-to-nearest rounding modes
 //c*sqrt(base) <=> d   (c,base,d >= 1)
