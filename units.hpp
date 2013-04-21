@@ -299,14 +299,14 @@ namespace dim {
     typedef boost::ratio<Num, Den> ratio;
     static const bool negative = (ratio::num < 0);
     static const intmax_t positive_num = (negative ? -ratio::num : ratio::num);
-    typedef extract_factor<10, positive_num> num_tens;
-    typedef extract_factor<10, ratio::den> den_tens;
+    typedef static_extract_factor<10, positive_num> num_tens;
+    typedef static_extract_factor<10, ratio::den> den_tens;
     static const bool do_pow10 = (num_tens::factor_exponent + den_tens::factor_exponent) >= 4;
     static const int pow10_exp = num_tens::factor_exponent - den_tens::factor_exponent;
     static const intmax_t numB = (do_pow10 ? num_tens::rest_of_factoree : positive_num);
     static const intmax_t denB = (do_pow10 ? den_tens::rest_of_factoree : ratio::den);
-    typedef extract_factor<2, numB> num_twos;
-    typedef extract_factor<2, denB> den_twos;
+    typedef static_extract_factor<2, numB> num_twos;
+    typedef static_extract_factor<2, denB> den_twos;
     static const bool do_pow2 = (num_twos::factor_exponent + den_twos::factor_exponent) >= 11;
     static const int pow2_exp = num_twos::factor_exponent - den_twos::factor_exponent;
     static const intmax_t numC = (do_pow2 ? num_twos::rest_of_factoree : numB);

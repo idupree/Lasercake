@@ -692,7 +692,7 @@ struct static_root_nonnegative_integer<Radicand, 0> {};
 template<>
 struct static_root_nonnegative_integer<0, 0> {};
 
-
+#if 1
 static const uintmax_t safe_uintmax_t_to_square =
   (uintmax_t(1)<<(std::numeric_limits<uintmax_t>::digits/2)) - 1u;
 template<uintmax_t Factor, uintmax_t Factoree,
@@ -751,15 +751,15 @@ public:
 // (factors_value, which is F to the factor_exponent),
 // and N sans the F parts (rest_of_factoree).
 template<uintmax_t Factor, uintmax_t Factoree>
-struct extract_factor : extract_factor_impl<Factor, Factoree> {
+struct static_extract_factor : extract_factor_impl<Factor, Factoree> {
   static const int factor_base = Factor;
   static const int factoree = Factoree;
 };
 // These are not meaningful:
-template<uintmax_t Factoree> struct extract_factor<0, Factoree>;
-template<uintmax_t Factoree> struct extract_factor<1, Factoree>;
-template<uintmax_t Factor> struct extract_factor<Factor, 0>;
-
+template<uintmax_t Factoree> struct static_extract_factor<0, Factoree>;
+template<uintmax_t Factoree> struct static_extract_factor<1, Factoree>;
+template<uintmax_t Factor> struct static_extract_factor<Factor, 0>;
+#endif
 
 
 

@@ -423,12 +423,12 @@ static_assert(static_root_nonnegative_integer<999999999,1>::value == 999999999, 
 static_assert(static_root_nonnegative_integer<1,999999999>::value == 1, "bug");
 static_assert(static_root_nonnegative_integer<0,3>::value == 0, "bug");
 
-static_assert(extract_factor<3, 270>::factor_exponent == 3, "bug");
-static_assert(extract_factor<3, 270>::factored_out_value == 27, "bug");
-static_assert(extract_factor<3, 270>::rest_of_factoree == 10, "bug");
-static_assert(extract_factor<12345, 12345ll*12345*12345*97>::factor_exponent == 3, "bug");
-static_assert(extract_factor<2, (1ll<<41)>::factor_exponent == 41, "bug");
-static_assert(extract_factor<(1ll<<41), (1ll<<41)>::factor_exponent == 1, "bug");
+static_assert(static_extract_factor<3, 270>::factor_exponent == 3, "bug");
+static_assert(static_extract_factor<3, 270>::factored_out_value == 27, "bug");
+static_assert(static_extract_factor<3, 270>::rest_of_factoree == 10, "bug");
+static_assert(static_extract_factor<12345, 12345ll*12345*12345*97>::factor_exponent == 3, "bug");
+static_assert(static_extract_factor<2, (1ll<<41)>::factor_exponent == 41, "bug");
+static_assert(static_extract_factor<(1ll<<41), (1ll<<41)>::factor_exponent == 1, "bug");
 
 //}  /* end anonymous namespace */
 
