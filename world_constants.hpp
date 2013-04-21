@@ -34,18 +34,25 @@
 // TODO where it doesn't already, code should refer to some kind of time unit
 //    more, rather than implicitly relying on frames being a fixed duration.
 
-typedef units<dim::ratio<10>, dim::meter<1>> tile_widths_t;
-typedef units<dim::ratio< 2>, dim::meter<1>> tile_heights_t;
-typedef units<dim::ratio< 1, 200>, dim::meter<1>> fine_distance_units_t;
-typedef typename units_prod<fine_distance_units_t, dim::ratio<1, 30>>::type tile_physics_sub_tile_distance_units_t;
-typedef units<dim::ratio<1, (2*2*2*2 * 3*3*3 * 5*5 * 7 * 11)>, dim::second<1>> time_units_t;
+typedef units<dim::ratio<INTEGERtype(10)>, dim::meter<1>> tile_widths_t;
+typedef units<dim::ratio<INTEGERtype(2)>, dim::meter<1>> tile_heights_t;
+typedef units<dim::ratio<RATIONALtype(1, 200)>, dim::meter<1>> fine_distance_units_t;
+typedef typename units_prod<fine_distance_units_t, dim::ratio<RATIONALtype(1, 30)>>::type tile_physics_sub_tile_distance_units_t;
+typedef units<dim::ratio<
+  decltype(reciprocal(
+    pow(INTEGER(2), INTEGER(4)) *
+    pow(INTEGER(3), INTEGER(3)) *
+    pow(INTEGER(5), INTEGER(2)) *
+    INTEGER(7) *
+    INTEGER(11)))
+  >, dim::second<1>> time_units_t;
 typedef typename units_prod<fine_distance_units_t, dim::second<(-1)>>::type velocity_units_t;
 typedef typename units_prod<fine_distance_units_t, dim::second<(-2)>>::type acceleration_units_t;
 typedef typename units_prod<milli_t, grams_t, dim::meter<(-3)>>::type density_units_t;
 typedef pascals_t pressure_units_t;
 
 // This is a stupid unit but it exists currently:
-typedef typename units_prod<seconds_t, dim::ratio<1, 30>>::type fixed_frame_lengths_t;
+typedef typename units_prod<seconds_t, dim::ratio<RATIONALtype(1, 30)>>::type fixed_frame_lengths_t;
 
 typedef typename units_prod<tile_physics_sub_tile_distance_units_t, units_pow<fixed_frame_lengths_t, (-1)> >::type
   tile_physics_sub_tile_velocity_units_t;

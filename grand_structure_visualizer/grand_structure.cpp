@@ -263,7 +263,7 @@ typedef physical_quantity<mpz, time_units_t> time_type;
 typedef typename units_prod<nano_t, meters_t>::type distance_units_t;
 typedef typename units_prod<distance_units_t, typename units_pow<time_units_t, -1>::type>::type velocity_units_t;
 typedef typename units_prod<velocity_units_t, typename units_pow<time_units_t, -1>::type>::type acceleration_units_t;
-typedef typename units_prod<acceleration_units_t, dim::ratio<2>>::type acceleration_coefficient_units_t;
+typedef typename units_prod<acceleration_units_t, dim::ratio<INTEGERtype(2)>>::type acceleration_coefficient_units_t;
 constexpr distance_units_t distance_units = distance_units_t();
 constexpr velocity_units_t velocity_units = velocity_units_t();
 constexpr acceleration_units_t acceleration_units = acceleration_units_t();

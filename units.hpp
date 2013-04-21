@@ -26,12 +26,13 @@
 #include <sstream>
 #include <utility>
 #include <boost/utility/enable_if.hpp>
-#include <boost/ratio/ratio.hpp>
+//#include <boost/ratio/ratio.hpp>
 #include <boost/integer.hpp>
 #include <boost/type_traits/conditional.hpp>
 #include "cxx11/cxx11_utils.hpp"
 #include "cxx11/hash.hpp"
 #include "utils.hpp"
+#include "data_structures/compile_time_bignum.hpp"
 
 // === units ===
 //
@@ -294,83 +295,85 @@ namespace dim {
     }
   };
 
-  template<intmax_t Num, intmax_t Den>
+  template<typename Ratio>
+  struct ratio_to_fancy_string {
+    static constexpr auto r = Ratio();
+    static const bool negative = is_negative(r);
+    static constexpr auto rA = abs(r);
+    static constexpr auto tens = extract_factor(INTEGER(10), rA);
+    static const bool show_pow10 = abs(tens.factor_exponent) >= INTEGER(4);
+    static constexpr auto rB = static_if<show_pow10>(tens.rest_of_factoree, rA);
+    static constexpr auto twos = extract_factor(INTEGER(2), rB);
+    static const bool show_pow2 = abs(twos.factor_exponent) >= INTEGER(11);
+    static constexpr auto rC = static_if<show_pow2>(twos.rest_of_factoree, rB);
+    static const bool show_ratio =
+      (rC != INTEGER(1) || (!show_pow10 && !show_pow2));
+    static const bool brackets = // all the time except for [10^n] or [2^n]
+      negative || show_ratio || (show_pow10 + show_pow2 != 1);
+    static const bool show_x_before_pow2 = show_ratio && show_pow2;
+    static const bool show_x_before_pow10 = (show_ratio || show_pow2) && show_pow10;
+    typedef typename ct::concat<
+      typename boost::conditional<brackets, ct::array<char, '['>, ct::array<char>>::type,
+      typename boost::conditional<negative, ct::array<char, '-'>, ct::array<char>>::type,
+      typename boost::conditional<show_x_before_pow2, ct::array<char, '*'>, ct::array<char>>::type,
+      typename boost::conditional<show_pow2, ct::array<char, '2', '^'>, ct::array<char>>::type,
+      typename boost::conditional<show_pow2, decltype(to_chars(twos.factor_exponent)), ct::array<char>>::type,
+      typename boost::conditional<show_x_before_pow10, ct::array<char, '*'>, ct::array<char>>::type,
+      typename boost::conditional<show_pow10, ct::array<char, '1', '0', '^'>, ct::array<char>>::type,
+      typename boost::conditional<show_pow10, decltype(to_chars(tens.factor_exponent)), ct::array<char>>::type,
+      typename boost::conditional<brackets, ct::array<char, ']'>, ct::array<char>>::type
+    >::type type;
+  };
+  template<typename Ratio>
   inline std::ostream& show_ratio(std::ostream& os) {
-    typedef boost::ratio<Num, Den> ratio;
-    static const bool negative = (ratio::num < 0);
-    static const intmax_t positive_num = (negative ? -ratio::num : ratio::num);
-    typedef static_extract_factor<10, positive_num> num_tens;
-    typedef static_extract_factor<10, ratio::den> den_tens;
-    static const bool do_pow10 = (num_tens::factor_exponent + den_tens::factor_exponent) >= 4;
-    static const int pow10_exp = num_tens::factor_exponent - den_tens::factor_exponent;
-    static const intmax_t numB = (do_pow10 ? num_tens::rest_of_factoree : positive_num);
-    static const intmax_t denB = (do_pow10 ? den_tens::rest_of_factoree : ratio::den);
-    typedef static_extract_factor<2, numB> num_twos;
-    typedef static_extract_factor<2, denB> den_twos;
-    static const bool do_pow2 = (num_twos::factor_exponent + den_twos::factor_exponent) >= 11;
-    static const int pow2_exp = num_twos::factor_exponent - den_twos::factor_exponent;
-    static const intmax_t numC = (do_pow2 ? num_twos::rest_of_factoree : numB);
-    static const intmax_t denC = (do_pow2 ? den_twos::rest_of_factoree : denB);
-    static const bool brackets = // all the time except a specific case
-      !(!negative && numC == 1 && denC == 1 && (do_pow10 + do_pow2 == 1));
-    bool star = false;
-    if(brackets) { os << '['; }
-    if(negative) { os << '-'; }
-    if(numC != 1 || denC != 1) { if(star) {os << '*';}; os << numC; star = true; }
-    if(denC != 1) { os << '/' << denC; star = true; }
-    if(do_pow2) { if(star) {os << '*';}; os << "2^" << pow2_exp; star = true;}
-    if(do_pow10) { if(star) {os << '*';}; os << "10^" << pow10_exp; star = true;}
-    if(!star) { os << '1'; }
-    if(brackets) { os << ']'; }
-    return os;
+    return os << to_string(typename ratio_to_fancy_string<Ratio>::type());
   }
   //ratio? factor? rational_factor?
-  template<intmax_t Num, intmax_t Den = 1>
-  struct ratio : dimension_kind_base<ratio<Num, Den>, ratio_tag> {
-    static const intmax_t num = Num;
-    static const intmax_t den = Den;
-    typedef boost::ratio<Num, Den> boost_ratio;
-    static_assert(Num == boost_ratio::num && Den == boost_ratio::den, "not normalized");
+  template<typename CTNumber /*a ct::number*/>
+  struct ratio : dimension_kind_base<ratio<CTNumber>, ratio_tag> {
+    typedef CTNumber number_type;
+    static inline constexpr CTNumber number() { return number_type(); }
+    //static const intmax_t num = Num;
+    //static const intmax_t den = Den;
+    //typedef boost::ratio<Num, Den> boost_ratio;
+    //static_assert(Num == boost_ratio::num && Den == boost_ratio::den, "not normalized");
 
-    typedef ratio<1> identity;
-    typedef ratio<Den, Num> inverse;
+    typedef ratio<INTEGERtype(1)> identity;
+    typedef ratio<decltype(reciprocal(CTNumber()))> inverse;
     template<typename Other> struct combine;
-    template<intmax_t OtherNum, intmax_t OtherDen> struct combine<ratio<OtherNum, OtherDen>> {
-      typedef typename boost::ratio_multiply<
-          boost_ratio, typename ratio<OtherNum, OtherDen>::boost_ratio
-        >::type combined_boost_ratio;
-      typedef ratio<combined_boost_ratio::num, combined_boost_ratio::den> type;
+    template<typename OtherCTNumber> struct combine<ratio<OtherCTNumber>> {
+      typedef ratio<decltype(CTNumber() * OtherCTNumber())> type;
     };
     template<intmax_t Root> struct root {
-      static_assert(Root % 2 == 1 || num >= 0,
+      typedef ratio<decltype(pow(CTNumber(), reciprocal(ct::from_int<Root>::value)))> type;
+      /*static_assert(Root % 2 == 1 || is_nonnegative(CTNumber()),
                     "Even roots of negative numbers are imaginary.");
       typedef static_root_nonnegative_integer<(num >= 0 ? num : -num), Root> num_root;
       typedef static_root_nonnegative_integer<den, Root> den_root;
       static_assert(num_root::remainder == 0, "non-exact dim::ratio exponentiation");
       static_assert(den_root::remainder == 0, "non-exact dim::ratio exponentiation");
-      typedef ratio<(num >= 0 ? num_root::value : -num_root::value), den_root::value> type;
+      typedef ratio<(num >= 0 ? num_root::value : -num_root::value), den_root::value> type;*/
     };
 
     friend inline std::ostream& operator<<(std::ostream& os, ratio) {
-      show_ratio<Num, Den>(os);
+      show_ratio<CTNumber>(os);
       return os;
     }
   };
   // make_ratio normalizes rather than requiring you to.
   template<intmax_t Num, intmax_t Den>
   struct make_ratio {
-    typedef boost::ratio<Num, Den> boost_ratio;
-    typedef ratio<boost_ratio::num, boost_ratio::den> type;
+    typedef ratio<decltype(ct::from_int<Num>::value / ct::from_int<Den>::value)> type;
   };
 
-  template<> struct identity<ratio_tag>  { typedef typename  ratio<0>::identity type; };
-  template<> struct identity<tau_tag>    { typedef typename    tau<0>::identity type; };
-  template<> struct identity<kilogram_tag>{ typedef typename kilogram<0>::identity type; };
-  template<> struct identity<meter_tag>  { typedef typename  meter<0>::identity type; };
-  template<> struct identity<second_tag> { typedef typename second<0>::identity type; };
-  template<> struct identity<ampere_tag> { typedef typename ampere<0>::identity type; };
-  template<> struct identity<kelvin_tag> { typedef typename kelvin<0>::identity type; };
-  template<> struct identity<pseudo_tag> { typedef typename pseudo<0>::identity type; };
+  template<> struct identity<ratio_tag>    { typedef typename    ratio<INTEGERtype(0)>::identity type; };
+  template<> struct identity<tau_tag>      { typedef typename      tau<0>::identity type; };
+  template<> struct identity<kilogram_tag> { typedef typename kilogram<0>::identity type; };
+  template<> struct identity<meter_tag>    { typedef typename    meter<0>::identity type; };
+  template<> struct identity<second_tag>   { typedef typename   second<0>::identity type; };
+  template<> struct identity<ampere_tag>   { typedef typename   ampere<0>::identity type; };
+  template<> struct identity<kelvin_tag>   { typedef typename   kelvin<0>::identity type; };
+  template<> struct identity<pseudo_tag>   { typedef typename   pseudo<0>::identity type; };
 
 } /* end namespace dim */
 
@@ -490,7 +493,7 @@ template<typename Units>
 struct get_sign_components_of_units : units_impl::units_result<
   typename units_prod<
     dim::pseudo<get_dimension_kind<dim::pseudo_tag, typename get_units<Units>::type>::type::pseudoness>,
-    dim::ratio<(get_dimension_kind<dim::ratio_tag, typename get_units<Units>::type>::type::num < 0 ? -1 : 1)>
+    dim::ratio<decltype(ct::sign(get_dimension_kind<dim::ratio_tag, typename get_units<Units>::type>::type::number()))>
   >::type> {
   static_assert(get_units<Units>::is_unitlike,
     "The argument to get_sign_components_of_units<> must be unit-like (units<>, physical_quantity<>, etc).");
@@ -681,6 +684,11 @@ public:
     return os;
   }
 
+  // TODO make these operators be external templates, so that GMP-class-fanciness
+  // and our-bignum-once-I-do-it-for-that-too can be more efficient.
+  // (With 'auto', is the GMP optimization correct?  It can be correct by using
+  // rvalue references...)
+
   // No ++ or -- since they reference the non-dimensional constant 1.
   // No bitwise ops currently; I'm not sure if they're meaningful here.
   // Of the many operators, only * and / have the ability to modify
@@ -763,12 +771,13 @@ public:
 // are very tedious.
 
 
+// TODO name this copysign() like standard function
 // imbue_sign() multiplies the sign of arg 1 into the (signed) value of arg 2.
 template<typename T1, typename T2>
 inline constexpr
 decltype(declval<T2>() * typename get_sign_components_of_units<T1>::type())
 imbue_sign(T1 signum, T2 base_val) {
-  static_assert(get_dimension_kind<dim::ratio_tag, T1>::type::num != 0, "imbuing an ambiguous sign");
+  static_assert(get_dimension_kind<dim::ratio_tag, T1>::type::number() != INTEGER(0), "imbuing an ambiguous sign");
   return
     constexpr_require_and_return(signum != 0, "imbuing an ambiguous sign",
       ((signum < 0) ? -base_val : base_val)
@@ -776,20 +785,26 @@ imbue_sign(T1 signum, T2 base_val) {
 }
 
 // helper
-template<intmax_t N>
+template<typename Ratio>
 struct identity_units {
-  typedef physical_quantity<
-      typename boost::int_max_value_t<(N >= 0 ? N : ~N)>::least,
-      units<dim::ratio<1, N>>
-    > type;
+  // TODO allow numerator == -1?
+  static_assert(numerator(Ratio()) == INTEGER(1),
+    "We only implement identity() when the result's value can contain an integer.");
+  // TODO admit bignums
+  static_assert(denominator(Ratio()) <= ct::from_int<std::numeric_limits<intmax_t>::max()>::value,
+    "identity() doesn't work for bignum-sized values yet");
+  static constexpr intmax_t numeric_value_large_type() { return ct::to_int<intmax_t>(denominator(Ratio())); }
+  typedef typename boost::int_max_value_t<numeric_value_large_type()>::least numeric_type;
+  static constexpr numeric_type numeric_value() { return numeric_type(numeric_value_large_type()); }
+  typedef physical_quantity<numeric_type, units<dim::ratio<Ratio>>> type;
 };
 
 // For converting between magnitudes of the same general dimension of quantity;
 // typical usage: (some quantity in kilograms) * identity(grams / kilograms)
-template<intmax_t N>
-inline constexpr typename identity_units<N>::type
-identity(units<dim::ratio<1, N>> u) {
-  return typename identity_units<N>::type(N, u);
+template<typename T>
+inline constexpr typename identity_units<T>::type
+identity(units<dim::ratio<T>> u) {
+  return typename identity_units<T>::type(identity_units<T>::numeric_value(), u);
 }
 
 // Sqrt'ing a quantity sqrts its units.
@@ -924,10 +939,10 @@ struct uniform_int_distribution :
 // === Basic units ===
 typedef units<> radians_t; // the mathematically natural unit of angle
 typedef units<dim::tau<1>> full_circles_t; // an often-convenient unit of angle
-typedef units<dim::ratio<1, 360>, dim::tau<1>> degrees_t; // a unit of angle
+typedef units<dim::ratio<RATIONALtype(1, 360)>, dim::tau<1>> degrees_t; // a unit of angle
 
 typedef units<dim::kilogram<1>> kilograms_t;
-typedef units<dim::ratio<1, 1000>, dim::kilogram<1>> grams_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000)>, dim::kilogram<1>> grams_t;
 typedef units<dim::meter<1>> meters_t;
 typedef units<dim::second<1>> seconds_t;
 typedef units<dim::ampere<1>> amperes_t;
@@ -963,23 +978,27 @@ typedef units<dim::kilogram<1>, dim::meter<2>, dim::second<(-3)>, dim::ampere<(-
 
 // === SI prefixes ===
 
-typedef units<dim::ratio<10>> deca_t;
-typedef units<dim::ratio<100>> hecto_t;
-typedef units<dim::ratio<1000>> kilo_t;
-typedef units<dim::ratio<1000000>> mega_t;
-typedef units<dim::ratio<1000000000>> giga_t;
-typedef units<dim::ratio<1000000000000>> tera_t;
-typedef units<dim::ratio<1000000000000000>> peta_t;
-typedef units<dim::ratio<1000000000000000000>> exa_t;
+typedef units<dim::ratio<INTEGERtype(10)>> deca_t;
+typedef units<dim::ratio<INTEGERtype(100)>> hecto_t;
+typedef units<dim::ratio<INTEGERtype(1000)>> kilo_t;
+typedef units<dim::ratio<INTEGERtype(1000000)>> mega_t;
+typedef units<dim::ratio<INTEGERtype(1000000000)>> giga_t;
+typedef units<dim::ratio<INTEGERtype(1000000000000)>> tera_t;
+typedef units<dim::ratio<INTEGERtype(1000000000000000)>> peta_t;
+typedef units<dim::ratio<INTEGERtype(1000000000000000000)>> exa_t;
+typedef units<dim::ratio<INTEGERtype(1000000000000000000000)>> zetta_t;
+typedef units<dim::ratio<INTEGERtype(1000000000000000000000000)>> yotta_t;
 
-typedef units<dim::ratio<1, 10>> deci_t;
-typedef units<dim::ratio<1, 100>> centi_t;
-typedef units<dim::ratio<1, 1000>> milli_t;
-typedef units<dim::ratio<1, 1000000>> micro_t;
-typedef units<dim::ratio<1, 1000000000>> nano_t;
-typedef units<dim::ratio<1, 1000000000000>> pico_t;
-typedef units<dim::ratio<1, 1000000000000000>> femto_t;
-typedef units<dim::ratio<1, 1000000000000000000>> atto_t;
+typedef units<dim::ratio<RATIONALtype(1, 10)>> deci_t;
+typedef units<dim::ratio<RATIONALtype(1, 100)>> centi_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000)>> milli_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000)>> micro_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000)>> nano_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000000)>> pico_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000000000)>> femto_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000000000000)>> atto_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000000000000000)>> zepto_t;
+typedef units<dim::ratio<RATIONALtype(1, 1000000000000000000000000)>> yocto_t;
 
 constexpr auto deca = deca_t();
 constexpr auto hecto = hecto_t();
@@ -989,6 +1008,8 @@ constexpr auto giga = giga_t();
 constexpr auto tera = tera_t();
 constexpr auto peta = peta_t();
 constexpr auto exa  = exa_t();
+constexpr auto zetta = zetta_t();
+constexpr auto yotta = yotta_t();
 
 constexpr auto deci = deci_t();
 constexpr auto centi = centi_t();
@@ -998,6 +1019,8 @@ constexpr auto nano  = nano_t();
 constexpr auto pico  = pico_t();
 constexpr auto femto = femto_t();
 constexpr auto atto  = atto_t();
+constexpr auto zepto = zepto_t();
+constexpr auto yocto = yocto_t();
 
 // === Factors of your choice ===
 
