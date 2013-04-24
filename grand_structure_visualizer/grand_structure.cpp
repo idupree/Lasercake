@@ -291,7 +291,7 @@ struct face {
   distance D;
   velocity1d D_velocity;
   acceleration_coefficient D_acc_coeff;
-  std::vector<face_idx_type> neighboring_faces_;
+  std::vector<std::vector<face_idx_type>> neighboring_faces_;
   std::vector<region_idx_type> neighboring_regions_;
   face updated_to_time(time_type t)const {
     assert(t >= base_time_);
@@ -674,6 +674,8 @@ class grand_structure_of_lasercake {
   std::priority_queue<shared_ptr<event>, std::vector<shared_ptr<event>>, event_ptr_compare> next_events_;
 
   bool bounded_edges_cross__hack(time_type t, face const& e11_old, face const& e12_old, size_t neighbor_idx_in_e11, face const& e21_old, face const& e22_old, size_t neighbor_idx_in_e21)const {
+    return true;
+#if 0
     const face e11 = e11_old.updated_to_time(t);
     const face e12 = e12_old.updated_to_time(t);
     const face e21 = e21_old.updated_to_time(t);
@@ -712,9 +714,12 @@ class grand_structure_of_lasercake {
       }
     }
     return true;
+#endif
   }
 
   bool vertex_is_in_bounded_face__hack(time_type t, face const& v1_old, face const& v2_old, face const& v3_old, face const& f_old)const {
+    return true;
+#if 0
     const face v1 = v1_old.updated_to_time(t);
     const face v2 = v2_old.updated_to_time(t);
     const face v3 = v3_old.updated_to_time(t);
@@ -759,6 +764,7 @@ class grand_structure_of_lasercake {
       }
     }
     return (crosses % 2);
+#endif
   }
   
   void insert_events_involving(face_idx_type fi) {
@@ -768,10 +774,11 @@ class grand_structure_of_lasercake {
     // neighbors zero, one, two, or three of the faces establishing the vertex.
     // TODO: try to de-duplicate this "iterate through the present vertices" system which is used elsewhere in the code.
     face const& f = faces_[fi];
-    
-    for (size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
-      const face_idx_type neighbor_id_1 = f.neighboring_faces_[i];
-      const face_idx_type neighbor_id_2 = f.neighboring_faces_[(i+1)%f.neighboring_faces_.size()];
+
+    for (auto faceloop : f.neighboring_faces_) {
+    for (size_t i = 0; i < faceloop.size(); ++i) {
+      const face_idx_type neighbor_id_1 = faceloop[i];
+      const face_idx_type neighbor_id_2 = faceloop[(i+1)%faceloop.size()];
       face const& old_neighbor_1 = faces_[neighbor_id_1];
       face const& old_neighbor_2 = faces_[neighbor_id_2];
       const face present_neighbor_1 = old_neighbor_1.updated_to_time(f.base_time_);
@@ -798,8 +805,9 @@ class grand_structure_of_lasercake {
             }
             
             // Also catch edge-edge collisions...
-            for (size_t j = 0; j < present_other_face.neighboring_faces_.size(); ++j) {
-              const face_idx_type other_neighbor_id = present_other_face.neighboring_faces_[j];
+            for (auto faceloop2 : present_other_face.neighboring_faces_) {
+            for (size_t j = 0; j < faceloop2.size(); ++j) {
+              const face_idx_type other_neighbor_id = faceloop2[j];
               if ((other_neighbor_id != fi) && (other_neighbor_id != neighbor_id_1)) {
                 // only consider each edge once. (without this if, each one would be considered twice...)
                 if (other_neighbor_id > fi2) {
@@ -818,9 +826,11 @@ class grand_structure_of_lasercake {
                 }
               }
             }
+            }
           }
         }
       }
+    }
     }
     for (region_idx_type ri : f.neighboring_regions_) {
       region const& r = regions_[ri];
@@ -828,9 +838,10 @@ class grand_structure_of_lasercake {
         if (fi2 != fi) {
           face const& old_other_face = faces_[fi2];
           const face present_other_face = old_other_face.updated_to_time(f.base_time_);
-          for (size_t i = 0; i < present_other_face.neighboring_faces_.size(); ++i) {
-            const face_idx_type neighbor_id_1 = present_other_face.neighboring_faces_[i];
-            const face_idx_type neighbor_id_2 = present_other_face.neighboring_faces_[(i+1)%present_other_face.neighboring_faces_.size()];
+          for (auto faceloop : present_other_face.neighboring_faces_) {
+          for (size_t i = 0; i < faceloop.size(); ++i) {
+            const face_idx_type neighbor_id_1 = faceloop[i];
+            const face_idx_type neighbor_id_2 = faceloop[(i+1)%faceloop.size()];
             // a vertex doesn't collide with one of its own faces
             if ((neighbor_id_1 != fi) && (neighbor_id_2 != fi)) {
               // only consider each vertex once. (without this if, each one would be considered three times...)
@@ -851,6 +862,7 @@ class grand_structure_of_lasercake {
                 }
               }
             }
+          }
           }
         }
       }
@@ -884,8 +896,9 @@ class grand_structure_of_lasercake {
       r.faces_.push_back(first_face_idx + i);
       air.faces_.push_back(first_face_idx + i);
       //r.vertices_.push_back(first_vertex_idx + i);
+      f.neighboring_faces_.push_back(std::vector<face_idx_type>());
       for (int j = 0; j < 4; ++j) {
-        if (j != i) f.neighboring_faces_.push_back(first_face_idx + j);
+        if (j != i) f.neighboring_faces_.front().push_back(first_face_idx + j);
       }
     }
   }
@@ -908,9 +921,10 @@ class grand_structure_of_lasercake {
       r.faces_.push_back(first_face_idx + i);
       air.faces_.push_back(first_face_idx + i);
       //r.vertices_.push_back(first_vertex_idx + i);
+      f.neighboring_faces_.push_back(std::vector<face_idx_type>());
       for (int j = 0; j < 6; ++j) {
         // Hack - relying on the order of the cardinal directions
-        if ((j % 3) != (i % 3)) f.neighboring_faces_.push_back(first_face_idx + j);
+        if ((j % 3) != (i % 3)) f.neighboring_faces_.front().push_back(first_face_idx + j);
       }
     }
   }
@@ -952,7 +966,12 @@ public:
       for(face_idx_type fi : r.faces_) { assert(fi < faces_.size()); }
     }
     for(face const& f : faces_) {
-      for(vertex_idx_type fi : f.neighboring_faces_) { assert(fi < faces_.size()); }
+      assert(f.neighboring_faces_.size() >= 1);
+      for (auto faceloop : f.neighboring_faces_) {
+        assert(faceloop.size() >= 3);
+        for(face_idx_type fi : faceloop) { assert(fi < faces_.size()); }
+      }
+      assert(f.neighboring_regions_.size() >= 2);
       for(region_idx_type ri : f.neighboring_regions_) { assert(ri < regions_.size()); }
     }
     // region-face data consistency
@@ -1008,7 +1027,7 @@ public:
     for (size_t f2ii = f1ii + 1; f2ii < r.faces_.size(); ++f2ii) {
       const face_idx_type f2i = r.faces_[f2ii];
       bool is_neighboring = false;
-      for (auto q : f1.neighboring_faces_) { if (q == f2i) { is_neighboring = true; break; } }
+      for (auto q : f1.neighboring_faces_) { for (auto r : q) { if (r == f2i) { is_neighboring = true; break; } } }
       if (is_neighboring) { continue; }
       const face f2 = faces_[f2i].updated_to_time(present_time_);
       
@@ -1023,12 +1042,13 @@ public:
 
         
         //for (each triple (fAn1, fAn2, fAn3) of consecutive faces adjacent to fA, constituting a pair of adjacent vertices (v1, v2) of fA) {
-        for (size_t fAn1ii = 0; fAn1ii < fA.neighboring_faces_.size(); ++fAn1ii) {
-          const size_t fAn2ii = (fAn1ii + 1) % fA.neighboring_faces_.size();
-          const size_t fAn3ii = (fAn1ii + 2) % fA.neighboring_faces_.size();
-          const face_idx_type fAn1i = fA.neighboring_faces_[fAn1ii];
-          const face_idx_type fAn2i = fA.neighboring_faces_[fAn2ii];
-          const face_idx_type fAn3i = fA.neighboring_faces_[fAn3ii];
+        for (auto faceloop : fA.neighboring_faces_) {
+        for (size_t fAn1ii = 0; fAn1ii < faceloop.size(); ++fAn1ii) {
+          const size_t fAn2ii = (fAn1ii + 1) % faceloop.size();
+          const size_t fAn3ii = (fAn1ii + 2) % faceloop.size();
+          const face_idx_type fAn1i = faceloop[fAn1ii];
+          const face_idx_type fAn2i = faceloop[fAn2ii];
+          const face_idx_type fAn3i = faceloop[fAn3ii];
           const face fAn1 = faces_[fAn1i].updated_to_time(present_time_);
           const face fAn2 = faces_[fAn2i].updated_to_time(present_time_);
           const face fAn3 = faces_[fAn3i].updated_to_time(present_time_);
@@ -1046,6 +1066,7 @@ public:
           }
           
         //}
+        }
         }
       
       }
@@ -1134,12 +1155,13 @@ public:
   }
   
   void display_face(face const& f, gl_triangles& triangles, gl_data_format::color c, float width) {
-    gl_polygon polygon;
     const face present_face = f.updated_to_time(present_time_);
-    for(size_t i = 0; i < f.neighboring_faces_.size(); ++i) {
-      const size_t j = (i+1)%f.neighboring_faces_.size();
-      const face present_neighbor_1 = faces_[f.neighboring_faces_[i]].updated_to_time(present_time_);
-      const face present_neighbor_2 = faces_[f.neighboring_faces_[j]].updated_to_time(present_time_);
+    for (auto faceloop : f.neighboring_faces_) {
+    gl_polygon polygon;
+    for(size_t i = 0; i < faceloop.size(); ++i) {
+      const size_t j = (i+1)%faceloop.size();
+      const face present_neighbor_1 = faces_[faceloop[i]].updated_to_time(present_time_);
+      const face present_neighbor_2 = faces_[faceloop[j]].updated_to_time(present_time_);
       const vector3<distance> loc = approx_loc_of_triple_intersection_of_up_to_date_faces(present_face, present_neighbor_1, present_neighbor_2);
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
         get_primitive_float(loc.x/distance_units),
@@ -1149,6 +1171,7 @@ public:
       //std::cerr << vertices[i] << '\n';
     }
     push_wireframe_polygon(triangles, width, polygon);
+    }
   }
   
   gl_triangles display(vector3<distance> where, shared_ptr<event> current_event) {
@@ -1270,6 +1293,7 @@ private:
           face& e22 = faces_[eec->edge_2_face_2()];
           size_t n1 = 0;
           size_t n2 = 0;
+#if 0
           for (size_t i = 0; i < e11.neighboring_faces_.size(); ++i) {
             if (e11.neighboring_faces_[i] == eec->edge_1_face_2()) {
               n1 = i;
@@ -1326,6 +1350,7 @@ private:
             }
 #endif
           }
+#endif
         }
       }
     }
@@ -1464,7 +1489,7 @@ large_fast_noncrypto_rng rng(time(NULL));
   
 int frame = 0;
 time_type when = 0;
-bool do_events = true;
+bool do_events = false; //true;
 shared_ptr<event> current_event;
 double view_length = 100e9;
 
