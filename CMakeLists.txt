@@ -1,7 +1,6 @@
 cmake_minimum_required (VERSION 2.6)
 project (Lasercake)
 
-# TODO #define these and emit them on --help/--version.
 # Odd MINOR version means it's a development snapshot; even indicates a release.
 set (Lasercake_VERSION_MAJOR 0)
 set (Lasercake_VERSION_MINOR 23)
@@ -31,11 +30,15 @@ option (USE_BOUNDS_CHECKED_INTS "Check for overflow of most int computations at 
 option (PARANOID "Turn on various code paranoia checks (slow)." OFF)
 option (_GLIBCXX_DEBUG "Defines _GLIBCXX_DEBUG iterator-validity debugging (slow)." OFF)
 option (BUILD_SELF_TESTS "Build Lasercake's self-testing code component (recommended)." ON)
+if (APPLE)
+option (OSX_BUNDLE "(Apple only) build .app bundle rather than just executable file; requires running make install (or cpack) afterwards to make the bundle work" OFF)
+option (OSX_BUNDLE_INSTALL_IN_PLACE "only relevant when OSX_BUNDLE is on; creates the working bundle in the build directory" ON)
+endif()
+set (PROGRAM_NAME "Lasercake" CACHE STRING "User-visible program basename, e.g. Lasercake-0.22.2")
 
-# These are merely shorthand for CMake options that I use for
-# releases on various systems. -Isaac
+# This is merely shorthand for some CMake / compiler options. -Isaac
 option (LTO "Use link-time optimization (roughly halves the size of the binary)" OFF)
-option (OSX_TARGET_10_5 "OS X: make binary run on 10.5 even if building on later OS X [TODO: find out why this does not make binaries that work on 10.5]" OFF)
+
 
 
 include (FindPkgConfig)
@@ -76,15 +79,6 @@ if (USE_BOOST_CXX11_LIBS OR NOT COMPILER_SUPPORTS_CXX11_STDLIB)
 	set (OPTIONS_DEFINES ${OPTIONS_DEFINES} -DUSE_BOOST_CXX11_LIBS=1 -U__GXX_EXPERIMENTAL_CXX0X__ -include "${CMAKE_SOURCE_DIR}/cxx11/cxx11_utils.hpp")
 endif()
 set(CXX11_LIB_WRAPPERS_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/bundled_libs/cxx11/")
-
-if (OSX_TARGET_10_5)
-	find_file(OSX_10_5_SDK MacOSX10.5.sdk /Developer/SDKs/)
-	if("${OSX_10_5_SDK}" STREQUAL "OSX_10_5_SDK-NOTFOUND")
-		message(FATAL_ERROR "You asked to target OS X 10.5 but we couldn't find the MacOSX 10.5 SDK.")
-	endif()
-	set(CMAKE_OSX_DEPLOYMENT_TARGET 10.5)
-	set(CMAKE_OSX_SYSROOT "${OSX_10_5_SDK}")
-endif()
 
 if (_GLIBCXX_DEBUG)
 	set (OPTIONS_DEFINES ${OPTIONS_DEFINES} -D_GLIBCXX_DEBUG)
@@ -251,9 +245,13 @@ set_target_properties(Lasercake PROPERTIES
 	COMPILE_FLAGS "${OUR_CFLAGS_spaces}"
 	LINK_FLAGS "${OUR_LINK_FLAGS_spaces}"
 
+	OUTPUT_NAME "${PROGRAM_NAME}"
+
 	# On Windows, add WinMain() to make this a GUI program:
 	WIN32_EXECUTABLE ON
-
+)
+if(OSX_BUNDLE)
+set_target_properties(Lasercake PROPERTIES
 	# On Mac, GUI programs are put into a directory called a "bundle"
 	# that behaves like a file to users (it contains an executable
 	# and metadata like an icon).
@@ -267,7 +265,7 @@ set_target_properties(Lasercake PROPERTIES
 	MACOSX_BUNDLE_SHORT_VERSION_STRING "${Lasercake_version_desc}"
 	#MACOSX_BUNDLE_LONG_VERSION_STRING "${Lasercake_version_desc}"
 	MACOSX_BUNDLE_GUI_IDENTIFIER "net.lasercake.Lasercake"
-	MACOSX_BUNDLE_BUNDLE_NAME "Lasercake"
+	MACOSX_BUNDLE_BUNDLE_NAME "${PROGRAM_NAME}"
 	MACOSX_BUNDLE_INFO_STRING "Lasercake ${Lasercake_version_desc}, a free/libre/open-source game, www.lasercake.net"
 	MACOSX_BUNDLE_ICON_FILE "icon-multires.icns"
 	# OS X Finder "Get Info" seems to display the info string
@@ -282,20 +280,22 @@ set_target_properties(Lasercake PROPERTIES
 	# build that is Cocoa-based?  Yet that setting doesn't seem to be
 	# causing any harm?
 )
-
-if(APPLE)
 	install (TARGETS Lasercake BUNDLE DESTINATION .)
 	# TODO find out why CMAKE_SOURCE_DIR isn't defined at install-time
 	# but it works okay to compute that $ at build time.  The way we're
 	# doing it smells fishy somehow.
 	install (CODE "
 		include(BundleUtilities)
-		file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/Lasercake.app/Contents/Resources\")
-		file(INSTALL \"${CMAKE_SOURCE_DIR}/resources/icon-multires.icns\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/Lasercake.app/Contents/Resources\")
-		fixup_bundle(\"\${CMAKE_INSTALL_PREFIX}/Lasercake.app\" \"\" \"\")
+		file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/${PROGRAM_NAME}.app/Contents/Resources\")
+		file(INSTALL \"${CMAKE_SOURCE_DIR}/resources/icon-multires.icns\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${PROGRAM_NAME}.app/Contents/Resources\")
+		fixup_bundle(\"\${CMAKE_INSTALL_PREFIX}/${PROGRAM_NAME}.app\" \"\" \"\")
 	")
 	install (FILES resources/ReadMe.rtf DESTINATION .)
+	if(OSX_BUNDLE_INSTALL_IN_PLACE)
+		SET(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH "Prefix prepended to install directories" FORCE)
+	endif()
 endif()
+
 # Note: This only makes sense when doing out-of-tree builds;
 # otherwise it might try to include the build contents and any other
 # temporary files or uncommitted changes.
@@ -316,6 +316,9 @@ endif()
 # This CPack stuff may or may not be functional.
 set (CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
 set (CPACK_PACKAGE_VENDOR "re:calib - Eli Dupree and Isaac Dupree")
+if (APPLE)
+set (CPACK_PACKAGE_FILE_NAME "${PROGRAM_NAME}-OSX")
+endif()
 # TODO: auto-convert these to HTML or RTF or at least a .txt extension
 # so they're opened in the right editors?
 set (CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/README.markdown") #TODO: intro file shown by NSIS Windows installer, I think
@@ -323,7 +326,7 @@ set (CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.markdown") #TODO: a 
 set (CPACK_RESOURCE_FILE_WELCOME "${CMAKE_SOURCE_DIR}/README.markdown") #TODO: what is the difference between all these readme-ish files?
 #set (CPACK_MONOLITHIC_INSTALL 1) #since we just have one thing to package; do we need to say this?
 set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "Lasercake is an open-world game about the environment")
-set (CPACK_PACKAGE_EXECUTABLES Lasercake;Lasercake)
+set (CPACK_PACKAGE_EXECUTABLES "${PROGRAM_NAME};${PROGRAM_NAME}")
 # are these redundant/necessary?
 set (CPACK_PACKAGE_VERSION_MAJOR ${Lasercake_VERSION_MAJOR})
 set (CPACK_PACKAGE_VERSION_MINOR ${Lasercake_VERSION_MINOR})
@@ -331,7 +334,7 @@ set (CPACK_PACKAGE_VERSION_PATCH ${Lasercake_VERSION_PATCH})
 
 # why show a license; it's not required by law or custom with FOSS software
 # set (CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING.txt")
-set (CPACK_PACKAGE_INSTALL_DIRECTORY "Lasercake-${Lasercake_version_desc}")
+set (CPACK_PACKAGE_INSTALL_DIRECTORY "${PROGRAM_NAME}")
 
 #set (CPACK_BUNDLE_NAME "Lasercake")
 
