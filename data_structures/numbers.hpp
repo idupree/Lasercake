@@ -827,7 +827,7 @@ inline result_t isqrt_impl(radicand_t radicand) {
   assert_if_ASSERT_EVERYTHING(twice_t(upper_bound)*upper_bound > radicand);
 #endif
 
-  while(lower_bound < upper_bound - 1)
+  while(lower_bound + 1 < upper_bound)
   {
     const lower_bound_and_mid_t mid((upper_bound + lower_bound) >> 1);
     if(test_multiply_t(mid) * test_multiply_t(mid) > test_multiply_t(radicand)) {
@@ -848,7 +848,7 @@ inline uint32_t isqrt(uint64_t radicand) {
 // range: [0, floor(2^31.5)]
 inline int64_t isqrt(int64_t radicand) {
   caller_error_if(radicand < 0, "sqrt of a negative number");
-  return isqrt_impl<int64_t, uint32_t, uint32_t, uint64_t, int64_t>(radicand);
+  return isqrt_impl<int64_t, uint32_t, uint64_t, uint64_t, int64_t>(radicand);
 }
 // range: [0, 2^16-1]
 inline uint32_t isqrt(uint32_t radicand) {
