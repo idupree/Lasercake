@@ -493,14 +493,37 @@ class time_steward_accessor {
   typedef typename TimeSteward::entity entity;
   typedef typename TimeSteward::extended_time extended_time;
   typedef typename TimeSteward::time_type time_type;
+  typedef typename TimeSteward::action action;
+  typedef typename TimeSteward::consequential_event consequential_event;
+  typedef typename TimeSteward::trigger trigger;
+  typedef typename TimeSteward::trigger_id trigger_id;
+  typedef uint32_t invalidation_counter_t;
     
-  struct entity_and_ways_it_has_been_referenced {
-    entity_and_ways_it_has_been_referenced(std::unique_ptr<entity>&& e, bool accessed, bool modified)
-      : e(std::move(e)), accessed(accessed), modified(modified) {}
+  struct trigger_info {
+    trigger_info(std::shared_ptr<const trigger> t):t(t),in_queue(false){}
+    std::shared_ptr<const trigger> t;
+    bool in_queue;
+  };
+  struct queued_trigger_info {
+    std::shared_ptr<const trigger> t;
+    entity_id<entity> eid;
+    trigger_id tid;
+    invalidation_counter_t invalidation_counter;
+  };
+  struct event_info {
+    event const* e;
+  };
+  struct upcoming_event_info {
+    std::shared_ptr<const event> e;
+    std::unordered_map<entity_id<entity>, invalidation_counter_t> dependencies;
+  };
+  struct transient_entity_info {
+    transient_entity_info(std::unique_ptr<entity>&& e, triggers, bool accessed_preexisting_state, bool modified)
+      : e(std::move(e)), triggers(std::move(triggers)), accessed_preexisting_state(accessed_preexisting_state), modified(modified) {}
     std::unique_ptr<entity> e;
-    ... triggers;
-    ... stale_new_upcoming_events;
-    bool accessed;
+    std::map<trigger_id, trigger_info> triggers;
+    uint32_t invalidation_counter;
+    bool accessed_preexisting_state;
     bool modified;
   };
   public:
@@ -511,22 +534,29 @@ class time_steward_accessor {
     // TODO do we need both get()s?
     template<typename T>
     entity_ref<T const> get(entity_id<T> id)const {
+      if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(id); }
       return dynamic_pointer_cast<T const>(
-        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false), id));
+        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false).e.get(), id));
     };
     template<typename T>
     entity_ref<T const> get(entity_id<T const> id)const {
+      if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(id); }
       return dynamic_pointer_cast<T const>(
-        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false), id));
+        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false).e.get(), id));
     };
     template<typename T>
     entity_ref<T> get_mut(entity_id<T> id) {
       return dynamic_pointer_cast<T>(
-        entity_ref<entity>(require_local_entity(id, true), id));
+        entity_ref<entity>(require_local_entity(id, true).e.get(), id));
     };
-    template<typename T>
-    void create_event(entity_id<T> eid) {
-      fresh_new_upcoming_events.insert();
+    void create_event(std::unique_ptr<consequential_event> e) {
+      fresh_new_upcoming_events.push_back(std::move(e));
+    };
+    void create_trigger(entity_id<entity> eid, trigger_id tid, std::shared_ptr<const trigger> t) {
+      require_local_entity(eid, false).triggers.insert(std::pair<trigger_id, trigger_info>(tid, t));
+    };
+    void delete_trigger(entity_id<entity> eid, trigger_id tid) {
+      require_local_entity(eid, false).triggers.erase(tid, t);
     };
     time_type now()const {
       return time_.base_time;
@@ -543,9 +573,9 @@ class time_steward_accessor {
       ++entities_created_;
       const entity_id<T> id = impl::create_entity_id<T>(siphash_id(time_.id, entities_created_));
       const auto inserted = local_entities_.insert(
-        std::pair<entity_id<entity>, entity_and_ways_it_has_been_referenced>(
+        std::pair<entity_id<entity>, transient_entity_info>(
           id,
-          entity_and_ways_it_has_been_referenced(std::move(e), false, true)));
+          transient_entity_info(std::move(e), nothing, false, true)));
       assert(inserted.second);
       return entity_ref<T>(entity_ptr, id);
     }
@@ -556,11 +586,11 @@ class time_steward_accessor {
       // insert a dummy unique_ptr first so that we don't lose the
       // ownership if insertion hits an object that's already there.
       const auto inserted = local_entities_.insert(
-        std::pair<entity_id<entity>, entity_and_ways_it_has_been_referenced>(
+        std::pair<entity_id<entity>, transient_entity_info>(
           id,
-          entity_and_ways_it_has_been_referenced(std::unique_ptr<entity>(), false, true)));
+          transient_entity_info(std::unique_ptr<entity>(), nothing, false, true)));
       inserted.first->second.e = std::move(e);
-      // (retain old value of accessed if it already existed)
+      // (retain old value of accessed_preexisting_state if it already existed)
       inserted.first->second.modified = true;
       return entity_ref<T>(entity_ptr, reinterpret_entity_id<T>(id));
     }
@@ -576,75 +606,111 @@ class time_steward_accessor {
     TimeSteward const* ts_;
     extended_time time_;
     size_t entities_created_;
-    mutable std::unordered_map<entity_id<entity>, entity_and_ways_it_has_been_referenced> local_entities_;
-    unique_queue<entity_id<event_entity>> events_queue;
-    unique_queue<entity_id<trigger_entity>> triggers_queue;
-    std::unordered_multimap<entity_id<entity>, > fresh_new_upcoming_events;
+    mutable std::unordered_map<entity_id<entity>, transient_entity_info> local_entities_;
+    std::queue<queued_event_info> events_queue;
+    std::queue<upcoming_event_info> triggers_queue;
+    std::vector<std::unique_ptr<consequential_event>> fresh_new_upcoming_events;
+    std::vector<std::pair<time_type, upcoming_event_info>> stale_new_upcoming_events;
+    std::unordered_set<entity_id<entity>> fresh_modifications;
+    std::unordered_set<entity_id<entity>> *event_whenfunc_access_tracker;
 
-    entity* require_local_entity(entity_id<entity> const& id, bool modified)const {
+    transient_entity_info& require_local_entity(entity_id<entity> id, bool modified)const {
       const auto iter = local_entities_.find(id);
       if (iter == local_entities_.end()) {
-        // accessed should be true iff we do ts_->get_provisional_entity_data_before for an entity.
+        // accessed_preexisting_state should be true iff we do ts_->get_provisional_entity_data_before for an entity.
         std::unique_ptr<entity> e(ts_->get_provisional_entity_data_before(id, time_)->clone());
-        entity* e_ptr = &*e;
+        std::map<trigger_id, std::shared_ptr<trigger>> triggers = ts_->get_provisional_triggers_active_before(id, time_);
         const auto inserted = local_entities_.insert(
-          std::pair<entity_id<entity>, entity_and_ways_it_has_been_referenced>(
+          std::pair<entity_id<entity>, transient_entity_info>(
             id,
-            entity_and_ways_it_has_been_referenced(std::move(e), true, modified)));
+            transient_entity_info(std::move(e), triggers, true, modified)));
         assert(inserted.second);
         iter = inserted.first;
       }
       
       if (modified) {
         iter->second.modified = true;
-        stale_new_upcoming_events.erase(id);
-        for ( : iter->second.triggers) {
-          triggers_queue.push();
-        }
+        fresh_modifications.insert(id);
       }
       
-      return &*iter->second.e;
+      return iter->second;
+    }
+    
+    bool upcoming_event_info_still_valid(upcoming_event_info const& i)const {
+      for (std::pair<entity_id<entity>, invalidation_counter_t> p : i.dependencies) {
+        transient_entity_info const& info = require_local_entity(p.first, false);
+        if (info.invalidation_counter != p.second) { return false; }
+      }
+      return true;
     }
     
     time_steward_accessor(TimeSteward const* ts, extended_time const& time):ts_(ts),time_(time),entities_created_(0){}
-    void process_thing(thing const* a) {
+    void process_action(action const* a) {
+      
       (*a)(this);
-      for (auto new_upcoming_event : fresh_new_upcoming_events) {
-        const time_type t = new_upcoming_event.func->when(this, new_upcoming_event.eid);
-        if (t == time_.base_time) {
-          events_queue.push(new_upcoming_event.func);
-        }
-        else {
-          stale_new_upcoming_events.insert(new_upcoming_event);
+      
+      for (entity_id<entity> id : fresh_modifications) {
+        transient_entity_info& info = require_local_entity(id, false);
+        ++info.invalidation_counter;
+        for (std::pair<trigger_id, trigger_info> const& i : info.triggers) {
+          if (!i.in_queue) {
+            triggers_queue.emplace(i.second.t, id, i.first, info.invalidation_counter);
+            i.in_queue = true;
+          }
         }
       }
-      if (!triggers_queue.empty()) { process_thing(triggers_queue.pop()); return; }
-      if (!events_queue.empty()) { process_thing(events_queue.pop()); return; }
+      for (auto new_upcoming_event : fresh_new_upcoming_events) {
+        std::unordered_set<entity_id<entity>> tracker;
+        event_whenfunc_access_tracker = &tracker;
+        const time_type t = new_upcoming_event.func->when(this, new_upcoming_event.eid);
+        event_whenfunc_access_tracker = nullptr;
+        upcoming_event_info inf(new_upcoming_event.func);
+        for (entity_id<entity> id : tracker) {
+          inf.dependencies.insert(std::make_pair(id, require_local_entity(id, false).invalidation_counter));
+        }
+        
+        if (t == time_.base_time) {
+          events_queue.push(std::move(inf));
+        }
+        else {
+          stale_new_upcoming_events.push_back(std::pair<time_type, upcoming_event_info>(t, std::move(inf)));
+        }
+      }
+      fresh_modifications.clear();
+      fresh_new_upcoming_events.clear();
+      
+      while (!triggers_queue.empty()) {
+        const queued_trigger_info t = triggers_queue.front();
+        triggers_queue.pop();
+        transient_entity_info& info = require_local_entity(t.eid, false);
+        if (info.triggers.find(t.tid)->second == t.t) {
+          process_action(t.t.get());
+          return;
+        }
+      }
+      while (!events_queue.empty()) {
+        const upcoming_event_info e = events_queue.front();
+        events_queue.pop();
+        if (upcoming_event_info_still_valid(e)) {
+          process_action(e.e);
+          return;
+        }
+      }
     }
     friend TimeSteward;
-};
-
-template<class TimeSteward>
-class standard_event_base {
-public:
-  virtual void operator()(typename TimeSteward::accessor* accessor)const = 0;
-  virtual typename TimeSteward::time_type when()const = 0;
-  
-  virtual ~standard_event_base(){}
 };
 
 namespace impl {
 template<typename TimeTypeInfo>
 struct extended_time {
   typedef typename TimeTypeInfo::time_type time_type;
-  typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
 
     time_type base_time;
     time_id id;
     struct first_t{}; struct last_t{}; static const first_t first; static const last_t last;
     extended_time(time_type base_time, first_t):base_time(base_time),id(siphash_id::least()){}
     extended_time(time_type base_time,  last_t):base_time(base_time),id(siphash_id::greatest()){}
-    extended_time(time_type base_time, siphash_id distinguisher):base_time(base_time),id(combine_hash_with_time_type_func_type()(distinguisher, base_time)){}
+    extended_time(time_type base_time, siphash_id id):base_time(base_time),id(id){}
     
     bool operator==(extended_time const& o)const { return id == o.id; }
     bool operator!=(extended_time const& o)const { return id != o.id; }
@@ -667,40 +733,51 @@ struct extended_time {
 
 template<class TimeTypeInfo = time_type_info<>, class EntityData = standard_entity_base/*, class Event = */>
 class time_steward {
-  // TODO bring back Event as a template param
-  typedef standard_event_base<time_steward> Event;
 public:
-  typedef EntityData entity;
-  typedef Event event;
-  class event_entity : virtual public entity, virtual public event {};
-  class trigger_entity : virtual public entity {
-  public:
-    virtual void operator()(typename TimeSteward::accessor* accessor)const = 0;
-  private:
-    entity_set accessed_entities;
-  };
   typedef time_steward_accessor<time_steward> accessor;
   typedef typename TimeTypeInfo::time_type time_type;
   static const time_type min_time = TimeTypeInfo::min_time;
   static const time_type never = TimeTypeInfo::never;
+  typedef EntityData entity;
+  // TODO can the action/event/trigger stuff be template parameters rather than always being virtual classes to be subclassed?
+  class action {
+  public:
+    virtual void operator()(accessor* accessor)const = 0;
+    virtual ~action(){}
+  };
+  typedef action event;
+  typedef action trigger;
+  class consequential_event : virtual public event {
+  public:
+    virtual void operator()(accessor* accessor)const = 0;
+    virtual time_type when(accessor const* accessor)const = 0;
+  };
 private:
+  typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
   typedef impl::extended_time<TimeTypeInfo> extended_time;
   typedef std::set<extended_time> time_set;
   struct entity_change {
     std::unique_ptr<entity> e;
-    time_set anticipated_events;
+    time_set anticipated_instigating_events;
   };
   typedef std::map<extended_time, entity_change> entity_changes_map;
   typedef typename extended_time::hash extended_time_hash;
   typedef std::unordered_set<entity_id<entity>> entity_set;
   struct event_pile_info {
-    event_with_dependencies(std::unique_ptr<event>&& instigating_event):instigating_event(instigating_event),num_instigating_event_creation_dependencies_cut_off(0){}
+    event_with_dependencies(std::unique_ptr<event>&& instigating_event) :
+      instigating_event (instigating_event),
+      num_instigating_event_creation_dependencies_cut_off (0),
+      has_been_executed (false)
+      {}
     extended_time instigating_event_creation_time;
     entity_set instigating_event_creation_dependencies;
     uint32_t num_instigating_event_creation_dependencies_cut_off;
     std::unique_ptr<event> instigating_event;
     entity_set entities_pile_accessed;
     entity_set entities_pile_modified;
+    time_set instigating_events_pile_created;
+    bool has_been_executed;
+    bool should_be_executed()const { return instigating_event && (num_instigating_event_creation_dependencies_cut_off == 0); }
   };
   struct entity_throughout_time_info {
     entity_changes_map changes;
@@ -709,7 +786,7 @@ private:
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
-  typedef std::unordered_map<extended_time, event_pile_info, extended_time_hash> events_map;
+  typedef std::unordered_map<extended_time, event_pile_info, extended_time_hash> event_piles_map;
   typedef std::unordered_map<entity_id<entity>, entity_throughout_time_info> entities_map;
 
   friend class time_steward_accessor<time_steward>;
@@ -719,19 +796,18 @@ public:
     entities[global_object_id<entity>()].changes.insert(std::make_pair(extended_time(TimeTypeInfo::min_time, extended_time::first), std::move(initial_state_of_global_object)));
   }
   
-  void insert_fiat_event(uint64_t distinguisher, std::unique_ptr<event> e) {
+  void insert_fiat_event(time_type time, distinguisher, std::unique_ptr<event> e) {
     // This function is one of exactly two places where
     // (persistent) extended_times are created.
     // Uniqueness justification:
-    // The other place always uses entity IDs as the distinguisher.
-    // Entity IDs are the hash of a time ID and a small integer.
-    // This is merely the hash of a small integer.
-    const extended_time t(e->when(), siphash_id(distinguisher));
-    const auto inserted = fiat_events.insert(
-      std::pair<extended_time, std::unique_ptr<event>>(t, std::move(e)));
-    assert(inserted.second); // TODO throw instead because this can fail if
-      // the user inserts two events at the same time with the same distinguisher
-    insert_event(t, &*inserted.first->second);
+    // TODO
+    const extended_time t(time, combine_hash_with_time_type_func_type()(siphash_id(distinguisher), base_time));
+    // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
+    insert_instigating_event(t, std::move(e));
+  }
+  void erase_fiat_event(time_type time, uint64_t distinguisher) {
+    const extended_time t(time, siphash_id(distinguisher));
+    erase_instigating_event(t);
   }
   
   // For external client code to examine the state - 
@@ -761,25 +837,21 @@ public:
     update_through_time(extended_time(time, extended_time::last));
   }
 private:
-  
-  
-  
   entities_map entities;
-  events_map events;
-  fiat_events_map fiat_events;
-  time_set events_not_correctly_executed;
+  event_piles_map event_piles;
+  time_set event_piles_not_correctly_executed;
   
   void update_through_time(extended_time const& time) {
-    while (!is_updated_through(time)) execute_event(*events_not_correctly_executed.begin());
+    while (!is_updated_through(time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
   }
   void update_until_time  (extended_time const& time) {
-    while (!is_updated_until  (time)) execute_event(*events_not_correctly_executed.begin());
+    while (!is_updated_until  (time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
   }
   bool is_updated_until  (extended_time const& time)const {
-    return events_not_correctly_executed.empty() || *events_not_correctly_executed.begin() >= time;
+    return event_piles_not_correctly_executed.empty() || *event_piles_not_correctly_executed.begin() >= time;
   }
   bool is_updated_through(extended_time const& time)const {
-    return events_not_correctly_executed.empty() || *events_not_correctly_executed.begin() >  time;
+    return event_piles_not_correctly_executed.empty() || *event_piles_not_correctly_executed.begin() >  time;
   }
   entity const* get_actual_entity_data_before(entity_id<entity> const& id, extended_time const& time) {
     update_until_time(time);
@@ -798,57 +870,56 @@ private:
     }
     return &*boost::prior(next_change_iter)->second;
   }
-  extended_time anticipated_change_time(entity_id<entity> const& id, event const* e)const {
-    // This function is one of exactly two places where
-    // (persistent) extended_times are created.
-    // See the uniqueness justification above.
-    // And as long as all entity IDs are unique and we only create
-    // one event per entity, this should be in the clear.
-    return extended_time(e->when(), impl::get_untyped_id(id));
-  }
   
-  void insert_event(extended_time const& time, std::unique_ptr<event> e) {
-    const auto p1 = events.insert(std::make_pair(time, event_pile_info(std::move(e))));
+  void insert_instigating_event(extended_time const& time, std::shared_ptr<event> e) {
+    const auto p1 = event_piles.insert(std::make_pair(time, event_pile_info(std::move(e))));
     assert(p1.second);
-    const auto p2 = events_not_correctly_executed.insert(time);
+    const auto p2 = event_piles_not_correctly_executed.insert(time);
     assert(p2.second);
   }
-  void erase_event(extended_time const& time) {
-    const auto event_iter = events.find(time);
-    if (event_iter != events.end()) {
-      unexecute_event(time);
-      events_not_correctly_executed.erase(time);
-      event_pile_info& pile_info = event_iter->second;
+  void erase_instigating_event(extended_time const& time) {
+    const auto event_pile_iter = event_piles.find(time);
+    if (event_pile_iter != event_piles.end()) {
+      event_piles_not_correctly_executed.erase(time);
+      event_pile_info& pile_info = event_pile_iter->second;
+      pile_info.instigating_event = nullptr;
       for (entity_id id : pile_info.instigating_event_creation_dependencies) {
         const auto entity_stream_iter = entities.find(id);
         assert (entity_stream_iter != entities.end());
         entity_throughout_time_info& e = entity_stream_iter->second;
-        boost::prior(e.changes.upper_bound(pile_info.instigating_event_creation_time))->anticipated_events.erase(time);
+        boost::prior(e.changes.upper_bound(pile_info.instigating_event_creation_time))->anticipated_instigating_events.erase(time);
       }
-      events.erase(event_iter);
+      if (pile_info.has_been_executed) {
+        event_piles_not_correctly_executed.insert(time);
+      }
+      else {
+        event_piles_not_correctly_executed.erase(time);
+        event_piles.erase(event_iter);
+      }
     }
   }
   // One of the essential, nonintuitive strengths of this system is that
-  // execute_event() is a safe operation.
+  // execute_event_pile() is a safe operation.
   // If you execute a change that won't actually happen, it will just end
   // up getting invalidated later.
-  void execute_event(extended_time const& time) {
-    const auto event_iter = events.find(time);
-    assert(event_iter != events.end());
-    event_pile_info& pile_info = event_iter->second;
+  void execute_event_pile(extended_time const& time) {
+    const auto event_pile_iter = event_piles.find(time);
+    assert(event_pile_iter != event_piles.end());
+    event_pile_info& pile_info = event_pile_iter->second;
     
     // If the event already has been carried out in a different way,
     // we need to undo that before proceeding.
-    unexecute_event(time);
+    const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(time);
+    if (event_pile_deleted_for_being_out_of_date) return;
     
-    if (pile_info.num_instigating_event_creation_dependencies_cut_off == 0) {
+    if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
       accessor a(this, time);
       a.process_thing(pile_info.instigating_event.get());
       for (std::pair<const entity_id<entity>, typename accessor::entity_and_ways_it_has_been_referenced>& i : a.local_entities_) {
         entity_throughout_time_info& e = entities[i.first]; // Default-construct if it's not there
-        entity_changes_map::iterator current_change;
-        if (i.second.accessed) {
+        //entity_changes_map::iterator current_change;
+        if (i.second.accessed_preexisting_state) {
           event.accessed_entities.insert(i.first);
           const auto p = entities[i.first].event_piles_which_accessed_this.insert(time);
           assert(p.second);
@@ -857,31 +928,44 @@ private:
           event.modified_entities.insert(i.first);
           const auto p = e.changes.insert(std::make_pair(time, std::move(i.second.e)));
           assert(p.second);
-          current_change = p.first;
+          //current_change = p.first;
           if (p.first != e.changes.begin()) {
             const auto cut_off = boost::prior(p.first);
-            for (auto ev = cut_off->second.anticipated_events.upper_bound(time); ev != cut_off->second.anticipated_events.end(); ++ev) {
-              event_pile_info& pile_info2 = events.find(*ev);
+            for (auto ev = cut_off->second.anticipated_instigating_events.upper_bound(time); ev != cut_off->second.anticipated_instigating_events.end(); ++ev) {
+              event_pile_info& pile_info2 = *event_piles.find(*ev);
               if (pile_info2.num_instigating_event_creation_dependencies_cut_off == 0) {
-                // if it's an upcoming event that hasn't been executed yet,
-                // we could actually do *erase* instead of insert...
-                events_not_correctly_executed.insert(*ev);
+                if (pile_info2.has_been_executed) { event_piles_not_correctly_executed.insert(*ev); }
+                else                              { event_piles_not_correctly_executed.erase (*ev); }
               }
               ++pile_info2.num_instigating_event_creation_dependencies_cut_off;
             }
           }
         }
-        else {
-          current_change = boost::prior(e.changes.upper_bound(time));
-        }
-        for ( : i.second.stale_new_upcoming_events) {
-          insert_event(change_time, ev);
+        //else {
+        //  current_change = boost::prior(e.changes.upper_bound(time));
+        //}
+      }
+      uint64_t distinguisher = 0;
+      for (accessor::upcoming_event_info ev : a.stale_new_upcoming_events) {
+        if (a.upcoming_event_info_still_valid(ev)) {
+          // This function is one of exactly two places where
+          // (persistent) extended_times are created.
+          // Uniqueness justification:
+          // TODO
+          const extended_time t(ev.when, siphash_id(time.id, distinguisher));
+          insert_instigating_event(t, ev.e);
+          for (std::pair<entity_id<entity>, invalidation_counter_t> p : ev.dependencies) {
+            const auto i = entities.find(p.first); assert(i != entities.end());
+            const auto j = i->changes.upper_bound(time); assert(j != i->changes.begin());
+            boost::prior(j)->anticipated_instigating_events.insert(t);
+          }
         }
       }
       // a is destroyed here
     }
     
-    events_not_correctly_executed.erase(time);
+    pile_info.has_been_executed = true;
+    event_piles_not_correctly_executed.erase(time);
   }
   
   // In essence, this just forgets the consequences of how a
@@ -890,10 +974,15 @@ private:
   // So it too is a "safe" operation (no amount of calling it
   // with bogus values will change us from valid to invalid),
   // because if you undo anything, it's slated to be redone.
-  void unexecute_event(extended_time const& time) {
-    auto event_iter = events.find(time);
-    assert (event_iter != events.end());
-    event_pile_info& pile_info = event_iter->second;
+  bool unexecute_event_pile(extended_time const& time) {
+    const auto event_pile_iter = event_piles.find(time);
+    assert (event_pile_iter != event_piles.end());
+    event_pile_info& pile_info = event_pile_iter->second;
+    if (!pile_info.has_been_executed) return;
+    
+    for (extended_time t : pile_info.instigating_events_pile_created) {
+      erase_instigating_event(t);
+    }
     for (entity_id<entity> const& id : pile_info.entities_pile_accessed) {
       const auto i = entities.find(id); assert(i != entities.end());
       i->second.event_piles_which_accessed_this.erase(time);
@@ -903,22 +992,22 @@ private:
       const auto entity_stream_iter = entities.find(id);
       assert (entity_stream_iter != entities.end());
       entity_throughout_time_info& e = entity_stream_iter->second;
-      invalidate_events_that_accessed_entity_when_it_was_defined_by_the_change_at(e, time);
+      invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(e, time);
       
       const auto entity_change_iter = e.changes.find(time);
       assert (entity_change_iter != e.changes.end());
       
-      const time_set removed_events = std::move(entity_change_iter->anticipated_events); entity_change_iter->anticipated_events = time_set();
-      for (extended_time t : removed_events) {
-        erase_event(t);
+      const time_set removed_instigating_events = std::move(entity_change_iter->anticipated_instigating_events); entity_change_iter->anticipated_instigating_events = time_set();
+      for (extended_time t : removed_instigating_events) {
+        erase_instigating_event(t);
       }
       if (entity_change_iter != e.changes.begin()) {
         const auto cut_off = boost::prior(entity_change_iter);
-        for (auto ev = cut_off->second.anticipated_events.upper_bound(time); ev != cut_off->second.anticipated_events.end(); ++ev) {
-          event_pile_info& pile_info2 = events.find(*ev);
+        for (auto ev = cut_off->second.anticipated_instigating_events.upper_bound(time); ev != cut_off->second.anticipated_instigating_events.end(); ++ev) {
+          event_pile_info& pile_info2 = event_piles.find(*ev);
           --pile_info2.num_instigating_event_creation_dependencies_cut_off;
-          if (pile_info2.num_instigating_event_creation_dependencies_cut_off == 0) {
-            events_not_correctly_executed.insert(*ev);
+          if (pile_info2.should_be_executed()) {
+            event_piles_not_correctly_executed.insert(*ev);
           }
         }
       }
@@ -929,32 +1018,33 @@ private:
         entities.erase(entity_stream_iter);
       }
     }
-    event.accessed_entities.clear();
-    event.modified_entities.clear();
+    pile_info.entities_pile_accessed.clear();
+    pile_info.entities_pile_modified.clear();
+    pile_info.instigating_events_pile_created.clear();
     
-    if (pile_info.num_instigating_event_creation_dependencies_cut_off == 0) {
-      events_not_correctly_executed.insert(time);
+    pile_info.has_been_executed = false;
+    if (pile_info.should_be_executed()) {
+      event_piles_not_correctly_executed.insert(time);
     }
+    if (!pile_info.instigating_event) {
+      event_piles.erase(event_iter);
+      return true;
+    }
+    return false;
   }
   
-  void invalidate_events_that_accessed_entity_when_it_was_defined_by_the_change_at(entity_throughout_time_info& e, extended_time const& change_time) {
+  void invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(entity_throughout_time_info& e, extended_time const& change_time) {
     const auto next_change = e.changes.upper_bound(change_time);
-    // upper_bound(), because references at the same extended_time as a event
-    // are that event's own references, and refer to the previous state of the entity.
-    const auto invalidated_events_begin = e.events_referring_to_this.upper_bound(change_time);
-    const auto invalidated_events_end = (next_change == e.changes.end()) ? e.events_referring_to_this.end() : e.events_referring_to_this.upper_bound(next_change->first);
+    // upper_bound(), because references at the same extended_time as a event_pile
+    // are that event_pile's own references, and refer to the previous state of the entity.
+    const auto invalidated_event_piles_begin = e.event_piles_which_accessed_this.upper_bound(change_time);
+    const auto invalidated_event_piles_end = (next_change == e.changes.end()) ? e.event_piles_which_accessed_this.end() : e.event_piles_which_accessed_this.upper_bound(next_change->first);
     // TODO: better to do this with something like std::move?
-    for (auto i = invalidated_events_begin; i != invalidated_events_end; ) {
+    for (auto i = invalidated_event_piles_begin; i != invalidated_event_piles_end; ) {
       assert(*i != change_time);
-      events_not_correctly_executed.insert(*i);
-      e.events_referring_to_this.erase(i++);
+      event_piles_not_correctly_executed.insert(*i);
+      e.event_piles_which_accessed_this.erase(i++);
     }
-  }
-  bool time_is_within_the_duration_when_entity_is_defined_by_the_change_at(extended_time const& time, entity_throughout_time_info& e, extended_time const& change_time) {
-    if (time <= change_time) return false;
-    const auto next_change = e.changes.upper_bound(change_time);
-    if (next_change == e.changes.end()) return true;
-    else return time <= next_change->first; 
   }
 };
 
