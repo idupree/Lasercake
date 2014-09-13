@@ -323,9 +323,6 @@ public:
   typedef TimeSteward time_steward;
   typedef typename time_steward::time_type time_type;
   typedef typename time_steward::accessor accessor;
-  typedef typename time_steward::event event_type;
-  typedef typename time_steward::entity entity;
-  typedef typename time_steward::event_entity event_entity;
   static const num_bits_type coordinate_bits = CoordinateBits;
   typedef typename boost::uint_t<coordinate_bits>::fast coordinate_type;
   static const num_coordinates_type num_dimensions = NumDimensions;
@@ -347,12 +344,10 @@ public:
   //                       entity_ref<const SpatialEntitySubclass> ent1,
   //                       entity_ref<const SpatialEntitySubclass> ent2) = 0;
 private:
-  entity_id<event_entity> next_event;
-  optional<bounding_box> old_bbox;
   template<typename SpatialEntitySubclass> friend class bbox_collision_detector;
 };
 
-template<typename SpatialEntitySubclass>
+template<typename SpatialEntitySubclass, class FuncsType>
 class bbox_collision_detector : public SpatialEntitySubclass::time_steward::entity {
 public:
   bbox_collision_detector* clone()const override { return new bbox_collision_detector(*this); }
@@ -375,9 +370,6 @@ public:
   typedef typename accessories::bounding_box bounding_box;
 private:
   typedef typename time_steward::accessor accessor;
-  typedef typename time_steward::event event_type;
-  typedef typename time_steward::entity entity;
-  typedef typename time_steward::event_entity event_entity;
   typedef typename accessories::zbox zbox;
   
 public:
@@ -483,71 +475,73 @@ public:
   typedef std::shared_ptr<ztree_node> ztree_node_mutable_ptr;
   
 private:
-  class spatial_entity_escapes_its_zboxes : public event_entity {
+  class spatial_entity_escapes_its_zboxes : public time_steward::consequential_event {
   public:
-    spatial_entity_escapes_its_zboxes(entity_id<bbox_collision_detector> bbcd_id, entity_id<SpatialEntitySubclass> spatial_entity_id, time_type when) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id),when_(when) {}
-    spatial_entity_escapes_its_zboxes* clone()const override { return new spatial_entity_escapes_its_zboxes(*this); }
+    spatial_entity_escapes_its_zboxes(entity_id<bbox_collision_detector> bbcd_id, entity_id<SpatialEntitySubclass> spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
 
     void operator()(accessor* accessor)const override {
-      auto cd = accessor->get_mut(bbcd_id);
-      auto ref = accessor->get_mut(spatial_entity_id);
-      erase(accessor, cd, ref);
-      insert(accessor, cd, ref);
+      auto bbcd = accessor->get_mut(bbcd_id);
+      auto ref = accessor->get(spatial_entity_id);
+      erase_impl(accessor, bbcd, ref);
+      insert_impl(accessor, bbcd, ref);
     }
-    time_type when()const override {
-      return when_;
+    time_type when(accessor const* accessor)const override {
+      auto bbcd = accessor->get(bbcd_id);
+      auto e = accessor->get(spatial_entity_id);
+      return bbcd->funcs_.escape_time(accessor, e, *bbcd->zboxes_unions_by_id_.find(e.id()));
     }
     entity_id<bbox_collision_detector> bbcd_id;
     entity_id<SpatialEntitySubclass> spatial_entity_id;
-    time_type when_;
   };
-  class spatial_entity_interaction : public event_entity {
+  class spatial_entity_changes_trigger : public time_steward::trigger {
   public:
-    spatial_entity_interaction(entity_id<bbox_collision_detector> bbcd_id, entity_id<SpatialEntitySubclass> id0, entity_id<SpatialEntitySubclass> id1, std::shared_ptr<event_type>&& event) : bbcd_id(bbcd_id),id0(id0),id1(id1),event(event) {}
-    spatial_entity_interaction* clone()const override { return new spatial_entity_interaction(*this); }
+    spatial_entity_changes_trigger(entity_id<bbox_collision_detector> bbcd_id) : bbcd_id(bbcd_id) {}
 
-    void operator()(accessor* accessor)const override {
-      auto cd = accessor->get_mut(bbcd_id);
-      auto ref0 = accessor->get_mut(id0);
-      auto ref1 = accessor->get_mut(id1);
-      erase(accessor, cd, ref0);
-      erase(accessor, cd, ref1);
-      (*event)(accessor);
-      insert(accessor, cd, ref0);
-      insert(accessor, cd, ref1);
-    }
-    time_type when()const override {
-      return event->when();
+    void operator()(accessor* accessor, entity_ref<const time_steward::entity> e)const override {
+      auto bbcd = accessor->get_mut(bbcd_id);
+      erase_impl(accessor, bbcd, time_steward_system::reinterpret_entity_id<const SpatialEntitySubclass>(e.id()));
+      
+      auto ref = dynamic_pointer_cast<const SpatialEntitySubclass>(e);
+      if (ref) {
+        insert_impl(accessor, bbcd, ref);
+      }
+      else {
+        accessor->delete_trigger(e.id(), trigger_id);
+      }
     }
     entity_id<bbox_collision_detector> bbcd_id;
-    entity_id<SpatialEntitySubclass> id0, id1;
-    std::shared_ptr<event_type> event;
   };
   
 public:
-  bbox_collision_detector():objects_tree_(nullptr){}
+  bbox_collision_detector(FuncsType funcs)
+    :
+    objects_tree_(nullptr),
+    funcs_(funcs)
+    {}
   
-  static void insert(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_ref<SpatialEntitySubclass> e) {
-    if (e) {
-      // TODO how to handle double inserts
-      e->old_bbox = SpatialEntitySubclass::bbox(accessor, e);
-      bbcd->objects_tree_ = insert_object(accessor, bbcd->objects_tree_, e, *(e->old_bbox), bbcd.id());
-    }
+  static void insert(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
+    accessor->create_trigger(eid, trigger_id, spatial_entity_changes_trigger(bbcd.id()));
   }
-  static void erase(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_ref<SpatialEntitySubclass> e) {
-    if (e->next_event) {
-      accessor->delete_entity(e->next_event);
-      e->next_event = entity_id<event_entity>();
-    }
-    bbcd->objects_tree_ = delete_object(bbcd->objects_tree_, e.id(), *(e->old_bbox));
-    e->old_bbox = none;
+  static void erase(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
+    accessor->delete_trigger(eid, trigger_id, spatial_entity_changes_trigger(bbcd.id()));
+    erase_impl(accessor, bbcd, eid);
   }
   
 private:
-  bbox_collision_detector(ztree_node_ptr objects_tree):objects_tree_(objects_tree){}
   ztree_node_ptr objects_tree_;
+  persistent_map<entity_id<SpatialEntitySubclass>, bounding_box> zboxes_unions_by_id_;
+  FuncsType funcs_;
   
-  static ztree_node_ptr insert_object(accessor* accessor, ztree_node_ptr tree, entity_ref<SpatialEntitySubclass> e, bounding_box const& bbox, entity_id<bbox_collision_detector> bbcd_id) {
+  static void erase_impl(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
+    auto zboxes_union_iter = bbcd->zboxes_unions_by_id_.find(eid);
+    if (zboxes_union_iter != bbcd->zboxes_unions_by_id_.end()) {
+      bbcd->objects_tree_ = delete_object(bbcd->objects_tree_, eid, *zboxes_union_iter);
+      bbcd->zboxes_unions_by_id_.erase(zboxes_union_iter);
+    }
+  }
+  
+  static void insert_impl(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_ref<const SpatialEntitySubclass> e, bounding_box const& bbox) {
+    const bounding_box bbox = bbcd->funcs.bbox(accessor, e);
     const coordinate_type max_width_minus_one = accessories::max_in_array_of_unsigned(bbox.size_minus_one());
     // max_width - 1: power-of-two-sized objects easily squeeze into the next smaller category.
     // i.e., exp = log2_rounding_up(max_width)
@@ -629,12 +623,9 @@ private:
       zboxes_union_size_minus_one[i] = ((i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size) ? (base_box_size<<1) : base_box_size)-1;
     }
     const bounding_box zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
-    std::unique_ptr<event_entity> event;
-    const time_type escape_time = SpatialEntitySubclass::escape_time(accessor, e, zboxes_union);
-    if (escape_time != time_steward::never) {
-      assert(escape_time > accessor->now()); // TODO an exception
-      event = make_unique<spatial_entity_escapes_its_zboxes>(bbcd_id, e.id(), escape_time);
-    }
+    bbcd->zboxes_unions_by_id_.insert(std::make_pair(e.id(), zboxes_union));
+    accessor->create_event(make_unique<spatial_entity_escapes_its_zboxes>(bbcd.id(), e.id()));
+    
     for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
       coordinate_array coords = bbox.min();
       for (num_coordinates_type j = num_dims_using_one_zbox_of_twice_base_box_size; j < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++j) {
@@ -648,15 +639,11 @@ private:
       }
       const zbox zb = zbox::box_from_coords(coords, exp * num_dimensions + num_dims_using_one_zbox_of_twice_base_box_size);
       if (zb.overlaps(bbox)) {
-        tree = insert_zbox(accessor, event, tree, e, zb, bbcd_id);
+        bbcd->objects_tree_ = insert_zbox(accessor, tree, e, zb, bbcd);
       }
     }
-    if (event) {
-      e->next_event = accessor->create_entity(std::move(event)).id();
-    }
-    return tree;
   }
-  static ztree_node_ptr insert_zbox(accessor* accessor, std::unique_ptr<event_entity>& event, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, zbox box, entity_id<bbox_collision_detector> bbcd_id) {
+  static ztree_node_ptr insert_zbox(accessor* accessor, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, zbox box, entity_ref<bbox_collision_detector> bbcd) {
     if (!tree) {
       ztree_node_mutable_ptr new_tree(new ztree_node(box));
       new_tree->objects_here.insert(e.id());
@@ -666,13 +653,13 @@ private:
       if (tree->here.subsumes(box)) {
         ztree_node_mutable_ptr new_tree(new ztree_node(*tree));
         if (box.num_low_bits() == tree->here.num_low_bits()) {
-          gather_events(accessor, event, tree, e, bbcd_id, true);
+          gather_events(accessor, tree, e, bbcd, true);
           new_tree->objects_here.insert(e.id());
         }
         else {
-          gather_events(accessor, event, tree, e, bbcd_id, false);
-          if (box.get_bit(tree->here.num_low_bits() - 1)) new_tree->child1 = insert_zbox(accessor, event, new_tree->child1, e, box, bbcd_id);
-          else                                            new_tree->child0 = insert_zbox(accessor, event, new_tree->child0, e, box, bbcd_id);
+          gather_events(accessor, tree, e, bbcd, false);
+          if (box.get_bit(tree->here.num_low_bits() - 1)) new_tree->child1 = insert_zbox(accessor, new_tree->child1, e, box, bbcd);
+          else                                            new_tree->child0 = insert_zbox(accessor, new_tree->child0, e, box, bbcd);
         }
         return new_tree;
       }
@@ -687,26 +674,22 @@ private:
         if (tree->here.get_bit(new_tree->here.num_low_bits() - 1)) new_tree->child1 = tree;
         else                                                       new_tree->child0 = tree;
 
-        return insert_zbox(accessor, event, new_tree, e, box, bbcd_id);
+        return insert_zbox(accessor, new_tree, e, box, bbcd);
       }
     }
   }
-  static void gather_events(accessor* accessor, std::unique_ptr<event_entity>& event, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, entity_id<bbox_collision_detector> bbcd_id, bool recurse) {
+  static void gather_events(accessor* accessor, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, entity_ref<bbox_collision_detector> bbcd, bool recurse) {
     if (tree) {
       for (entity_id<const SpatialEntitySubclass> other_id : tree->objects_here) {
-        std::unique_ptr<event_type> interaction(SpatialEntitySubclass::next_interaction(accessor, e, accessor->get(other_id)));
-        if (interaction && ((!event) || (interaction->when() < event->when()))) { // TODO: fix the fact that the order we collect the events creates a directional bias
-          assert(interaction->when() > accessor->now()); // TODO an exception
-          // TODO: why did I have to disambiguate with futurestd:: here when I didn't have to elsewhere?
-          event = futurestd::make_unique<spatial_entity_interaction>(bbcd_id, 
-           time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(e.id()),
-           time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(other_id),
-           std::move(interaction));
-        }
+        // TODO: why did I have to disambiguate with futurestd:: here when I didn't have to elsewhere?
+        accessor->create_event(futurestd::make_unique<spatial_entity_interaction>(bbcd_id, 
+          time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(e.id()),
+          time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(other_id),
+          cd->funcs_.create_interactions(accessor, e, accessor->get(other_id))));
       }
       if (recurse) {
-        gather_events(accessor, event, tree->child0, e, bbcd_id, true);
-        gather_events(accessor, event, tree->child1, e, bbcd_id, true);
+        gather_events(accessor, tree->child0, e, bbcd, true);
+        gather_events(accessor, tree->child1, e, bbcd, true);
       }
     }
   }

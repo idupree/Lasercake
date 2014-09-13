@@ -500,7 +500,7 @@ class time_steward_accessor {
   typedef uint32_t invalidation_counter_t;
     
   struct trigger_info {
-    trigger_info(std::shared_ptr<const trigger> t):t(t),in_queue(false){}
+    trigger_info(std::shared_ptr<const trigger> t, bool in_queue):t(t),in_queue(in_queue){}
     std::shared_ptr<const trigger> t;
     bool in_queue;
   };
@@ -553,7 +553,9 @@ class time_steward_accessor {
       fresh_new_upcoming_events.push_back(std::move(e));
     };
     void create_trigger(entity_id<entity> eid, trigger_id tid, std::shared_ptr<const trigger> t) {
-      require_local_entity(eid, false).triggers.insert(std::pair<trigger_id, trigger_info>(tid, t));
+      transient_entity_info& info = require_local_entity(eid, false);
+      info.triggers.insert(std::pair<trigger_id, trigger_info>(tid, trigger_info(t, true)));
+      triggers_queue.emplace(t, eid, tid, info.invalidation_counter);
     };
     void delete_trigger(entity_id<entity> eid, trigger_id tid) {
       require_local_entity(eid, false).triggers.erase(tid, t);
@@ -645,10 +647,7 @@ class time_steward_accessor {
     }
     
     time_steward_accessor(TimeSteward const* ts, extended_time const& time):ts_(ts),time_(time),entities_created_(0){}
-    void process_action(action const* a) {
-      
-      (*a)(this);
-      
+    void process_follow_ups() {
       for (entity_id<entity> id : fresh_modifications) {
         transient_entity_info& info = require_local_entity(id, false);
         ++info.invalidation_counter;
@@ -659,6 +658,19 @@ class time_steward_accessor {
           }
         }
       }
+      fresh_modifications.clear();
+      
+      while (!triggers_queue.empty()) {
+        const queued_trigger_info t = triggers_queue.front();
+        triggers_queue.pop();
+        transient_entity_info& info = require_local_entity(t.eid, false);
+        if (info.invalidation_counter == t.invalidation_counter) {
+          (*t.t)(this, entity_ref<entity>(info.e.get(), t.eid));
+          process_follow_ups();
+          return;
+        }
+      }
+      
       for (auto new_upcoming_event : fresh_new_upcoming_events) {
         std::unordered_set<entity_id<entity>> tracker;
         event_whenfunc_access_tracker = &tracker;
@@ -669,30 +681,24 @@ class time_steward_accessor {
           inf.dependencies.insert(std::make_pair(id, require_local_entity(id, false).invalidation_counter));
         }
         
-        if (t == time_.base_time) {
-          events_queue.push(std::move(inf));
-        }
-        else {
-          stale_new_upcoming_events.push_back(std::pair<time_type, upcoming_event_info>(t, std::move(inf)));
+        if (t != never) {
+          if (t == time_.base_time) {
+            events_queue.push(std::move(inf));
+          }
+          else {
+            assert(t > time_.base_time); // TODO an exception
+            stale_new_upcoming_events.push_back(std::pair<time_type, upcoming_event_info>(t, std::move(inf)));
+          }
         }
       }
-      fresh_modifications.clear();
       fresh_new_upcoming_events.clear();
       
-      while (!triggers_queue.empty()) {
-        const queued_trigger_info t = triggers_queue.front();
-        triggers_queue.pop();
-        transient_entity_info& info = require_local_entity(t.eid, false);
-        if (info.triggers.find(t.tid)->second == t.t) {
-          process_action(t.t.get());
-          return;
-        }
-      }
       while (!events_queue.empty()) {
         const upcoming_event_info e = events_queue.front();
         events_queue.pop();
-        if (upcoming_event_info_still_valid(e)) {
-          process_action(e.e);
+        if (upcoming_event_info_still_vazlid(e)) {
+          (*e.e)(this);
+          process_follow_ups();
           return;
         }
       }
@@ -782,6 +788,7 @@ private:
   struct entity_throughout_time_info {
     entity_changes_map changes;
     time_set event_piles_which_accessed_this;
+     triggers;
   };
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
@@ -915,7 +922,9 @@ private:
     if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
       accessor a(this, time);
-      a.process_thing(pile_info.instigating_event.get());
+      (*pile_info.instigating_event)(&a);
+      a.process_follow_ups();
+      
       for (std::pair<const entity_id<entity>, typename accessor::entity_and_ways_it_has_been_referenced>& i : a.local_entities_) {
         entity_throughout_time_info& e = entities[i.first]; // Default-construct if it's not there
         //entity_changes_map::iterator current_change;

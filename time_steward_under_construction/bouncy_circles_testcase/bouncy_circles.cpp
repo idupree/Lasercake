@@ -75,10 +75,9 @@ public:
   poly radius;
   std::unordered_set<entity_id<const circle>> overlaps;
 
-  class circles_interact : public time_steward::event, public time_steward::entity {
+  class circles_interact : public time_steward::consequential_event {
   public:
-    circles_interact(entity_id<circle> id0, entity_id<circle> id1, time_type when) : id0(id0),id1(id1),when_(when) {}
-    circles_interact* clone()const override { return new circles_interact(*this); }
+    circles_interact(entity_id<circle> id0, entity_id<circle> id1) : id0(id0),id1(id1) {}
 
     void operator()(time_steward::accessor* accessor)const override {
       auto c0 = accessor->get_mut(id0);
@@ -102,65 +101,25 @@ public:
       c0->update_acceleration(accessor);
       c1->update_acceleration(accessor);
     }
-    time_type when()const override {
-      return when_;
+    time_type when(time_steward::accessor const* accessor)const override {
+      auto c0 = accessor->get(id0);
+      auto c1 = accessor->get(id1);
+      
+      const poly d = distish(c0, c1);
+      const bool overlapping = c0->overlaps.find(c1.id()) != c0->overlaps.end();
+      if (d(0) < 0) {
+        return accessor->now() + (overlapping ? (time_units_per_gloppp>>6) : 1);
+      }
+      for (auto i = d.sign_interval_boundaries_upper_bound(accessor->now()); i != d.sign_interval_boundaries_end(); ++i) {
+        if ((d(*i) < 0) != overlapping) {
+          return *i;
+        }
+      }
+      return never;
     }
     entity_id<circle> id0, id1;
-    time_type when_;
   };
   
-  static bounding_box bbox(accessor const* accessor,
-                           entity_ref<const circle> ent) {
-    coordinate_array min;
-    coordinate_array max;
-    for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
-      space_coordinate c = ent->center(i)(accessor->now());
-      space_coordinate r = ent->radius(accessor->now());
-      min[i] = space_to_bbox(c-r);
-      max[i] = space_to_bbox(c+r);
-    }
-    return bounding_box::min_and_max(min, max);
-  }
-  
-  static time_type escape_time(accessor const* accessor,
-                               entity_ref<const circle> ent,
-                               bounding_box const& bbox) {
-    time_type result = never;
-    for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
-      const poly min_poly = ent->center(i) - ent->radius - bbox_to_space(bbox.min(i));
-      for (auto j = min_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != min_poly.sign_interval_boundaries_end(); ++j) {
-        if ((min_poly(*j) < 0) && ((result == never) || (*j < result))) {
-          result = *j;
-        }
-      }
-      const poly max_poly = ent->center(i) + ent->radius - bbox_to_space(bbox.max(i));
-      for (auto j = max_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != max_poly.sign_interval_boundaries_end(); ++j) {
-        if ((max_poly(*j) > 0) && ((result == never) || (*j < result))) {
-          result = *j;
-        }
-      }
-    }
-    return result;
-  }
-  
-  static std::unique_ptr<event_type> next_interaction(accessor const* accessor,
-                         entity_ref<const circle> ent1,
-                         entity_ref<const circle> ent2) {
-    const poly d = distish(*ent1, *ent2);
-    const auto unsafe_c1_id = time_steward_system::reinterpret_entity_id<circle>(ent1.id());
-    const auto unsafe_c2_id = time_steward_system::reinterpret_entity_id<circle>(ent2.id());
-    const bool overlapping = ent1->overlaps.find(ent2.id()) != ent1->overlaps.end();
-    if (d(0) < 0) {
-      return make_unique<circles_interact>(unsafe_c1_id, unsafe_c2_id,
-        accessor->now() + (overlapping ? (time_units_per_gloppp>>6) : 1));
-    }
-    for (auto i = d.sign_interval_boundaries_upper_bound(accessor->now()); i != d.sign_interval_boundaries_end(); ++i) {
-      if ((d(*i) < 0) != overlapping) {
-        return make_unique<circles_interact>(unsafe_c1_id, unsafe_c2_id, *i);
-      }
-    }
-    return nullptr;
-  }
   static poly distish(circle const& c1, circle const& c2) {
     const auto d = c1.center - c2.center;
     const auto d_mag_sq = d.dot(d);
@@ -187,7 +146,53 @@ public:
     }
     center.set_term(accessor->now(), 2, new_acceleration);
   }
+  
+  class bbcd_funcs {
+  public:
+    bounding_box bbox(accessor const* accessor,
+                            entity_ref<const circle> ent) {
+      coordinate_array min;
+      coordinate_array max;
+      for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
+        space_coordinate c = ent->center(i)(accessor->now());
+        space_coordinate r = ent->radius(accessor->now());
+        min[i] = space_to_bbox(c-r);
+        max[i] = space_to_bbox(c+r);
+      }
+      return bounding_box::min_and_max(min, max);
+    }
+    
+    time_type escape_time(accessor const* accessor,
+                                entity_ref<const circle> ent,
+                                bounding_box const& bbox) {
+      time_type result = never;
+      for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
+        const poly min_poly = ent->center(i) - ent->radius - bbox_to_space(bbox.min(i));
+        for (auto j = min_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != min_poly.sign_interval_boundaries_end(); ++j) {
+          if ((min_poly(*j) < 0) && ((result == never) || (*j < result))) {
+            result = *j;
+          }
+        }
+        const poly max_poly = ent->center(i) + ent->radius - bbox_to_space(bbox.max(i));
+        for (auto j = max_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != max_poly.sign_interval_boundaries_end(); ++j) {
+          if ((max_poly(*j) > 0) && ((result == never) || (*j < result))) {
+            result = *j;
+          }
+        }
+      }
+      return result;
+    }
+    
+    create_interactions(accessor* accessor,
+                          entity_ref<const circle> ent1,
+                          entity_ref<const circle> ent2) {
+      const auto unsafe_c1_id = time_steward_system::reinterpret_entity_id<circle>(ent1.id());
+      const auto unsafe_c2_id = time_steward_system::reinterpret_entity_id<circle>(ent2.id());
+      accessor->create_event(make_unique<circles_interact>(unsafe_c1_id, unsafe_c2_id));
+    }
+  };
 };
+
 
 struct circles_overlapping_bbox_filter {
   circles_overlapping_bbox_filter(time_steward::accessor const* accessor, circle::bounding_box bbox):accessor(accessor),bbox(bbox){}
@@ -210,7 +215,7 @@ struct circles_overlapping_bbox_filter {
   }
 };
 
-typedef bbox_collision_detector<circle> bbox_cd;
+typedef bbox_collision_detector<circle, circle::bbcd_funcs> bbox_cd;
 class global_object : public time_steward::entity {
 public:
   global_object* clone()const override { return new global_object(*this); }
@@ -222,7 +227,7 @@ class initialize_world : public time_steward::event {
 public:
   void operator()(time_steward::accessor* accessor)const override {
     auto g = accessor->get_mut(global_object_id);
-    auto cd = accessor->create_entity(make_unique<bbox_cd>());
+    auto cd = accessor->create_entity(make_unique<bbox_cd>(circle::bbcd_funcs()));
     g->bbcd_id = cd.id();
     srand(0);
     for (int i = 0; i < 150; ++i) {
