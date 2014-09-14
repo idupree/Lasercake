@@ -498,12 +498,65 @@ class time_steward_accessor {
   typedef typename TimeSteward::trigger trigger;
   typedef typename TimeSteward::trigger_id trigger_id;
   typedef uint32_t invalidation_counter_t;
-    
+  
   struct trigger_info {
     trigger_info(std::shared_ptr<const trigger> t, bool in_queue):t(t),in_queue(in_queue){}
     std::shared_ptr<const trigger> t;
     bool in_queue;
   };
+  
+  struct field_metadata {
+    persistent_map<trigger_id, trigger_info> triggers;
+    bool accessed_preexisting_state;
+    bool ever_modified;
+    void accessed(time_steward_accessor const& acc) {
+      if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(fid); }
+      if (!ever_modified) { accessed_preexisting_state = true; }
+    }
+    void modified(time_steward_accessor& acc, field_id fid) {
+      ever_modified = true;
+      for (std::pair<trigger_id, trigger_info> const& i : triggers) {
+        if (!i.in_queue) {
+          acc.triggers_queue.emplace(fid, i.first);
+          i.in_queue = true;
+        }
+      }
+    }
+  };
+    
+  template<typename FieldsList>
+  struct entity_info {
+    entity_id id;
+    FieldsList fields;
+    std::array<field_metadata, FieldsList::size> metadata;
+  };
+  
+public:  
+  template<typename FieldContents, typename FieldsList>
+  inline FieldContents const& get(entity_info<FieldsList> const& e)const {
+    const field_id fid(e.id, FieldsList::index_of<FieldContents>::idx);
+    if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(fid); }
+    metadata[idx].accessed(*this);
+    return e.fields.get<FieldContents>();
+  }
+  template<typename FieldContents, typename FieldsList>
+  inline FieldContents& get_mut(entity_info<FieldsList>& e) {
+    const size_t idx = FieldsList::index_of<FieldContents>::idx;
+    const field_id fid(e.id, idx);
+    metadata[idx].accessed(*this);
+    metadata[idx].modified(*this, fid);
+    return e.fields.get_mut<FieldContents>();
+  }
+  template<typename FieldContents, typename FieldsList>
+  inline FieldContents& replace_field(entity_info<FieldsList>& e, FieldContents new_contents) {
+    const size_t idx = FieldsList::index_of<FieldContents>::idx;
+    const field_id fid(e.id, idx);
+    metadata[idx].modified(*this, fid);
+    return e.fields.replace<FieldContents>(new_contents);
+  }
+private:
+    
+    
   struct queued_trigger_info {
     std::shared_ptr<const trigger> t;
     entity_id<entity> eid;
@@ -696,7 +749,7 @@ class time_steward_accessor {
       while (!events_queue.empty()) {
         const upcoming_event_info e = events_queue.front();
         events_queue.pop();
-        if (upcoming_event_info_still_vazlid(e)) {
+        if (upcoming_event_info_still_valid(e)) {
           (*e.e)(this);
           process_follow_ups();
           return;
@@ -785,10 +838,20 @@ private:
     bool has_been_executed;
     bool should_be_executed()const { return instigating_event && (num_instigating_event_creation_dependencies_cut_off == 0); }
   };
+  
+  struct field_metadata {
+    std::map<extended_time, persistent_map<trigger_id, trigger_info>> triggers_changes;
+    std::unordered_set<event_pile_id> event_piles_which_accessed_this;
+    std::unordered_set<event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
+  };
+    
+  template<class FieldsList>
+  struct entity_throughout_existence_info {
+    field_maps<FieldsList> fields;
+    std::array<field_metadata, FieldsList::size> metadata;
+  }
   struct entity_throughout_time_info {
-    entity_changes_map changes;
-    time_set event_piles_which_accessed_this;
-     triggers;
+    std::map<extended_time, entity_throughout_existence_info> changes;
   };
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
