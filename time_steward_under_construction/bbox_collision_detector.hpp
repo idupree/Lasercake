@@ -153,6 +153,12 @@ public:
     }
     return true;
   }
+  bool subsumes(bounding_box const& other)const {
+    for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
+      TODO
+    }
+    return true;
+  }
 
   bool operator==(bounding_box const& other)const {
     return min_ == other.min_ && size_minus_one_ == other.size_minus_one_;
@@ -215,10 +221,10 @@ public:
     num_bits_type dim_low_bits_heuristic[num_dimensions];
     num_bits_type largest_dim_low_bits = 0;
     for (num_coordinates_type i = 0; i != num_dimensions; ++i) {
-      const coordinate_type uncommon_bits =
+      const coordinate_type nonshared_bits =
           (zb1.coords_[i] | this_many_low_bits(zb2.num_low_bits_by_dimension(i)))
         ^ (zb2.coords_[i] & ~this_many_low_bits(zb1.num_low_bits_by_dimension(i)));
-      const num_bits_type this_dimension_low_bits = num_bits_in_integer_that_are_not_leading_zeroes(uncommon_bits);
+      const num_bits_type this_dimension_low_bits = num_bits_in_integer_that_are_not_leading_zeroes(nonshared_bits);
       dim_low_bits_heuristic[i] = this_dimension_low_bits;
       if(largest_dim_low_bits < this_dimension_low_bits) largest_dim_low_bits = this_dimension_low_bits;
     }
@@ -308,13 +314,40 @@ public:
   }
 };
 
+struct ztree_node {
+  const zbox here;
+  entity_id child0;
+  entity_id child1;
+  entity_id parent;
+  persistent_set<entity_id> objects_here;
+
+  ztree_node(zbox box, entity_id parent):here(box),parent(parent){}
+};
+struct bbcd_entry_metadata {
+  persistent_set<entity_id> nodes;
+  bounding_box zboxes_union;
+};
+struct spatial_entity_metadata {
+  persistent_map<entity_id, bbcd_entry_metadata> data;
+};
+struct bbox_collision_detector_root_node {
+  entity_id root_node_id_;
+};
+template<class FuncsType>
+struct bbox_collision_detector_funcs {
+  FuncsType funcs_;
+  
+  template<bool empty> struct bbox_collision_detector_funcs_field { typedef bbox_collision_detector_funcs value; }
+  template<> struct bbox_collision_detector_funcs_field<true> { typedef time_steward_system::fields_list<> value; }
+  
+  typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bbox_collision_detector_root_node, bbox_collision_detector_funcs_field<std::is_empty<FuncsType>::value>> fields;
+};
+
+
 }; // struct bbox_collision_detector_accessories
 
-template<typename SpatialEntitySubclass>
-class bbox_collision_detector;
 
-
-
+#if 0
 template<class TimeSteward, num_bits_type CoordinateBits, num_coordinates_type NumDimensions>
 class bbox_collision_detector_spatial_entity : virtual public TimeSteward::entity {
 public:
@@ -346,11 +379,10 @@ public:
 private:
   template<typename SpatialEntitySubclass> friend class bbox_collision_detector;
 };
+#endif
 
-template<typename SpatialEntitySubclass, class FuncsType>
-class bbox_collision_detector : public SpatialEntitySubclass::time_steward::entity {
-public:
-  bbox_collision_detector* clone()const override { return new bbox_collision_detector(*this); }
+template<typename TimeSteward, class FuncsType>
+class bbox_collision_detector_stuff {
 private:
   static const num_bits_type coordinate_bits = SpatialEntitySubclass::coordinate_bits;
   static const num_coordinates_type num_dimensions = SpatialEntitySubclass::num_dimensions;
@@ -363,7 +395,7 @@ private:
   template<typename T> using entity_id = time_steward_system::entity_id<T>;
   template<typename T> using entity_ref = time_steward_system::entity_ref<T>;
 public:
-  typedef typename SpatialEntitySubclass::time_steward time_steward;
+  typedef typename TimeSteward time_steward;
   typedef typename time_steward::time_type time_type;
   typedef typename accessories::coordinate_type coordinate_type;
   typedef typename accessories::coordinate_array coordinate_array;
@@ -445,277 +477,403 @@ public:
   }
 
   */
-  struct ztree_node {
-    typedef std::shared_ptr<const ztree_node> ztree_node_ptr;
-    
-    // Making this a persistent data structure could improve performance
-    // in the case where there are many entities at the same node.
-    // However, it cannot improve the asymptotic speed, since we always
-    // need to review this many entities when one is added or removed.
-    // It might improve asymptotic memory use.
-    typedef std::unordered_set<entity_id<const SpatialEntitySubclass>> objects_here_type;
-
-    const zbox here;
-    ztree_node_ptr child0;
-    ztree_node_ptr child1;
-
-    objects_here_type objects_here;
-
-    ztree_node(zbox box):here(box),child0(nullptr),child1(nullptr){}
-    ztree_node(ztree_node const& other) :
-      here(other.here),
-      child0(other.child0),
-      child1(other.child1),
-      objects_here(other.objects_here)
-      {}
-    // operator= could exist if we wanted to make zbox non-const.
-    // ztree_node& operator=(ztree_node const& other) = delete;
-  };
-  typedef typename ztree_node::ztree_node_ptr ztree_node_ptr;
-  typedef std::shared_ptr<ztree_node> ztree_node_mutable_ptr;
   
 private:
-  class spatial_entity_escapes_its_zboxes : public time_steward::consequential_event {
+  template<bool FuncsTypeIsEmpty> static inline bbox_collision_detector_funcs const& get_funcs_impl(accessor* accessor, entity_id bbcd_id) {
+    return accessor->get<bbox_collision_detector_funcs>(accessor->get(bbcd_id))->funcs_;
+  }
+  template<> static inline bbox_collision_detector_funcs const& get_funcs_impl(accessor* accessor, entity_id bbcd_id) {
+    return bbox_collision_detector_funcs();
+  }
+  static inline bbox_collision_detector_funcs const& get_funcs(accessor* accessor, entity_id bbcd_id) {
+    return get_funcs<std::is_empty<FuncsType>::value>(accessor, bbcd_id);
+  }
+  
+  class spatial_entity_interaction : public time_steward::consequential_event {
   public:
-    spatial_entity_escapes_its_zboxes(entity_id<bbox_collision_detector> bbcd_id, entity_id<SpatialEntitySubclass> spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
+    spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id id0, entity_id id1) : bbcd_id(bbcd_id),id0(id0),id1(id1) {}
 
     void operator()(accessor* accessor)const override {
-      auto bbcd = accessor->get_mut(bbcd_id);
-      auto ref = accessor->get(spatial_entity_id);
-      erase_impl(accessor, bbcd, ref);
-      insert_impl(accessor, bbcd, ref);
+      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      entity_ref e0 = accessor->get(id0);
+      entity_ref e1 = accessor->get(id1);
+      funcs.interact(accessor, e0, e1);
     }
     time_type when(accessor const* accessor)const override {
-      auto bbcd = accessor->get(bbcd_id);
-      auto e = accessor->get(spatial_entity_id);
-      return bbcd->funcs_.escape_time(accessor, e, *bbcd->zboxes_unions_by_id_.find(e.id()));
+      entity_ref e0 = accessor->get(id0);
+      entity_ref e1 = accessor->get(id1);
+      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      return funcs.interaction_time(accessor->get<each spatial field>(e0), accessor->get<each spatial field>(e1));
     }
-    entity_id<bbox_collision_detector> bbcd_id;
-    entity_id<SpatialEntitySubclass> spatial_entity_id;
+    entity_id bbcd_id;
+    entity_id id0;
+    entity_id id1;
+  };
+  class spatial_entity_escapes_its_zboxes : public time_steward::consequential_event {
+  public:
+    spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
+
+    void operator()(accessor* accessor)const override {
+      entity_ref e = accessor->get(spatial_entity_id);
+      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
+      gather_events(accessor, bbcd_id, funcs, e);
+    }
+    time_type when(accessor const* accessor)const override {
+      entity_ref e = accessor->get(spatial_entity_id);
+      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      return funcs.escape_time(accessor, e, accessor->get<spatial_entity_metadata>(e)->find(bbcd_id)->zboxes_union);
+    }
+    entity_id bbcd_id;
+    entity_id spatial_entity_id;
   };
   class spatial_entity_changes_trigger : public time_steward::trigger {
   public:
-    spatial_entity_changes_trigger(entity_id<bbox_collision_detector> bbcd_id) : bbcd_id(bbcd_id) {}
+    spatial_entity_changes_trigger(entity_id bbcd_id) : bbcd_id(bbcd_id) {}
 
-    void operator()(accessor* accessor, entity_ref<const time_steward::entity> e)const override {
-      auto bbcd = accessor->get_mut(bbcd_id);
-      erase_impl(accessor, bbcd, time_steward_system::reinterpret_entity_id<const SpatialEntitySubclass>(e.id()));
-      
-      auto ref = dynamic_pointer_cast<const SpatialEntitySubclass>(e);
-      if (ref) {
-        insert_impl(accessor, bbcd, ref);
+    void operator()(accessor* accessor, entity_ref e)const override {
+      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      const bounding_box bbox = funcs.bbox(accessor, e);
+      if (!metadata.zboxes_union.subsumes(bbox)) {
+        insert_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
       }
-      else {
-        accessor->delete_trigger(e.id(), trigger_id);
-      }
+      gather_events(accessor, bbcd_id, funcs, e);
     }
-    entity_id<bbox_collision_detector> bbcd_id;
+    entity_id bbcd_id;
   };
   
 public:
-  bbox_collision_detector(FuncsType funcs)
-    :
-    objects_tree_(nullptr),
-    funcs_(funcs)
-    {}
-  
-  static void insert(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
-    accessor->create_trigger(eid, trigger_id, spatial_entity_changes_trigger(bbcd.id()));
+  static void insert(accessor* accessor, entity_ref bbcd_ref, entity_ref e, entity_ref hint_object = entity_ref()) {
+    // TODO maybe time_steward can treat the different members of the outer_metadata map as different fields,
+    // (WRT access/back-in-time-change semantics) since we usually only want to access/modify one of them?
+    // Or is that too unlikely to be useful? Some sort of profiling may help later.
+    bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+    auto& outer_metadata = accessor->get_mut<spatial_entity_metadata>(e);
+    if (!outer_metadata) { outer_metadata = spatial_entity_metadata(); }
+    persistent_set<entity_id> hint_nodes;
+    if (hint_object) {
+      hint_nodes = accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id)->nodes;
+    }
+    insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
+    gather_events(accessor, bbcd_id, bbcd, e);
+    
+    for each spatial field 
+    accessor->create_trigger(eid, bbcd_ref.id(), spatial_entity_changes_trigger(bbcd_ref.id()));
   }
-  static void erase(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
-    accessor->delete_trigger(eid, trigger_id, spatial_entity_changes_trigger(bbcd.id()));
-    erase_impl(accessor, bbcd, eid);
+  static void erase(accessor* accessor, entity_id bbcd_id, entity_ref e) {
+    for each spatial field 
+    accessor->delete_trigger(eid, bbcd_id);
+    // TODO: what about the outstanding events?
+    
+    bbcd_entry_metadata& metadata = *accessor->get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
+    erase_from_nodes(accessor, bbcd_id, e, metadata, metadata->nodes);
+    accessor->get_mut<spatial_entity_metadata>(e)->erase(bbcd_id);
   }
   
 private:
-  ztree_node_ptr objects_tree_;
-  persistent_map<entity_id<SpatialEntitySubclass>, bounding_box> zboxes_unions_by_id_;
-  FuncsType funcs_;
-  
-  static void erase_impl(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_id<const SpatialEntitySubclass> eid) {
-    auto zboxes_union_iter = bbcd->zboxes_unions_by_id_.find(eid);
-    if (zboxes_union_iter != bbcd->zboxes_unions_by_id_.end()) {
-      bbcd->objects_tree_ = delete_object(bbcd->objects_tree_, eid, *zboxes_union_iter);
-      bbcd->zboxes_unions_by_id_.erase(zboxes_union_iter);
+  static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
+                                    bbcd_entry_metadata& metadata, persistent_set<entity_id> nodes) {
+    for (entity_id node_id : nodes) {
+      entity_ref node_ref = accessor->get(node_id);
+      node = accessor->get_mut<ztree_node>(node_ref);
+      node->objects_here.erase(e.id());
+      if (node->objects_here.empty()) {
+        if (!node->children[0]) {
+          squish_node(accessor, e, 1);
+        }
+        else if (!node->children[1]) {
+          squish_node(accessor, e, 0);
+        }
+      }
+      metadata->nodes.erase(node_id);
     }
   }
   
-  static void insert_impl(accessor* accessor, entity_ref<bbox_collision_detector> bbcd, entity_ref<const SpatialEntitySubclass> e, bounding_box const& bbox) {
-    const bounding_box bbox = bbcd->funcs.bbox(accessor, e);
-    const coordinate_type max_width_minus_one = accessories::max_in_array_of_unsigned(bbox.size_minus_one());
-    // max_width - 1: power-of-two-sized objects easily squeeze into the next smaller category.
-    // i.e., exp = log2_rounding_up(max_width)
-    const num_bits_type exp = num_bits_in_integer_that_are_not_leading_zeroes(max_width_minus_one);
-    const coordinate_type base_box_size = accessories::safe_left_shift_one(exp);
-
-    // The total number of zboxes we use to cover this bounding_box
-    // is a power of two between 1 and 2**num_dimensions.
-    // Imagine that we start with a set of one box and that,
-    // for each dimension, we start with the previous set of boxes,
-    // then zbox-ify this dimension, using either
-    //   (A) exactly base_box_size width-in-this-dimension, or
-    //   (B) twice base_box_size width-in-this-dimension, or
-    // if the bit parity didn't work out so well, it
-    //   (C) needs to split each zbox into two.
-    num_coordinates_type num_dims_using_one_zbox_of_exactly_base_box_size = 0;
-    num_coordinates_type num_dims_using_one_zbox_of_twice_base_box_size = 0;
-    num_coordinates_type num_dims_using_two_zboxes_each_of_base_box_size;
-
-    // Given that a coordinate is laid out in bits like XYZXYZXYZ,
-    // We're at some exp in there (counted from the right); let's say 3.
-    // Given exp 3, Z is a less-significant bit and X is more-significant.
-    // ('exp' could also be a non-multiple-of-num_dimensions, in which case
-    // the ordering of the dimensions would come out differently.)
-    //
-    // If the object happens to fit, aligned, in X with width base_box_size,
-    // then we can just specify this X bit directly.  If that works for X,
-    // we can try Y; if not, we can't try Y because X is already doing
-    // something nontrivial (perhaps it could be done; the code would
-    // be more complicated).  These are
-    // "num_dimensions_that_need_one_zbox_of_exactly_base_box_size".
-    // This is the best case.
-    //
-    // Then, if we can't specify where in all dimensions we are
-    // z-box-ly yet in one zbox, we try starting from Z:
-    // it's possible that Z (and so forth if Z is) can be included
-    // in the zbox's low_bits.  This would make the zbox twice
-    // as wide in that dimension (e.g. Z) as it would be in the
-    // case of if X fits into a single base_box_size at the scale
-    // we're looking at.  But it's better than making two separate
-    // zboxes that take up that much space anyway.  If the bounding
-    // box didn't happen to be aligned with the right parity,
-    // we'll have to make two boxes for it anyway instead of putting
-    // it in "num_dimensions_that_need_one_zbox_of_twice_base_box_size".
-    //
-    // All the dimensions in between will be split into two zboxes,
-    // each of width base_box_size, for a total width of
-    // twice base_box_size.  This is the worst case,
-    // "num_dimensions_that_need_two_zboxes_each_of_base_box_size".
-    if(base_box_size == 0) {
-      num_dims_using_one_zbox_of_exactly_base_box_size = num_dimensions;
-    }
-    else {
-      for (num_coordinates_type i = num_dimensions - 1; i >= 0; --i) {
-        if (bbox.size_minus_one(i) <= (base_box_size - 1) - (bbox.min(i) & (base_box_size - 1))) {
-          ++num_dims_using_one_zbox_of_exactly_base_box_size;
-        }
-        else {
-          break;
-        }
-      }
-      for (num_coordinates_type i = 0; i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++i) {
-        if (!(bbox.min(i) & base_box_size)) {
-          ++num_dims_using_one_zbox_of_twice_base_box_size;
-        }
-        else {
-          break;
-        }
+  static void squish_node(accessor* accessor, entity_ref e, size_t which_child) {
+    // (old child a.k.a. new 'node' could be none)
+    node = accessor->get_mut<ztree_node>(znref);
+    entity_id stolen_node_id = node->children[which_child];
+    stolen_node = accessor->get_mut<ztree_node>(accessor->get(stolen_node_id));
+    node = stolen_node;
+    stolen_node = none;
+    for (stolen_child_id : node->children) {
+      if (stolen_child_id) {
+        accessor->get_mut<ztree_node>(accessor->get(stolen_child_id))->parent = e.id();
       }
     }
-    num_dims_using_two_zboxes_each_of_base_box_size = num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size - num_dims_using_one_zbox_of_twice_base_box_size;
-
-    const num_zboxes_type number_of_zboxes_to_use_if_necessary = num_zboxes_type(1) << num_dims_using_two_zboxes_each_of_base_box_size;
-
-    coordinate_array zboxes_union_min;
-    coordinate_array zboxes_union_size_minus_one;
-    for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
-      zboxes_union_min[i] = bbox.min()[i] & ~(base_box_size-1);
-      zboxes_union_size_minus_one[i] = ((i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size) ? (base_box_size<<1) : base_box_size)-1;
-    }
-    const bounding_box zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
-    bbcd->zboxes_unions_by_id_.insert(std::make_pair(e.id(), zboxes_union));
-    accessor->create_event(make_unique<spatial_entity_escapes_its_zboxes>(bbcd.id(), e.id()));
-    
-    for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
-      coordinate_array coords = bbox.min();
-      for (num_coordinates_type j = num_dims_using_one_zbox_of_twice_base_box_size; j < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++j) {
-        // By checking this bit of "i" arbitrarily, by the last time
-        // we get through the "number_of_zboxes_to_use_if_necessary" loop,
-        // we have yielded every combination of possibilities of
-        // each dimension that varies varying (between +0 and +base_box_size).
-        if (i & (1 << (j - num_dims_using_one_zbox_of_twice_base_box_size))) {
-          coords[j] += base_box_size;
-        }
-      }
-      const zbox zb = zbox::box_from_coords(coords, exp * num_dimensions + num_dims_using_one_zbox_of_twice_base_box_size);
-      if (zb.overlaps(bbox)) {
-        bbcd->objects_tree_ = insert_zbox(accessor, tree, e, zb, bbcd);
-      }
+    for (stolen_object_id : node->objects_here) {
+      nodes = accessor->get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->nodes;
+      nodes.erase(stolen_node_id);
+      nodes.insert(e.id());
     }
   }
-  static ztree_node_ptr insert_zbox(accessor* accessor, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, zbox box, entity_ref<bbox_collision_detector> bbcd) {
-    if (!tree) {
-      ztree_node_mutable_ptr new_tree(new ztree_node(box));
-      new_tree->objects_here.insert(e.id());
-      return new_tree;
+  
+  
+  class insert_zboxes {
+    accessor* accessor;
+    entity_id bbcd_id;
+    entity_ref e;
+    bbcd_entry_metadata& metadata;
+  public:
+    insert_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, persistent_set<entity_id> hint_nodes)
+      :
+      accessor(accessor),
+      bbcd_id(bbcd_id),
+      e(e),
+      metadata(accessor->get_mut<spatial_entity_metadata>(e)->data[bbcd_id])
+    {
+      time_steward::optional<bbox_collision_detector_root_node> const* root;
+      if (hint_nodes.empty()) {
+        root = &accessor->get<bbox_collision_detector_root_node>(accessor->get(bbcd_id));
+      }
+      
+      const coordinate_type max_width_minus_one = accessories::max_in_array_of_unsigned(bbox.size_minus_one());
+      // max_width - 1: power-of-two-sized objects easily squeeze into the next smaller category.
+      // i.e., exp = log2_rounding_up(max_width)
+      const num_bits_type exp = num_bits_in_integer_that_are_not_leading_zeroes(max_width_minus_one);
+      const coordinate_type base_box_size = accessories::safe_left_shift_one(exp);
+
+      // The total number of zboxes we use to cover this bounding_box
+      // is a power of two between 1 and 2**num_dimensions.
+      // Imagine that we start with a set of one box and that,
+      // for each dimension, we start with the previous set of boxes,
+      // then zbox-ify this dimension, using either
+      //   (A) exactly base_box_size width-in-this-dimension, or
+      //   (B) twice base_box_size width-in-this-dimension, or
+      // if the bit parity didn't work out so well, it
+      //   (C) needs to split each zbox into two.
+      num_coordinates_type num_dims_using_one_zbox_of_exactly_base_box_size = 0;
+      num_coordinates_type num_dims_using_one_zbox_of_twice_base_box_size = 0;
+      num_coordinates_type num_dims_using_two_zboxes_each_of_base_box_size;
+
+      // Given that a coordinate is laid out in bits like XYZXYZXYZ,
+      // We're at some exp in there (counted from the right); let's say 3.
+      // Given exp 3, Z is a less-significant bit and X is more-significant.
+      // ('exp' could also be a non-multiple-of-num_dimensions, in which case
+      // the ordering of the dimensions would come out differently.)
+      //
+      // If the object happens to fit, aligned, in X with width base_box_size,
+      // then we can just specify this X bit directly.  If that works for X,
+      // we can try Y; if not, we can't try Y because X is already doing
+      // something nontrivial (perhaps it could be done; the code would
+      // be more complicated).  These are
+      // "num_dimensions_that_need_one_zbox_of_exactly_base_box_size".
+      // This is the best case.
+      //
+      // Then, if we can't specify where in all dimensions we are
+      // z-box-ly yet in one zbox, we try starting from Z:
+      // it's possible that Z (and so forth if Z is) can be included
+      // in the zbox's low_bits.  This would make the zbox twice
+      // as wide in that dimension (e.g. Z) as it would be in the
+      // case of if X fits into a single base_box_size at the scale
+      // we're looking at.  But it's better than making two separate
+      // zboxes that take up that much space anyway.  If the bounding
+      // box didn't happen to be aligned with the right parity,
+      // we'll have to make two boxes for it anyway instead of putting
+      // it in "num_dimensions_that_need_one_zbox_of_twice_base_box_size".
+      //
+      // All the dimensions in between will be split into two zboxes,
+      // each of width base_box_size, for a total width of
+      // twice base_box_size.  This is the worst case,
+      // "num_dimensions_that_need_two_zboxes_each_of_base_box_size".
+      if(base_box_size == 0) {
+        num_dims_using_one_zbox_of_exactly_base_box_size = num_dimensions;
+      }
+      else {
+        for (num_coordinates_type i = num_dimensions - 1; i >= 0; --i) {
+          if (bbox.size_minus_one(i) <= (base_box_size - 1) - (bbox.min(i) & (base_box_size - 1))) {
+            ++num_dims_using_one_zbox_of_exactly_base_box_size;
+          }
+          else {
+            break;
+          }
+        }
+        for (num_coordinates_type i = 0; i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++i) {
+          if (!(bbox.min(i) & base_box_size)) {
+            ++num_dims_using_one_zbox_of_twice_base_box_size;
+          }
+          else {
+            break;
+          }
+        }
+      }
+      num_dims_using_two_zboxes_each_of_base_box_size = num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size - num_dims_using_one_zbox_of_twice_base_box_size;
+
+      const num_zboxes_type number_of_zboxes_to_use_if_necessary = num_zboxes_type(1) << num_dims_using_two_zboxes_each_of_base_box_size;
+
+      coordinate_array zboxes_union_min;
+      coordinate_array zboxes_union_size_minus_one;
+      for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
+        zboxes_union_min[i] = bbox.min()[i] & ~(base_box_size-1);
+        zboxes_union_size_minus_one[i] = ((i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size) ? (base_box_size<<1) : base_box_size)-1;
+      }
+      metadata.zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
+      accessor->create_event(make_unique<spatial_entity_escapes_its_zboxes>(bbcd_id, e.id()));
+      
+      persistent_set<entity_id> old_nodes_to_remove = metadata.nodes;
+      for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
+        coordinate_array coords = bbox.min();
+        for (num_coordinates_type j = num_dims_using_one_zbox_of_twice_base_box_size; j < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++j) {
+          // By checking this bit of "i" arbitrarily, by the last time
+          // we get through the "number_of_zboxes_to_use_if_necessary" loop,
+          // we have yielded every combination of possibilities of
+          // each dimension that varies varying (between +0 and +base_box_size).
+          if (i & (1 << (j - num_dims_using_one_zbox_of_twice_base_box_size))) {
+            coords[j] += base_box_size;
+          }
+        }
+        const zbox zb = zbox::box_from_coords(coords, exp * num_dimensions + num_dims_using_one_zbox_of_twice_base_box_size);
+        if (zb.overlaps(bbox)) {
+          entity_ref best_hint_ref;
+          if (hint_nodes.empty()) {
+            if ((*root)->root_node_id_) {
+              best_hint_ref = accessor->get((*root)->root_node_id_);
+            }
+            else {
+              entity_ref best_hint_ref = accessor->create_entity();
+              accessor->set<ztree_node>(best_hint_ref, ztree_node(zb, entity_id()));
+              accessor->set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), best_hint_ref.id());
+            }
+          }
+          else {
+            // Find the best box to use as hint.
+            // TODO: can this be less than O((num zboxes)^2)?
+            num_bits_type best_num_low_bits = coordinate_bits + 1
+            for (entity_id node_id : hint_nodes) {
+              entity_ref node_ref = accessor->get(node_id);
+              node = accessor->get<ztree_node>(node_ref);
+              zbox test = zbox::smallest_joint_parent(zb, node->here);
+              if (test.num_low_bits() < best_num_low_bits) {
+                best_num_low_bits = test.num_low_bits();
+                best_hint_ref = node_ref;
+              }
+            }
+          }
+          entity_ref inserted_at_ref = insert_zbox_with_hint(best_hint_ref, zb);
+          old_nodes_to_remove.erase(inserted_at_ref.id());
+        }
+      }
+      erase_from_nodes(accessor, bbcd_id, e, metadata, old_nodes);
     }
-    else {
-      if (tree->here.subsumes(box)) {
-        ztree_node_mutable_ptr new_tree(new ztree_node(*tree));
-        if (box.num_low_bits() == tree->here.num_low_bits()) {
-          gather_events(accessor, tree, e, bbcd, true);
-          new_tree->objects_here.insert(e.id());
+  private:
+    // these functions return where the zbox was inserted
+    entity_ref insert_zbox_with_hint(entity_ref hint_node_ref, zbox const& box) {
+      while (true) {
+        auto& node = accessor->get<ztree_node>(hint_node_ref);
+        if (node->here.subsumes(box)) {
+          break;
+        }
+        if (node->parent) {
+          hint_node_ref = accessor->get(node->parent);
         }
         else {
-          gather_events(accessor, tree, e, bbcd, false);
-          if (box.get_bit(tree->here.num_low_bits() - 1)) new_tree->child1 = insert_zbox(accessor, new_tree->child1, e, box, bbcd);
-          else                                            new_tree->child0 = insert_zbox(accessor, new_tree->child0, e, box, bbcd);
+          hint_node_ref = add_joint_parent_node(hint_node_ref, box);
+        }
+      }
+      return insert_zbox_downwards(accessor, hint_node_ref, e, box);
+    }
+    entity_ref insert_zbox_at(time_steward::optional<ztree_node>& node, entity_id node_id) {
+      node->objects_here.insert(e.id());
+      metadata.nodes.insert(node_id);
+      return node_ref;
+    }
+    entity_ref insert_zbox_downwards(entity_ref node_ref, zbox const& box) {
+      auto& node = accessor->get_mut<ztree_node>(node_ref);
+      if (node->here.subsumes(box)) {
+        if (box.num_low_bits() == node->here.num_low_bits()) {
+          return insert_zbox_at(node, node_ref.id());
+        }
+        else {
+          const size_t which_child = box.get_bit(node->here.num_low_bits() - 1);// ? 1 : 0;
+          if (node->children[which_child]) {
+            return insert_zbox_downwards(accessor->get(node->children[which_child]), box);
+          }
+          else {
+            entity_ref new_child = accessor->create_entity();
+            node->children[which_child] = new_child.id()
+            return insert_zbox_at(accessor->set<ztree_node>(new_child, ztree_node(box, node_ref.id())), new_child.id());
+          }
         }
         return new_tree;
       }
       else {
-        ztree_node_mutable_ptr new_tree(new ztree_node(zbox::smallest_joint_parent(tree->here, box)));
-
-        assert_if_ASSERT_EVERYTHING(new_tree->here.num_low_bits() > tree->here.num_low_bits());
-        assert_if_ASSERT_EVERYTHING(new_tree->here.subsumes(tree->here));
-        assert_if_ASSERT_EVERYTHING(new_tree->here.subsumes(box));
-        assert_if_ASSERT_EVERYTHING(box.subsumes(tree->here) || (tree->here.get_bit(new_tree->here.num_low_bits() - 1) != box.get_bit(new_tree->here.num_low_bits() - 1)));
-
-        if (tree->here.get_bit(new_tree->here.num_low_bits() - 1)) new_tree->child1 = tree;
-        else                                                       new_tree->child0 = tree;
-
-        return insert_zbox(accessor, new_tree, e, box, bbcd);
+        return insert_zbox_downwards(add_joint_parent_node(hint_node_ref, box), box);
       }
     }
-  }
-  static void gather_events(accessor* accessor, ztree_node_ptr tree, entity_ref<const SpatialEntitySubclass> e, entity_ref<bbox_collision_detector> bbcd, bool recurse) {
-    if (tree) {
-      for (entity_id<const SpatialEntitySubclass> other_id : tree->objects_here) {
-        // TODO: why did I have to disambiguate with futurestd:: here when I didn't have to elsewhere?
-        accessor->create_event(futurestd::make_unique<spatial_entity_interaction>(bbcd_id, 
-          time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(e.id()),
-          time_steward_system::reinterpret_entity_id<SpatialEntitySubclass>(other_id),
-          cd->funcs_.create_interactions(accessor, e, accessor->get(other_id))));
+    entity_ref add_joint_parent_node(entity_ref node_ref, zbox const& box) {
+      auto& node = accessor->get_mut<ztree_node>(node_ref);
+      entity_ref new_node_ref = accessor->create_entity();
+      auto& new_node = accessor->set<ztree_node>(new_node_ref, ztree_node(zbox::smallest_joint_parent(node->here, box), node->parent));
+      node->parent = new_node_ref.id();
+      if (!new_node->parent) {
+        accessor->set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), node_ref.id());
       }
-      if (recurse) {
-        gather_events(accessor, tree->child0, e, bbcd, true);
-        gather_events(accessor, tree->child1, e, bbcd, true);
-      }
+      
+      assert_if_ASSERT_EVERYTHING(new_node->here.num_low_bits() > node->here.num_low_bits());
+      assert_if_ASSERT_EVERYTHING(new_node->here.subsumes(node->here));
+      assert_if_ASSERT_EVERYTHING(new_node->here.subsumes(box));
+      assert_if_ASSERT_EVERYTHING(box.subsumes(node->here) || (node->here.get_bit(new_node->here.num_low_bits() - 1) != box.get_bit(new_node->here.num_low_bits() - 1)));
+
+      const size_t which_child = node->here.get_bit(new_node->here.num_low_bits() - 1);
+      new_node->children[which_child] = node_ref.id();
+      return new_node_ref;
     }
-  }
+  };
   
-
-  static ztree_node_ptr delete_object(ztree_node_ptr tree, entity_id<SpatialEntitySubclass> id, bounding_box const& bbox) {
-    if (tree && tree->here.overlaps(bbox)) {
-      ztree_node_mutable_ptr new_tree(new ztree_node(*tree));
-      new_tree->objects_here.erase(id);
-      new_tree->child0 = delete_object(new_tree->child0, id, bbox);
-      new_tree->child1 = delete_object(new_tree->child1, id, bbox);
-
-      // collapse nodes with no objects and 0-1 children.
-      if (new_tree->objects_here.empty()) {
-        if (!new_tree->child0) {
-          // (old 'child1' a.k.a. new 'tree' could be nullptr)
-          return new_tree->child1;
-        }
-        else if (!new_tree->child1) {
-          return new_tree->child0;
+  class gather_events {
+    // From each of the object's 1-to-2^n nodes, we need to check everything that's
+    // an ancestor OR descendant of any of those nodes. The descendants are all different.
+    // TODO is there an efficient way to avoid duplicating the search of joint ancestors?
+    accessor* accessor;
+    entity_ref e;
+    std::unordered_set<entity_id> interaction_possibilities_already_found;
+    gather_events(accessor* accessor, entity_id bbcd_id, entity_ref e)
+      :
+      accessor(accessor),
+      bbcd_id(bbcd_id),
+      e(e)
+    {
+      bbcd_entry_metadata& metadata = *accessor->get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      for (entity_id node_id : metadata->nodes) {
+        entity_ref node_ref = accessor->get(node_id);
+        auto& node = accessor->get<ztree_node>(node_ref);
+        gather_events_downwards(node_ref);
+        if (node->parent) {
+          entity_ref node_ref2 = accessor->get(node->parent);
+          while (true) {
+            auto& node2 = accessor->get<ztree_node>(node_ref2);
+            gather_events_at(node2);
+            if (node2->parent) {
+              node_ref2 = accessor->get(node2->parent);
+            }
+            else {
+              break;
+            }
+          }
         }
       }
-      return new_tree;
     }
-    return tree;
-  }
+    
+    void gather_events_at(time_steward::optional<ztree_node> const& node) {
+      for (entity_id other_id : node->objects_here) {
+        auto p = interaction_possibilities_already_found.insert(other_id);
+        if (p.second) {
+          accessor->create_event(spatial_entity_interaction(bbcd_id, e.id(), other_id));
+        }
+      }
+    }
+    
+    void gather_events_downwards(time_steward::optional<ztree_node> const& node) {
+      gather_events_at(node);
+      for (entity_id child_id : node->children) {
+        if (child_id) {
+          gather_events_downwards(accessor->get<ztree_node>(accessor->get(child_id)));
+        }
+      }
+    }
+  };
   
 
   
@@ -730,7 +888,7 @@ private:
     reverse_first_ordering(OrderingFunctor const& o) : OrderingFunctor(o) {}
 
     bool operator()(ComparedType const& a, ComparedType const& b) {
-      return static_cast<OrderingFunctor&>(*this)(b.first(), a.first());
+      return static_cast<OrderingFunctor&>(*this)(b.first, a.first);
     }
   };
 
@@ -739,17 +897,11 @@ private:
   private:
     typedef typename GetCost::cost_type cost_type;
 
-    typedef boost::variant<ztree_node const*, entity_id<SpatialEntitySubclass>> node_variant_type;
-    typedef boost::compressed_pair<cost_type, node_variant_type> queue_value_type_;
+    typedef std::pair<cost_type, entity_id> queue_value_type_;
     // swap greater/less because pq sorts by greatest and we want least by default (as sorting normally is)
     typedef std::priority_queue<queue_value_type_, std::vector<queue_value_type_>, reverse_first_ordering<CostOrdering, queue_value_type_> > queue_type_;
 
-    struct iteree {
-      cost_type cost;
-      entity_id<SpatialEntitySubclass> const& id;
-      iteree(cost_type const& cost, entity_id<SpatialEntitySubclass> id)
-        : cost(cost), id(id) {}
-    };
+    typedef queue_value_type_ iteree;
   public:
     typedef iteree value_type;
     typedef value_type reference;
@@ -759,52 +911,45 @@ private:
 
   private:
     struct contents_ : private GetCost {
-      contents_(bbox_collision_detector const& bbcd, GetCost const& getcost, CostOrdering const& costordering)
-      : GetCost(getcost), queue_(costordering), seen_()
-  #ifdef BBOX_COLLISION_DETECTOR_DEBUG
-      , bbcd_(&bbcd)
-      , revision_count_(bbcd.revision_count_)
-  #endif
-      {}
+      contents_(accessor* accessor, GetCost const& getcost, CostOrdering const& costordering)
+        : GetCost(getcost), accessor(accessor), queue_(costordering), seen_()
+        {}
 
       contents_(contents_&&) = default;
+      accessor* accessor;
       queue_type_ queue_;
-      std::unordered_set<entity_id<SpatialEntitySubclass>> seen_;
-  #ifdef BBOX_COLLISION_DETECTOR_DEBUG
-      bbox_collision_detector const* bbcd_;
-      size_t revision_count_;
-  #endif
+      std::unordered_set<entity_id> seen_;
 
       GetCost& get_get_cost() { return *this; }
 
-      template<typename VariantMember>
-      inline void push_cost(cost_type const& cost, VariantMember v) {
+      inline void push_cost(cost_type const& cost, entity_id v) {
         queue_.push(queue_value_type_(cost, v));
       }
-      template<typename IndirectCostType, typename VariantMember>
+      template<typename IndirectCostType>
       inline typename boost::disable_if<boost::is_convertible<IndirectCostType, cost_type> >::type
-      push_cost(IndirectCostType const& maybe_cost, VariantMember v) {
+      push_cost(IndirectCostType const& maybe_cost, entity_id v) {
         if(maybe_cost) {
           queue_.push(queue_value_type_(*maybe_cost, v));
         }
       }
 
-      void add_child(ztree_node const* child) {
-        if(child) {
-          push_cost(get_get_cost().min_cost(child->here.get_bbox()), child);
+      void add_node(entity_id node_id) {
+        if (node_id) {
+          push_cost(get_get_cost().min_cost(accessor->get<ztree_node>(accessor->get(node_id))->here.get_bbox()), child);
         }
       }
-      void add_child(entity_id<SpatialEntitySubclass> id) {
+      void add_entity(entity_id id) {
         if(!seen_.insert(id)->second) {
           push_cost(get_get_cost().cost(id), id);
         }
       }
 
-      void add_children_of(ztree_node const* node) {
-        add_child(node->child0);
-        add_child(node->child1);
-        for(entity_id<SpatialEntitySubclass> id : node->objects_here) {
-          add_child(id);
+      void add_children_of(ztree_node const& node) {
+        for(entity_id id : node.children) {
+          add_node(id);
+        }
+        for(entity_id id : node.objects_here) {
+          add_entity(id);
         }
       }
     };
@@ -814,20 +959,15 @@ private:
 
     void advance_to_a_returnable_() {
       if(c_) {
-#ifdef BBOX_COLLISION_DETECTOR_DEBUG
-      caller_correct_if(c_->revision_count_ == c_->detector_->revision_count_,
-                        "Error: using a bbox_collision_detector iterator "
-                        "after the container has changed!");
-#endif
         while(true) {
           if(c_->queue_.empty()) {
             c_.reset();
             break;
           }
-          if(ztree_node const*const* node_top_ptr = boost::get<ztree_node const*>(&c_->queue_.top().second())) {
-            ztree_node const* node_top = *node_top_ptr;
+          auto const& top_as_node = accessor->get<ztree_node>(accessor->get(c_->queue_.top().second));
+          if(top_as_node) {
             c_->queue_.pop();
-            c_->add_children_of(node_top);
+            c_->add_children_of(*top_as_node);
           }
           else {
             break;
@@ -841,31 +981,21 @@ private:
 
   public:
     iterator() : c_() {}
-    explicit iterator(bbox_collision_detector const& bbcd,
+    explicit iterator(accessor* accessor,
                       GetCost const& getcost = GetCost(),
                       CostOrdering const& costordering = CostOrdering())
-      : c_(new contents_(bbcd, getcost, costordering)) {}
-    template<typename T>
-    explicit iterator(bbox_collision_detector const& bbcd,
-                      T const& initial,
+      : c_(new contents_(accessor, getcost, costordering)) {}
+    explicit iterator(accessor* accessor,
+                      entity_id const& initial,
                       GetCost const& getcost = GetCost(),
                       CostOrdering const& costordering = CostOrdering())
-      : c_(new contents_(bbcd, getcost, costordering)) {
-      push(initial);
-    }
-
-    template<typename T>
-    void push(T const& v) { c_->add_child(v); advance_to_a_returnable_(); }
-    template<typename InputIterator>
-    void push(InputIterator begin, InputIterator end) {
-      for( ; begin != end; ++begin) { c_->add_child(*begin); }
-      advance_to_a_returnable_();
+      : c_(new contents_(accessor, getcost, costordering)) {
+      c_->add_node(initial); advance_to_a_returnable_();
     }
 
     reference operator*() const {
       caller_error_if(c_->queue_.empty(), "can't dereference an empty iterator");
-      queue_value_type_ const& top = c_->queue_.top();
-      return iteree(top.first(), boost::get<entity_id<SpatialEntitySubclass>>(top.second()));
+      return c_->queue_.top();
     }
     pointer operator->() const { return pointer(*(*this)); }
     pointer operator++(int) {
@@ -894,44 +1024,47 @@ private:
 
   template<typename GetCostBool>
   static inline void filter_impl(
-        ztree_node const* tree,
-        std::unordered_set<entity_id<const SpatialEntitySubclass>>& results,
+        accessor* accessor,
+        entity_id node_id,
+        std::unordered_set<entity_id>& results,
         GetCostBool& getcost) {
-    if (tree) {
+    if (node_id) {
+      auto const& node = accessor->get<ztree_node>(accessor->get(node_id));
       if(bool_with_error_if_implicit_conversions_to_bool_and_cost_type_are_ambiguous<GetCostBool>(
-            getcost.min_cost(tree->here.get_bbox()))) {
-        for(entity_id<const SpatialEntitySubclass> id : tree->objects_here) {
+            getcost.min_cost(node->here.get_bbox()))) {
+        for(entity_id id : node->objects_here) {
           if(bool_with_error_if_implicit_conversions_to_bool_and_cost_type_are_ambiguous<GetCostBool>(
                 getcost.cost(id))) {
             results.insert(id);
           }
         }
-        filter_impl(tree->child0.get(), results, getcost);
-        filter_impl(tree->child1.get(), results, getcost);
+        for(entity_id id : node->children) {
+          filter_impl(id, results, getcost);
+        }
       }
     }
   }
 
 public:
   template<typename GetCost>
-  inline boost::iterator_range<iterator<GetCost>> iterate(GetCost const& getcost) const {
+  inline boost::iterator_range<iterator<GetCost>> iterate(accessor* accessor, entity_id bbcd_id, GetCost const& getcost) const {
     typedef iterator<GetCost> iter;
-    boost::iterator_range<iter> result(iter(*this, objects_tree_.get(), getcost), iter());
+    boost::iterator_range<iter> result(iter(accessor, accessor->get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, getcost), iter());
     return result;
   }
   
   template<typename GetCost>
-  inline boost::optional<typename iterator<GetCost>::value_type> find_least(GetCost const& getcost) const {
+  inline boost::optional<typename iterator<GetCost>::value_type> find_least(accessor* accessor, entity_id bbcd_id, GetCost const& getcost) const {
     typedef iterator<GetCost> iter;
     typedef boost::optional<typename iterator<GetCost>::value_type> result_type;
-    iter i(*this, objects_tree_.get(), getcost);
+    iter i(accessor, accessor->get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, getcost);
     return i ? result_type(*i) : result_type();
   }
 
   template<typename GetCostBool>
-  inline std::unordered_set<entity_id<const SpatialEntitySubclass>> filter(GetCostBool getcost)const {
+  inline std::unordered_set<entity_id<const SpatialEntitySubclass>> filter(accessor* accessor, entity_id bbcd_id, GetCostBool getcost)const {
     std::unordered_set<entity_id<const SpatialEntitySubclass>> results;
-    filter_impl(objects_tree_.get(), results, getcost);
+    filter_impl(accessor, accessor->get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, results, getcost);
     return results;
   }
 

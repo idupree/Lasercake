@@ -509,17 +509,21 @@ class time_steward_accessor {
     persistent_map<trigger_id, trigger_info> triggers;
     bool accessed_preexisting_state;
     bool ever_modified;
+    bool all_triggers_queued;
     void accessed(time_steward_accessor const& acc) {
       if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(fid); }
       if (!ever_modified) { accessed_preexisting_state = true; }
     }
     void modified(time_steward_accessor& acc, field_id fid) {
       ever_modified = true;
-      for (std::pair<trigger_id, trigger_info> const& i : triggers) {
-        if (!i.in_queue) {
-          acc.triggers_queue.emplace(fid, i.first);
-          i.in_queue = true;
+      if (!all_triggers_queued) {
+        for (std::pair<trigger_id, trigger_info> const& i : triggers) {
+          if (!i.in_queue) {
+            acc.triggers_queue.emplace(fid, i.first);
+            i.in_queue = true;
+          }
         }
+        all_triggers_queued = true;
       }
     }
   };
