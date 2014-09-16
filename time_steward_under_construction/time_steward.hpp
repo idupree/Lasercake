@@ -357,7 +357,7 @@ struct combine_hash_with_integer {
   }
 };
 
-typedef siphash_id time_id;
+//typedef siphash_id time_id;
 
 template<typename TimeType = int64_t, TimeType Never = std::numeric_limits<TimeType>::min(), TimeType MinTime = Never+1, class CombineHashWithTimeTypeFuncType = combine_hash_with_integer<TimeType>>
 struct time_type_info {
@@ -368,7 +368,8 @@ struct time_type_info {
   typedef CombineHashWithTimeTypeFuncType combine_hash_with_time_type_func_type;
 };
 
-
+typedef siphash_id entity_id;
+#if 0
 template<typename EntitySubclass> struct entity_id;
 namespace impl {
 template<typename T> entity_id<T> create_entity_id(siphash_id id);
@@ -487,6 +488,95 @@ class null_entity : public standard_entity_base {
 public:
   null_entity* clone()const override{ return new null_entity(*this); }
 };
+#endif
+
+namespace fields_list_impl {
+  class fields_list_nature_base { typedef fields_list_nature confirm; };
+  class empty_fields_list : public fields_list_nature {};
+  class nonempty_fields_list : public fields_list_nature {};
+  class generic_input : public fields_list_nature {};
+  
+  struct two { char c[2]; };
+  template<class T> std::enable_if<std::base_of<fields_list_nature_base, T::fields_list_nature>, char> test();
+  template<class T> two test();
+  template<class T, bool is_specified> struct get_fields_list_nature_impl { typedef T::fields_list_nature type; }
+  template<class T> struct get_fields_list_nature_impl<false> { typedef generic_input type; }
+  template<class T> struct get_fields_list_nature { typedef get_fields_list_nature_impl<T, sizeof(test<T>())==1>::type type; }
+
+  template<typename ...Input> class fields_list;
+  template<typename HeadNature, typename ...Input> class fields_list_contents;
+  template<> class fields_list_contents<empty_fields_list> {
+    typedef empty_fields_list fields_list_nature;
+    static const size_t size = 0;
+    template<typename T> static constexpr size_t idx_of() { static_assert(false, "No field of that type exists"); }
+  }
+  
+  template<typename Head, typename ...Tail>
+  class fields_list_contents<generic_input, Head, Tail...> {
+    typedef nonempty_fields_list fields_list_nature;
+    typedef Head head;
+    typedef fields_list<Tail...> tail;
+    static const size_t idx = tail::size;
+    static const size_t size = tail::size + 1;
+    template<typename T> static constexpr size_t idx_of() { return tail::idx_of<T>(); }
+    template<> static constexpr size_t idx_of<head>() { return idx; }
+  }
+  
+  template<typename Head, typename ...Tail>
+  class fields_list_contents<nonempty_fields_list, Head, Tail...> {
+    typedef nonempty_fields_list fields_list_nature;
+    typedef Head Head::head;
+    typedef fields_list<Head::tail, Tail...> tail;
+  }
+  
+  template<>
+  class fields_list<> : public fields_list_contents<empty_fields_list> {};
+  template<typename Head, typename ...Tail>
+  class fields_list<Head, Tail...> : public fields_list_contents<get_fields_list_nature<Head>, Head, Tail...> {};
+
+  template<class FieldsList, template<typename> class repeated>
+  class foreach_field {
+    typedef repeated<FieldsList::head> head_type;
+    head_type head;
+    foreach_field<FieldsList::tail, repeated> tail;
+    template<typename T> inline repeated<T>& get() { return tail.get<T>(); }
+    template<typename T> inline repeated<T> const& get()const { return tail.get<T>(); }
+    template<> inline repeated<head_type>& get<FieldsList::head>() { return head; }
+    template<> inline repeated<head_type> const& get<FieldsList::head>()const { return head; }
+  }
+  template<template<typename> class repeated>
+  class foreach_field<fields_list<>, repeated> {
+    template<typename T> inline repeated<T>& get() { static_assert(false, "No field of that type exists"); }
+    template<typename T> inline repeated<T> const& get()const { static_assert(false, "No field of that type exists"); }
+  }
+  
+  template<class FieldsList, class repeated>
+  class foreach_field_array {
+    std::array<repeated, FieldsList::size> data;
+    template<typename T> inline repeated& get() { return data[FieldsList::idx_of<T>()]; }
+    template<typename T> inline repeated const& get()const { return data[FieldsList::idx_of<T>()]; }
+  }
+  
+  template<class FieldsList, typename FuncType, template<typename> FuncType func_template>
+  class function_array : foreach_field_array<FuncType*> {
+    function_array() { add_fptr<FieldsList>(); }
+    template<class SubList> inline void add_fptr() {
+      get<SubList::head>() = &func_template<SubList::head>;
+      add_fptr<SubList::tail>();
+    }
+    template<> inline void add_fptr<fields_list<>>() {}
+  }
+  
+  /* e.g.
+  template<typename T>
+  void transfer(foreach_field<list, r1>& a, foreach_field<list, r2>& b) {
+    a.get<T>.insert(std::make_pair(time, b.get<T>));
+  }
+  function_array<list, decltype<transfer<list::head>>, transfer> farray;
+  farray.get<field_example>()(a, t);
+  */
+}
+template<typename ...Input> using fields_list = fields_list_impl::fields_list<Input...>;
 
 template<typename TimeSteward>
 class time_steward_accessor {
