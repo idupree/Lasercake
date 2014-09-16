@@ -369,6 +369,7 @@ struct time_type_info {
 };
 
 typedef siphash_id entity_id;
+const entity_id global_object_id = siphash_id::least();
 #if 0
 template<typename EntitySubclass> struct entity_id;
 namespace impl {
@@ -866,41 +867,128 @@ private:
   typedef extended_time event_pile_id;
   typedef std::set<extended_time> time_set;
   
-  
-  typedef std::unordered_set<entity_id> entity_set;
   struct event_pile_info {
-    event_with_dependencies(std::unique_ptr<event>&& instigating_event) :
+    event_pile_info(std::shared_ptr<event> instigating_event) :
       instigating_event (instigating_event),
       num_instigating_event_creation_dependencies_cut_off (0),
       has_been_executed (false)
       {}
+    event_pile_info(std::shared_ptr<event> instigating_event,
+                    extended_time instigating_event_creation_time,
+                    std::unordered_set<entity_field_id> instigating_event_creation_dependencies) :
+      instigating_event (instigating_event),
+      instigating_event_creation_time (instigating_event_creation_time),
+      instigating_event_creation_dependencies (instigating_event_creation_dependencies),
+      num_instigating_event_creation_dependencies_cut_off (0),
+      has_been_executed (false)
+      {}
     extended_time instigating_event_creation_time;
-    entity_set instigating_event_creation_dependencies;
+    std::unordered_set<entity_field_id> instigating_event_creation_dependencies;
     uint32_t num_instigating_event_creation_dependencies_cut_off;
-    std::unique_ptr<event> instigating_event;
-    entity_set entities_pile_accessed;
-    entity_set entities_pile_modified;
-    time_set instigating_events_pile_created;
+    std::shared_ptr<event> instigating_event;
+    std::unordered_set<entity_field_id> entity_fields_pile_accessed;
+    std::unordered_set<entity_field_id> entity_fields_pile_modified;
+    std::unordered_set<event_pile_id> instigating_events_pile_created;
     bool has_been_executed;
     bool should_be_executed()const { return instigating_event && (num_instigating_event_creation_dependencies_cut_off == 0); }
   };
   
   
   template<typename Field>
-  struct field_throughout_time_info {
-    std::map<extended_time, Field> changes;
+  using field_throughout_time = std::map<extended_time, Field>;
+  template<typename Field>
+  struct field_metadata_throughout_time {
     std::map<extended_time, persistent_map<trigger_id, trigger_info>> triggers_changes;
     std::unordered_set<event_pile_id> event_piles_which_accessed_this;
-    std::unordered_set<event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
+    std::set<event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
   };
-  typedef fields_list_impl::foreach_field<FieldsList, field_throughout_time_info> entity_throughout_time_info;
+  struct entity_throughout_time_info {
+    fields_list_impl::foreach_field<FieldsList, field_throughout_time> fields;
+    fields_list_impl::foreach_field_array<FieldsList, field_metadata_throughout_time> metadata;
+  };
   
+  void cut_off_events(bool cut, entity_throughout_time_info& dst, field_id id, extended_time const& cutoff_time, extended_time const& events_before_this_are_already_cut_off) {
+    for (auto ev = dst.metadata[id].event_piles_whose_instigating_event_creation_accessed_this.upper_bound(time);
+         ev != dst.metadata[id].event_piles_whose_instigating_event_creation_accessed_this.end(); ++ev) {
+      event_pile_info& pile_info = *event_piles.find(*ev);
+      if ((pile_info.instigating_event_creation_time < cutoff_time) &&
+        (pile_info.instigating_event_creation_time >= events_before_this_are_already_cut_off)) {
+        if (cut) {
+          if (pile_info.num_instigating_event_creation_dependencies_cut_off == 0) {
+            if (pile_info.has_been_executed) { event_piles_not_correctly_executed.insert(*ev); }
+            else                              { event_piles_not_correctly_executed.erase (*ev); }
+          }
+          ++pile_info.num_instigating_event_creation_dependencies_cut_off;
+        }
+        else {
+          --pile_info.num_instigating_event_creation_dependencies_cut_off;
+          if (pile_info.should_be_executed()) {
+            event_piles_not_correctly_executed.insert(*ev);
+          }
+        }
+      }
+    }
+  }
   template<typename Field>
-  void copy_change_from_accessor(accessor::entity_info& src, entity_throughout_time_info& dst) {
+  void copy_field_change_from_accessor(extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
+    const auto p = dst.fields.get<Field>().insert(std::make_pair(time, src.get<Field>()));
+    assert(p.second);
+    cut_off_events(true, dst, FieldsList::idx_of<Field>(), time, (p.first == dst.fields.get<Field>().begin()) ? min_time : boost::prior(p.first)->first);
+  }
     
+  
+  void invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(entity_throughout_time_info& e, extended_time const& change_time) {
+    const auto next_change = e.changes.upper_bound(change_time);
+    // upper_bound(), because references at the same extended_time as a event_pile
+    // are that event_pile's own references, and refer to the previous state of the entity.
+    const auto invalidated_event_piles_begin = e.event_piles_which_accessed_this.upper_bound(change_time);
+    const auto invalidated_event_piles_end = (next_change == e.changes.end()) ? e.event_piles_which_accessed_this.end() : e.event_piles_which_accessed_this.upper_bound(next_change->first);
+    // TODO: better to do this with something like std::move?
+    for (auto i = invalidated_event_piles_begin; i != invalidated_event_piles_end; ) {
+      assert(*i != change_time);
+      event_piles_not_correctly_executed.insert(*i);
+      e.event_piles_which_accessed_this.erase(i++);
+    }
+  }
+  template<typename Field>
+  void undo_field_change(extended_time const& time, entity_throughout_time_info& dst) {
+    const auto change_iter = dst.fields.get<Field>().find(time);
+    assert (change_iter != dst.fields.get<Field>().end());
+    const auto change_end_iter = boost::next(change_iter);
+    {
+      const auto end_iter = (change_end_iter == dst.fields.get<Field>().end()) ?
+        dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.end() : 
+        dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.upper_bound(change_end_iter->first);
+      for (auto i = dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.upper_bound(time); i != end_iter; ) {
+        erase_instigating_event(*(i++));
+      }
+    }
+    {
+      const auto begin_iter = dst.metadata.event_piles_which_accessed_this.upper_bound(time);
+      const auto end_iter = (change_end_iter == dst.fields.get<Field>().end()) ?
+        dst.metadata.event_piles_which_accessed_this.end() : 
+        dst.metadata.event_piles_which_accessed_this.upper_bound(change_end_iter->first);
+      // TODO is this std::move any faster? I feel that it is less-easy-to-understand code.
+      //std::move(begin_iter, end_iter, std::inserter(event_piles_not_correctly_executed, event_piles_not_correctly_executed.end()));
+      for (auto i = begin_iter; i != end_iter; ) {
+        e.event_piles_which_accessed_this.erase(i++);
+        event_piles_not_correctly_executed.insert(*i);
+      }
+    }
+    cut_off_events(false, dst, FieldsList::idx_of<Field>(), time, (change_iter == dst.fields.get<Field>().begin()) ? min_time : boost::prior(change_iter)->first);
+    dst.fields.get<Field>().erase(change_iter);
   }
   
-  
+  static const fields_list_impl::function_array<
+    FieldsList,
+    decltype(copy_field_change_from_accessor<FieldsList::head>),
+    copy_field_change_from_accessor>
+    copy_field_change_from_accessor_funcs;
+  static const fields_list_impl::function_array<
+    FieldsList,
+    decltype(undo_field_change<FieldsList::head>),
+    undo_field_change>
+    undo_field_change_funcs;
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
@@ -918,7 +1006,7 @@ public:
     // TODO
     const extended_time t(time, combine_hash_with_time_type_func_type()(siphash_id(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
-    insert_instigating_event(t, std::move(e));
+    insert_instigating_event(t, event_pile_info(e));
   }
   void erase_fiat_event(time_type time, uint64_t distinguisher) {
     const extended_time t(time, siphash_id(distinguisher));
@@ -968,26 +1056,27 @@ private:
   bool is_updated_through(extended_time const& time)const {
     return event_piles_not_correctly_executed.empty() || *event_piles_not_correctly_executed.begin() >  time;
   }
-  entity const* get_actual_entity_data_before(entity_id<entity> const& id, extended_time const& time) {
+  /*entity const* get_actual_entity_data_before(entity_id<entity> const& id, extended_time const& time) {
     update_until_time(time);
     return get_provisional_entity_data_before(id, time);
-  }
-  entity const* get_provisional_entity_data_before(entity_id<entity> const& id, extended_time const& time)const {
+  }*/
+  template<typename Field>
+  Field const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
     const auto entity_stream_iter = entities.find(id);
     if (entity_stream_iter == entities.end()) {
-      assert(false); // TODO: This might be an external client code error, so throw an exception instead.
+      return Field();
     }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto next_change_iter = e.changes.upper_bound(time);
+    const auto next_change_iter = e.get<Field>().changes.upper_bound(time);
     if (next_change_iter == e.changes.begin()) {
-      assert(false); // TODO: This might be an external client code error, so throw an exception instead.
+      return Field();
     }
     return &*boost::prior(next_change_iter)->second;
   }
   
-  void insert_instigating_event(extended_time const& time, std::shared_ptr<event> e) {
-    const auto p1 = event_piles.insert(std::make_pair(time, event_pile_info(std::move(e))));
+  void insert_instigating_event(extended_time const& time, event_pile_info& e) {
+    const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
     const auto p2 = event_piles_not_correctly_executed.insert(time);
     assert(p2.second);
@@ -998,11 +1087,11 @@ private:
       event_piles_not_correctly_executed.erase(time);
       event_pile_info& pile_info = event_pile_iter->second;
       pile_info.instigating_event = nullptr;
-      for (entity_id id : pile_info.instigating_event_creation_dependencies) {
-        const auto entity_stream_iter = entities.find(id);
+      for (entity_field_id id : pile_info.instigating_event_creation_dependencies) {
+        const auto entity_stream_iter = entities.find(id.e);
         assert (entity_stream_iter != entities.end());
-        entity_throughout_time_info& e = entity_stream_iter->second;
-        boost::prior(e.changes.upper_bound(pile_info.instigating_event_creation_time))->anticipated_instigating_events.erase(time);
+        field_metadata_throughout_time& metadata = entity_stream_iter->second.metadata[id.f];
+        metadata.event_piles_whose_instigating_event_creation_accessed_this.erase(time);
       }
       if (pile_info.has_been_executed) {
         event_piles_not_correctly_executed.insert(time);
@@ -1032,49 +1121,21 @@ private:
       accessor a(this, time);
       a.process_event(pile_info.instigating_event.get());
       
-      for (std::pair<const entity_id<entity>, typename accessor::entity_and_ways_it_has_been_referenced>& i : a.local_entities_) {
-        entity_throughout_time_info& e = entities[i.first]; // Default-construct if it's not there
-        //entity_changes_map::iterator current_change;
-        if (i.second.accessed_preexisting_state) {
-          event.accessed_entities.insert(i.first);
-          const auto p = entities[i.first].event_piles_which_accessed_this.insert(time);
-          assert(p.second);
-        }
-        if (i.second.modified) {
-          event.modified_entities.insert(i.first);
-          const auto p = e.changes.insert(std::make_pair(time, std::move(i.second.e)));
-          assert(p.second);
-          //current_change = p.first;
-          if (p.first != e.changes.begin()) {
-            const auto cut_off = boost::prior(p.first);
-            for (auto ev = cut_off->second.anticipated_instigating_events.upper_bound(time); ev != cut_off->second.anticipated_instigating_events.end(); ++ev) {
-              event_pile_info& pile_info2 = *event_piles.find(*ev);
-              if (pile_info2.num_instigating_event_creation_dependencies_cut_off == 0) {
-                if (pile_info2.has_been_executed) { event_piles_not_correctly_executed.insert(*ev); }
-                else                              { event_piles_not_correctly_executed.erase (*ev); }
-              }
-              ++pile_info2.num_instigating_event_creation_dependencies_cut_off;
-            }
-          }
-        }
-        //else {
-        //  current_change = boost::prior(e.changes.upper_bound(time));
-        //}
+      for (entity_field_id const& id : a.entity_fields_preexisting_state_accessed) {
+        pile_info.entity_fields_pile_accessed.insert(id);
+        const auto p = entities[id.e].metadata[id.f].event_piles_which_accessed_this.insert(time);
+        assert(p.second);
       }
-      uint64_t distinguisher = 0;
+      for (entity_field_id const& id : a.entity_fields_modified) {
+        pile_info.entity_fields_pile_modified.insert(id);
+        copy_change_from_accessor_funcs[id.f](time, a.entities.find(id.e)->fields, *entities.find(id.e));
+      }
+      
       for (accessor::upcoming_event_info ev : a.stale_new_upcoming_events) {
-        if (a.upcoming_event_info_still_valid(ev)) {
-          // This function is one of exactly two places where
-          // (persistent) extended_times are created.
-          // Uniqueness justification:
-          // TODO
-          const extended_time t(ev.when, siphash_id(time.id, distinguisher));
-          insert_instigating_event(t, ev.e);
-          for (std::pair<entity_id<entity>, invalidation_counter_t> p : ev.dependencies) {
-            const auto i = entities.find(p.first); assert(i != entities.end());
-            const auto j = i->changes.upper_bound(time); assert(j != i->changes.begin());
-            boost::prior(j)->anticipated_instigating_events.insert(t);
-          }
+        insert_instigating_event(ev.time, event_pile_info(ev.e, time, ev.dependencies));
+        pile_info.instigating_events_pile_created.insert(ev.time);
+        for (entity_field_id id : ev.dependencies) {
+          entities[id.e].metadata[id.f].event_piles_whose_instigating_event_creation_accessed_this.insert(ev.time);
         }
       }
       // a is destroyed here
@@ -1096,46 +1157,19 @@ private:
     event_pile_info& pile_info = event_pile_iter->second;
     if (!pile_info.has_been_executed) return;
     
-    for (extended_time t : pile_info.instigating_events_pile_created) {
+    for (extended_time const& t : pile_info.instigating_events_pile_created) {
       erase_instigating_event(t);
     }
-    for (entity_id<entity> const& id : pile_info.entities_pile_accessed) {
-      const auto i = entities.find(id); assert(i != entities.end());
-      i->second.event_piles_which_accessed_this.erase(time);
+    for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
+      const auto i = entities.find(id.e); assert(i != entities.end());
+      const auto j = i->metadata[id.f].event_piles_which_accessed_this.erase(time);
+      assert(j);
     }
-    for (entity_id<entity> const& id : pile_info.entities_pile_modified) {
-      erase_entity_change(e, time);
-      const auto entity_stream_iter = entities.find(id);
-      assert (entity_stream_iter != entities.end());
-      entity_throughout_time_info& e = entity_stream_iter->second;
-      invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(e, time);
-      
-      const auto entity_change_iter = e.changes.find(time);
-      assert (entity_change_iter != e.changes.end());
-      
-      const time_set removed_instigating_events = std::move(entity_change_iter->anticipated_instigating_events); entity_change_iter->anticipated_instigating_events = time_set();
-      for (extended_time t : removed_instigating_events) {
-        erase_instigating_event(t);
-      }
-      if (entity_change_iter != e.changes.begin()) {
-        const auto cut_off = boost::prior(entity_change_iter);
-        for (auto ev = cut_off->second.anticipated_instigating_events.upper_bound(time); ev != cut_off->second.anticipated_instigating_events.end(); ++ev) {
-          event_pile_info& pile_info2 = event_piles.find(*ev);
-          --pile_info2.num_instigating_event_creation_dependencies_cut_off;
-          if (pile_info2.should_be_executed()) {
-            event_piles_not_correctly_executed.insert(*ev);
-          }
-        }
-      }
-      
-      e.changes.erase(entity_change_iter);
-      if (e.changes.empty()) {
-        assert (e.event_piles_which_accessed_this.empty());
-        entities.erase(entity_stream_iter);
-      }
+    for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
+      undo_field_change_funcs[id.f](time, *entities.find(id.e));
     }
-    pile_info.entities_pile_accessed.clear();
-    pile_info.entities_pile_modified.clear();
+    pile_info.entity_fields_pile_accessed.clear();
+    pile_info.entity_fields_pile_modified.clear();
     pile_info.instigating_events_pile_created.clear();
     
     pile_info.has_been_executed = false;
@@ -1147,20 +1181,6 @@ private:
       return true;
     }
     return false;
-  }
-  
-  void invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(entity_throughout_time_info& e, extended_time const& change_time) {
-    const auto next_change = e.changes.upper_bound(change_time);
-    // upper_bound(), because references at the same extended_time as a event_pile
-    // are that event_pile's own references, and refer to the previous state of the entity.
-    const auto invalidated_event_piles_begin = e.event_piles_which_accessed_this.upper_bound(change_time);
-    const auto invalidated_event_piles_end = (next_change == e.changes.end()) ? e.event_piles_which_accessed_this.end() : e.event_piles_which_accessed_this.upper_bound(next_change->first);
-    // TODO: better to do this with something like std::move?
-    for (auto i = invalidated_event_piles_begin; i != invalidated_event_piles_end; ) {
-      assert(*i != change_time);
-      event_piles_not_correctly_executed.insert(*i);
-      e.event_piles_which_accessed_this.erase(i++);
-    }
   }
 };
 
