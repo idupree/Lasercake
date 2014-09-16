@@ -580,6 +580,7 @@ template<typename ...Input> using fields_list = fields_list_impl::fields_list<In
 
 template<typename TimeSteward>
 class time_steward_accessor {
+  typedef typename TimeSteward::entity_fields entity_fields;
   typedef typename TimeSteward::entity entity;
   typedef typename TimeSteward::extended_time extended_time;
   typedef typename TimeSteward::time_type time_type;
@@ -595,17 +596,33 @@ class time_steward_accessor {
     bool in_queue;
   };
   
+  template<typename Field>
+  using field_info = Field;
+  /*struct field_info {
+    Field data;
+  };*/
   struct field_metadata {
     persistent_map<trigger_id, trigger_info> triggers;
     bool accessed_preexisting_state;
     bool ever_modified;
     bool all_triggers_queued;
-    void accessed(time_steward_accessor const& acc) {
+    void accessed(time_steward_accessor const& acc, entity_field_id fid) {
       if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(fid); }
-      if (!ever_modified) { accessed_preexisting_state = true; }
+      // If we already overwrote a field,
+      // then this is not accessing the field's state *before* this time.
+      if (!ever_modified && !accessed_preexisting_state) {
+        accessed_preexisting_state = true;
+        acc.entity_fields_preexisting_state_accessed.insert(fid);
+        triggers = ts_.get_provisional_triggers_active_before(fid);
+        return true;
+      }
+      return false;
     }
-    void modified(time_steward_accessor& acc, field_id fid) {
-      ever_modified = true;
+    void modified(time_steward_accessor& acc, entity_field_id fid) {
+      if (!ever_modified) {
+        ever_modified = true;
+        acc.entity_fields_modified.insert(fid);
+      }
       if (!all_triggers_queued) {
         for (std::pair<trigger_id, trigger_info> const& i : triggers) {
           if (!i.in_queue) {
@@ -621,236 +638,149 @@ class time_steward_accessor {
   template<typename FieldsList>
   struct entity_info {
     entity_id id;
-    FieldsList fields;
-    std::array<field_metadata, FieldsList::size> metadata;
+    fields_list_impl::foreach_field<entity_fields, field_info> fields;
+    fields_list_impl::foreach_field_array<field_metadata> metadata;
   };
   
-public:  
-  template<typename FieldContents, typename FieldsList>
-  inline FieldContents const& get(entity_info<FieldsList> const& e)const {
-    const field_id fid(e.id, FieldsList::index_of<FieldContents>::idx);
-    if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(fid); }
-    metadata[idx].accessed(*this);
-    return e.fields.get<FieldContents>();
-  }
-  template<typename FieldContents, typename FieldsList>
-  inline FieldContents& get_mut(entity_info<FieldsList>& e) {
-    const size_t idx = FieldsList::index_of<FieldContents>::idx;
-    const field_id fid(e.id, idx);
-    metadata[idx].accessed(*this);
-    metadata[idx].modified(*this, fid);
-    return e.fields.get_mut<FieldContents>();
-  }
-  template<typename FieldContents, typename FieldsList>
-  inline FieldContents& replace_field(entity_info<FieldsList>& e, FieldContents new_contents) {
-    const size_t idx = FieldsList::index_of<FieldContents>::idx;
-    const field_id fid(e.id, idx);
-    metadata[idx].modified(*this, fid);
-    return e.fields.replace<FieldContents>(new_contents);
-  }
-private:
-    
-    
-  struct queued_trigger_info {
-    std::shared_ptr<const trigger> t;
-    entity_id<entity> eid;
-    trigger_id tid;
-    invalidation_counter_t invalidation_counter;
-  };
-  struct event_info {
-    event const* e;
-  };
-  struct upcoming_event_info {
-    std::shared_ptr<const event> e;
-    std::unordered_map<entity_id<entity>, invalidation_counter_t> dependencies;
-  };
-  struct transient_entity_info {
-    transient_entity_info(std::unique_ptr<entity>&& e, triggers, bool accessed_preexisting_state, bool modified)
-      : e(std::move(e)), triggers(std::move(triggers)), accessed_preexisting_state(accessed_preexisting_state), modified(modified) {}
-    std::unique_ptr<entity> e;
-    std::map<trigger_id, trigger_info> triggers;
-    uint32_t invalidation_counter;
-    bool accessed_preexisting_state;
-    bool modified;
-  };
+  struct entity_ref {
   public:
-    // If we already overwrote (or created) an entity,
-    // then this is not accessing the entity's state *before* this time,
-    // so it doesn't count as an access.
-    // TODO maybe allow non dynamic castable (nonvirtual) entities
-    // TODO do we need both get()s?
-    template<typename T>
-    entity_ref<T const> get(entity_id<T> id)const {
-      if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(id); }
-      return dynamic_pointer_cast<T const>(
-        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false).e.get(), id));
-    };
-    template<typename T>
-    entity_ref<T const> get(entity_id<T const> id)const {
-      if (event_whenfunc_access_tracker) { event_whenfunc_access_tracker->insert(id); }
-      return dynamic_pointer_cast<T const>(
-        entity_ref<entity const>(require_local_entity(reinterpret_entity_id<entity>(id), false).e.get(), id));
-    };
-    template<typename T>
-    entity_ref<T> get_mut(entity_id<T> id) {
-      return dynamic_pointer_cast<T>(
-        entity_ref<entity>(require_local_entity(id, true).e.get(), id));
-    };
-    void create_event(std::unique_ptr<consequential_event> e) {
-      fresh_new_upcoming_events.push_back(std::move(e));
-    };
-    void create_trigger(entity_id<entity> eid, trigger_id tid, std::shared_ptr<const trigger> t) {
-      transient_entity_info& info = require_local_entity(eid, false);
-      info.triggers.insert(std::pair<trigger_id, trigger_info>(tid, trigger_info(t, true)));
-      triggers_queue.emplace(t, eid, tid, info.invalidation_counter);
-    };
-    void delete_trigger(entity_id<entity> eid, trigger_id tid) {
-      require_local_entity(eid, false).triggers.erase(tid, t);
-    };
-    time_type now()const {
-      return time_.base_time;
-    }
-    template<typename T>
-    entity_ref<T> create_entity(std::unique_ptr<T> e) {
-      // All entity IDs must be unique.
-      // This function is one of the two ways that new entity IDs are created.
-      // (The other is the fixed entity ID of the global object.)
-      // As long as the other requirement is preserved - that
-      // no two events are allowed to happen at the same extended_time -
-      // this will result in all unique entity IDs.
-      T* entity_ptr = &*e;
-      ++entities_created_;
-      const entity_id<T> id = impl::create_entity_id<T>(siphash_id(time_.id, entities_created_));
-      const auto inserted = local_entities_.insert(
-        std::pair<entity_id<entity>, transient_entity_info>(
-          id,
-          transient_entity_info(std::move(e), nothing, false, true)));
-      assert(inserted.second);
-      return entity_ref<T>(entity_ptr, id);
-    }
-    // replaces the entity with id "id" with a new entity value
-    template<typename T>
-    entity_ref<T> replace_entity(entity_id<entity> id, std::unique_ptr<T> e) {
-      T* entity_ptr = &*e;
-      // insert a dummy unique_ptr first so that we don't lose the
-      // ownership if insertion hits an object that's already there.
-      const auto inserted = local_entities_.insert(
-        std::pair<entity_id<entity>, transient_entity_info>(
-          id,
-          transient_entity_info(std::unique_ptr<entity>(), nothing, false, true)));
-      inserted.first->second.e = std::move(e);
-      // (retain old value of accessed_preexisting_state if it already existed)
-      inserted.first->second.modified = true;
-      return entity_ref<T>(entity_ptr, reinterpret_entity_id<T>(id));
-    }
-    void delete_entity(entity_id<entity> id) {
-      replace_entity(id, std::unique_ptr<null_entity>(new null_entity()));
-    }
-    
-    time_steward_accessor(time_steward_accessor const&) = delete;
-    time_steward_accessor(time_steward_accessor&&) = delete;
-    time_steward_accessor& operator=(time_steward_accessor const&) = delete;
-    time_steward_accessor& operator=(time_steward_accessor&&) = delete;
+    entity_id id()const { return data->id; }
   private:
-    TimeSteward const* ts_;
-    extended_time time_;
-    size_t entities_created_;
-    mutable std::unordered_map<entity_id<entity>, transient_entity_info> local_entities_;
-    std::queue<queued_event_info> events_queue;
-    std::queue<upcoming_event_info> triggers_queue;
-    std::vector<std::unique_ptr<consequential_event>> fresh_new_upcoming_events;
-    std::vector<std::pair<time_type, upcoming_event_info>> stale_new_upcoming_events;
-    std::unordered_set<entity_id<entity>> fresh_modifications;
-    std::unordered_set<entity_id<entity>> *event_whenfunc_access_tracker;
+    entity_info* data;
+    friend class time_steward_accessor;
+  };
+  
+  template<typename Field>
+  void copy_change_from_accessor(accessor::entity_info& src, entity_throughout_time_info& dst) {
+    
+  }
+  
+  template<typename Field>
+  inline Field& get_impl(entity_ref e)const {
+    const size_t idx = entity_fields::idx_of<Field>();
+    Field& result = e.data->fields.get<Field>();
+    const entity_field_id fid(e.id, idx);
+    if (e.data->metadata[idx].accessed(*this, fid)) {
+      result = ts_.get_provisional_entity_field_before<Field>(e.id());
+    }
+    return result;
+  }
+  
+  struct queued_trigger_info {
+    entity_field_id fid;
+    trigger_id tid;
+  };
+    
+  struct upcoming_event_info {
+    std::shared_ptr<const consequential_event> e;
+    extended_time time;
+    std::unordered_set<entity_id> dependencies;
+  };
+  
+public:
+  inline entity_ref get(entity_id id)const {
+    entity_info& e = entities[id];
+    e.id = id;
+    return &e;
+  }
+  
+  template<typename Field> inline Field const& get    (entity_ref e)const { return get_impl(e); }
+  template<typename Field> inline Field      & get_mut(entity_ref e) {
+    Field& result = get_impl(e);
+    const size_t idx = entity_fields::idx_of<Field>();
+    e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
+    return result;
+  }
+  template<typename Field>
+  inline Field& set(entity_ref e, Field new_contents) {
+    const size_t idx = entity_fields::idx_of<Field>();
+    e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
+    Field& result = e.data->fields.get<Field>();
+    result = new_contents;
+    return result;
+  }
+  
+  void create_event(std::unique_ptr<const consequential_event> e) {
+    fresh_new_upcoming_events.push_back(std::move(e));
+  };
+  void create_trigger(entity_field_id fid, trigger_id tid, std::shared_ptr<const trigger> t) {
+    entity_ref e = get(fid.eid)
+    field_metadata& metadata = e.data->metadata[fid.fid];
+    trigger_info& inf = metadata.triggers[tid];
+    inf.t = t;
+    if (!inf.in_queue) {
+      triggers_queue.emplace(fid, tid);
+    }
+    inf.in_queue = true;
+  };
+  void delete_trigger(entity_field_id fid, trigger_id tid) {
+    entity_ref e = get(fid.eid)
+    field_metadata& metadata = e.data->metadata[fid.fid];
+    metadata.triggers.erase(tid);
+  };
+  time_type now()const {
+    return time_.base_time;
+  }
+  entity_ref create_entity() {
+    // All entity IDs must be unique.
+    // This function is one of the two ways that new entity IDs are created.
+    // (The other is the fixed entity ID of the global object.)
+    // As long as the other requirement is preserved - that
+    // no two events are allowed to happen at extended_times with the same ID -
+    // this will result in all unique entity IDs.
+    return get(create_id());
+  }
+    
+  time_steward_accessor(time_steward_accessor const&) = delete;
+  time_steward_accessor(time_steward_accessor&&) = delete;
+  time_steward_accessor& operator=(time_steward_accessor const&) = delete;
+  time_steward_accessor& operator=(time_steward_accessor&&) = delete;
+private:
+  TimeSteward const* ts_;
+  extended_time time_;
+  size_t ids_created_;
+  mutable std::unordered_map<entity_id, entity_info> entities;
+  std::queue<queued_trigger_info> triggers_queue;
+  std::vector<std::unique_ptr<consequential_event>> fresh_new_upcoming_events;
+  std::vector<upcoming_event_info> stale_new_upcoming_events;
+  std::unordered_set<entity_field_id> *event_whenfunc_access_tracker;
+  std::unordered_set<entity_field_id> entity_fields_modified;
+  std::unordered_set<entity_field_id> entity_fields_preexisting_state_accessed;
 
-    transient_entity_info& require_local_entity(entity_id<entity> id, bool modified)const {
-      const auto iter = local_entities_.find(id);
-      if (iter == local_entities_.end()) {
-        // accessed_preexisting_state should be true iff we do ts_->get_provisional_entity_data_before for an entity.
-        std::unique_ptr<entity> e(ts_->get_provisional_entity_data_before(id, time_)->clone());
-        std::map<trigger_id, std::shared_ptr<trigger>> triggers = ts_->get_provisional_triggers_active_before(id, time_);
-        const auto inserted = local_entities_.insert(
-          std::pair<entity_id<entity>, transient_entity_info>(
-            id,
-            transient_entity_info(std::move(e), triggers, true, modified)));
-        assert(inserted.second);
-        iter = inserted.first;
+  siphash_id create_id() { return siphash_id(time_.id(), ids_created_++); }
+    
+  time_steward_accessor(TimeSteward const* ts, extended_time const& time):ts_(ts),time_(time),ids_created_(0){}
+  void process_event(event const* e) {
+    (*e)(this);
+    while (!triggers_queue.empty()) {
+      const queued_trigger_info t = triggers_queue.front();
+      triggers_queue.pop();
+      entity_info& info = *entities.find(t.fid.eid)
+      field_metadata& metadata = info.metadata[t.fid.fid];
+      auto trigger_iter = metadata.triggers.find(t.tid);
+      if (trigger_iter != metadata.triggers.end()) {
+        trigger_iter->second.in_queue = false;
+        metadata.all_triggers_queued = false;
+        (*trigger_iter->second.t)(this, &info);
       }
-      
-      if (modified) {
-        iter->second.modified = true;
-        fresh_modifications.insert(id);
-      }
-      
-      return iter->second;
     }
     
-    bool upcoming_event_info_still_valid(upcoming_event_info const& i)const {
-      for (std::pair<entity_id<entity>, invalidation_counter_t> p : i.dependencies) {
-        transient_entity_info const& info = require_local_entity(p.first, false);
-        if (info.invalidation_counter != p.second) { return false; }
-      }
-      return true;
-    }
-    
-    time_steward_accessor(TimeSteward const* ts, extended_time const& time):ts_(ts),time_(time),entities_created_(0){}
-    void process_follow_ups() {
-      for (entity_id<entity> id : fresh_modifications) {
-        transient_entity_info& info = require_local_entity(id, false);
-        ++info.invalidation_counter;
-        for (std::pair<trigger_id, trigger_info> const& i : info.triggers) {
-          if (!i.in_queue) {
-            triggers_queue.emplace(i.second.t, id, i.first, info.invalidation_counter);
-            i.in_queue = true;
-          }
-        }
-      }
-      fresh_modifications.clear();
+    for (auto new_upcoming_event : fresh_new_upcoming_events) {
+      upcoming_event_info inf;
+      event_whenfunc_access_tracker = &inf.dependencies;
+      const time_type t = new_upcoming_event->when(this);
+      event_whenfunc_access_tracker = nullptr;
       
-      while (!triggers_queue.empty()) {
-        const queued_trigger_info t = triggers_queue.front();
-        triggers_queue.pop();
-        transient_entity_info& info = require_local_entity(t.eid, false);
-        if (info.invalidation_counter == t.invalidation_counter) {
-          (*t.t)(this, entity_ref<entity>(info.e.get(), t.eid));
-          process_follow_ups();
-          return;
-        }
-      }
-      
-      for (auto new_upcoming_event : fresh_new_upcoming_events) {
-        std::unordered_set<entity_id<entity>> tracker;
-        event_whenfunc_access_tracker = &tracker;
-        const time_type t = new_upcoming_event.func->when(this, new_upcoming_event.eid);
-        event_whenfunc_access_tracker = nullptr;
-        upcoming_event_info inf(new_upcoming_event.func);
-        for (entity_id<entity> id : tracker) {
-          inf.dependencies.insert(std::make_pair(id, require_local_entity(id, false).invalidation_counter));
-        }
-        
-        if (t != never) {
-          if (t == time_.base_time) {
-            events_queue.push(std::move(inf));
-          }
-          else {
-            assert(t > time_.base_time); // TODO an exception
-            stale_new_upcoming_events.push_back(std::pair<time_type, upcoming_event_info>(t, std::move(inf)));
-          }
-        }
-      }
-      fresh_new_upcoming_events.clear();
-      
-      while (!events_queue.empty()) {
-        const upcoming_event_info e = events_queue.front();
-        events_queue.pop();
-        if (upcoming_event_info_still_valid(e)) {
-          (*e.e)(this);
-          process_follow_ups();
-          return;
-        }
+      if (t != never) {
+        assert(t >= time_.base_time); // TODO an exception
+        inf.e.swap(new_upcoming_event);
+        inf.time = (t == time_.base_time) ? extended_time(time_, create_id()) : extended_time(t, create_id());
+        stale_new_upcoming_events.push_back(inf);
       }
     }
-    friend TimeSteward;
+    fresh_new_upcoming_events.clear();
+  }
+  friend TimeSteward;
 };
 
 namespace impl {
@@ -858,33 +788,58 @@ template<typename TimeTypeInfo>
 struct extended_time {
   typedef typename TimeTypeInfo::time_type time_type;
 
-    time_type base_time;
-    time_id id;
-    struct first_t{}; struct last_t{}; static const first_t first; static const last_t last;
-    extended_time(time_type base_time, first_t):base_time(base_time),id(siphash_id::least()){}
-    extended_time(time_type base_time,  last_t):base_time(base_time),id(siphash_id::greatest()){}
-    extended_time(time_type base_time, siphash_id id):base_time(base_time),id(id){}
-    
-    bool operator==(extended_time const& o)const { return id == o.id; }
-    bool operator!=(extended_time const& o)const { return id != o.id; }
-    bool operator<(extended_time const& o)const {
-      if (base_time < o.base_time) return true;
-      if (base_time > o.base_time) return false;
-      return id < o.id;
+  time_type base_time;
+  // We construct extended_times with new unique ids;
+  // some of them extend old extended_times, so tiebreakers.front() is not unique among extended_times.
+  // However, tiebreakers.back() is unique among extended_times.
+  // TODO: a structure with better copy asymptotics than std::vector and better constant speed for short values.
+  std::vector<siphash_id> tiebreakers;
+  siphash_id id()const { return tiebreakers.back(); }
+  struct first_t{}; struct last_t{}; static const first_t first; static const last_t last;
+  extended_time(time_type base_time, first_t):base_time(base_time),tiebreakers(siphash_id::least()){}
+  extended_time(time_type base_time,  last_t):base_time(base_time),tiebreakers(siphash_id::greatest()){}
+  extended_time(time_type base_time, siphash_id tiebreaker):base_time(base_time),tiebreakers(id){}
+  extended_time(extended_time base_exttime, siphash_id further_tiebreaker)
+      :
+      base_time(base_exttime.base_time),
+      tiebreakers(base_exttime.tiebreakers)
+  {
+    tiebreakers.push_back(further_tiebreaker);
+  }
+  
+  bool operator==(extended_time const& o)const { return id() == o.id(); }
+  bool operator!=(extended_time const& o)const { return id() != o.id(); }
+  bool operator<(extended_time const& o)const {
+    if (base_time < o.base_time) { return true; }
+    if (base_time > o.base_time) { return false; }
+    for (size_t i = 0; ; ++i) {
+      if (i == o.tiebreakers.size()) { return false; }
+      else if (i == tiebreakers.size()) { return true; }
+      else {
+        if (tiebreakers[i] < o.tiebreakers[i]) { return true; }
+        if (tiebreakers[i] > o.tiebreakers[i]) { return false; }
+      }
     }
-    bool operator>(extended_time const& o)const { return o < *this; }
-    bool operator>=(extended_time const& o)const { return !(*this < o); }
-    bool operator<=(extended_time const& o)const { return !(o < *this); }
-
-  // For use with std::unordered_[set|map].
-  // Since the id is already a hash, just return some of it.
-  struct hash {
-    size_t operator()(extended_time const& t)const { return std::hash<siphash_id>()(t.id); }
-  };
+  }
+  bool operator>(extended_time const& o)const { return o < *this; }
+  bool operator>=(extended_time const& o)const { return !(*this < o); }
+  bool operator<=(extended_time const& o)const { return !(o < *this); }
 };
 }
 
-template<class TimeTypeInfo = time_type_info<>, class EntityData = standard_entity_base/*, class Event = */>
+} //end namespace time_steward_system
+namespace std {
+  template<typename TimeTypeInfo>
+  class hash<time_steward_system::impl::extended_time<TimeTypeInfo>> {
+    public:
+    size_t operator()(time_steward_system::impl::extended_time<TimeTypeInfo> const& t)const {
+      return std::hash<time_steward_system::siphash_id>()(t.id());
+    }
+  };
+}
+namespace time_steward_system {
+
+template<class TimeTypeInfo = time_type_info<>, class FieldsList/*, class Event = */>
 class time_steward {
 public:
   typedef time_steward_accessor<time_steward> accessor;
@@ -908,14 +863,11 @@ public:
 private:
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
   typedef impl::extended_time<TimeTypeInfo> extended_time;
+  typedef extended_time event_pile_id;
   typedef std::set<extended_time> time_set;
-  struct entity_change {
-    std::unique_ptr<entity> e;
-    time_set anticipated_instigating_events;
-  };
-  typedef std::map<extended_time, entity_change> entity_changes_map;
-  typedef typename extended_time::hash extended_time_hash;
-  typedef std::unordered_set<entity_id<entity>> entity_set;
+  
+  
+  typedef std::unordered_set<entity_id> entity_set;
   struct event_pile_info {
     event_with_dependencies(std::unique_ptr<event>&& instigating_event) :
       instigating_event (instigating_event),
@@ -933,39 +885,38 @@ private:
     bool should_be_executed()const { return instigating_event && (num_instigating_event_creation_dependencies_cut_off == 0); }
   };
   
-  struct field_metadata {
+  
+  template<typename Field>
+  struct field_throughout_time_info {
+    std::map<extended_time, Field> changes;
     std::map<extended_time, persistent_map<trigger_id, trigger_info>> triggers_changes;
     std::unordered_set<event_pile_id> event_piles_which_accessed_this;
     std::unordered_set<event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
   };
+  typedef fields_list_impl::foreach_field<FieldsList, field_throughout_time_info> entity_throughout_time_info;
+  
+  template<typename Field>
+  void copy_change_from_accessor(accessor::entity_info& src, entity_throughout_time_info& dst) {
     
-  template<class FieldsList>
-  struct entity_throughout_existence_info {
-    field_maps<FieldsList> fields;
-    std::array<field_metadata, FieldsList::size> metadata;
   }
-  struct entity_throughout_time_info {
-    std::map<extended_time, entity_throughout_existence_info> changes;
-  };
+  
+  
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
-  typedef std::unordered_map<extended_time, event_pile_info, extended_time_hash> event_piles_map;
-  typedef std::unordered_map<entity_id<entity>, entity_throughout_time_info> entities_map;
+  typedef std::unordered_map<event_pile_id, event_pile_info> event_piles_map;
+  typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
 
   friend class time_steward_accessor<time_steward>;
 public:
+  time_steward() {}
   
-  time_steward(std::unique_ptr<entity> initial_state_of_global_object) {
-    entities[global_object_id<entity>()].changes.insert(std::make_pair(extended_time(TimeTypeInfo::min_time, extended_time::first), std::move(initial_state_of_global_object)));
-  }
-  
-  void insert_fiat_event(time_type time, distinguisher, std::unique_ptr<event> e) {
+  void insert_fiat_event(time_type time, uint64_t distinguisher, std::unique_ptr<event> e) {
     // This function is one of exactly two places where
     // (persistent) extended_times are created.
     // Uniqueness justification:
     // TODO
-    const extended_time t(time, combine_hash_with_time_type_func_type()(siphash_id(distinguisher), base_time));
+    const extended_time t(time, combine_hash_with_time_type_func_type()(siphash_id(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
     insert_instigating_event(t, std::move(e));
   }
@@ -978,12 +929,12 @@ public:
   //   e.g., for display.
   // Output of these should never find their way into internal client code,
   //   and it's a little strange (but ok) to have them affect FiatEvents.
-  template<typename T>
+  /*template<typename T>
   entity_ref<T const> get_entity_data_after(entity_id<T> const& id, time_type const& time) {
     // Note: For collision safety, these extended_times must not persist.
     return dynamic_pointer_cast<T const>(entity_ref<entity const>(
       get_actual_entity_data_before(id, extended_time(time, extended_time::last))));
-  }
+  }*/
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
     extended_time et(time, extended_time::last);
     update_through_time(et);
@@ -1079,8 +1030,7 @@ private:
     if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
       accessor a(this, time);
-      (*pile_info.instigating_event)(&a);
-      a.process_follow_ups();
+      a.process_event(pile_info.instigating_event.get());
       
       for (std::pair<const entity_id<entity>, typename accessor::entity_and_ways_it_has_been_referenced>& i : a.local_entities_) {
         entity_throughout_time_info& e = entities[i.first]; // Default-construct if it's not there
