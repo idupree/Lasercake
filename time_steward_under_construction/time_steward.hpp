@@ -247,6 +247,9 @@ uint64_t siphash24(const void *src,
                    unsigned long src_sz,
                    const char key[16]);
 
+template<typename ...T> using persistent_map = std::map<T...>;
+template<typename ...T> using persistent_set = std::set<T...>;
+
 namespace time_steward_system {
 
 #pragma GCC diagnostic push
@@ -357,8 +360,6 @@ struct combine_hash_with_integer {
   }
 };
 
-//typedef siphash_id time_id;
-
 template<typename TimeType = int64_t, TimeType Never = std::numeric_limits<TimeType>::min(), TimeType MinTime = Never+1, class CombineHashWithTimeTypeFuncType = combine_hash_with_integer<TimeType>>
 struct time_type_info {
   static_assert(Never < MinTime, "Never must be less than MinTime");
@@ -370,126 +371,8 @@ struct time_type_info {
 
 typedef siphash_id entity_id;
 const entity_id global_object_id = siphash_id::least();
-#if 0
-template<typename EntitySubclass> struct entity_id;
-namespace impl {
-template<typename T> entity_id<T> create_entity_id(siphash_id id);
-template<typename T> siphash_id get_untyped_id(entity_id<T> id);
-}
 
-template<typename EntitySubclass>
-struct entity_id {
-  entity_id() {}
-
-  // entity_id<E1> can be converted to entity_id<E2> iff E1* can be converted to E2*
-  template<typename DerivedEntity> entity_id(entity_id<DerivedEntity> id, EntitySubclass* = static_cast<DerivedEntity*>(nullptr))
-    : id_(id.id_) {}
-  
-  template<class T, class U>
-  friend inline entity_id<T> reinterpret_entity_id(entity_id<U> const& r);
-
-  explicit operator bool()const {
-    return id_ != siphash_id::null();
-  }
-private:
-  siphash_id id_;
-
-  template<typename T> friend struct entity_id;
-  template<typename T> friend entity_id<T> impl::create_entity_id(siphash_id id);
-  template<typename T> friend siphash_id impl::get_untyped_id(entity_id<T> id);
-};
-template<class T, class U>
-inline entity_id<T> reinterpret_entity_id(entity_id<U> const& r) {
-  return impl::create_entity_id<T>(r.id_);;
-}
-template<class T, class U>
-bool operator==(entity_id<T> a, entity_id<U> b) { return impl::get_untyped_id(a) == impl::get_untyped_id(b); }
-template<class T, class U>
-bool operator!=(entity_id<T> a, entity_id<U> b) { return impl::get_untyped_id(a) != impl::get_untyped_id(b); }
-
-namespace impl {
-template<typename T>
-entity_id<T> create_entity_id(siphash_id id) {
-  entity_id<T> e;
-  e.id_ = id;
-  return e;
-}
-template<typename T>
-siphash_id get_untyped_id(entity_id<T> id) {
-  return id.id_;
-}
-}
-template<typename T>
-entity_id<T> global_object_id() { return impl::create_entity_id<T>(siphash_id::least()); }
-
-
-template<typename TimeSteward>
-class time_steward_accessor;
-
-template<typename EntitySubclass>
-class entity_ref {
-public:
-  // implicit conversion from non-const to const and derived to base
-  template<typename DerivedEntity> entity_ref(entity_ref<DerivedEntity> er)
-    : e_(er.e_), id_(er.id_) {}
-
-  entity_id<EntitySubclass> id()const {
-    return id_;
-  }
-  EntitySubclass* operator->()const {
-    return e_;
-  }
-  EntitySubclass& operator*()const {
-    return *e_;
-  }
-  explicit operator bool()const {
-    return e_;
-  }
-  
-  friend bool operator==(entity_ref a, entity_ref b) { return a.e_ == b.e_; }
-  friend bool operator!=(entity_ref a, entity_ref b) { return a.e_ != b.e_; }
-
-private:
-  template<typename> friend class time_steward_accessor;
-  template<typename> friend class entity_ref;
-  template<class T, class U>
-  friend entity_ref<T> dynamic_pointer_cast(entity_ref<U> const& r);
-
-  entity_ref(EntitySubclass* e, entity_id<EntitySubclass> id) : e_(e), id_(id) {}
-
-  EntitySubclass* e_;
-  entity_id<EntitySubclass> id_;
-};
-template<class T, class U>
-inline entity_ref<T> dynamic_pointer_cast(entity_ref<U> const& r) {
-  return entity_ref<T>(dynamic_cast<T*>(r.e_), reinterpret_entity_id<T>(r.id()));
-}
-
-} //end namespace time_steward_system
-namespace std {
-  template<typename EntitySubclass>
-  class hash<time_steward_system::entity_id<EntitySubclass>> {
-    public:
-    size_t operator()(time_steward_system::entity_id<EntitySubclass> const& i)const {
-      return std::hash<time_steward_system::siphash_id>()(time_steward_system::impl::get_untyped_id(i));
-    }
-  };
-}
-namespace time_steward_system {
-
-template<typename EntitySubclass>
-using entity_const_ref = entity_ref<const EntitySubclass>;
-
-class standard_entity_base {
-public:
-  virtual standard_entity_base* clone()const = 0;
-  virtual ~standard_entity_base(){}
-};
-class null_entity : public standard_entity_base {
-public:
-  null_entity* clone()const override{ return new null_entity(*this); }
-};
-#endif
+typedef size_t field_id;
 
 namespace fields_list_impl {
   class fields_list_nature_base { typedef fields_list_nature confirm; };
@@ -509,7 +392,7 @@ namespace fields_list_impl {
   template<> class fields_list_contents<empty_fields_list> {
     typedef empty_fields_list fields_list_nature;
     static const size_t size = 0;
-    template<typename T> static constexpr size_t idx_of() { static_assert(false, "No field of that type exists"); }
+    template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
   }
   
   template<typename Head, typename ...Tail>
@@ -517,10 +400,10 @@ namespace fields_list_impl {
     typedef nonempty_fields_list fields_list_nature;
     typedef Head head;
     typedef fields_list<Tail...> tail;
-    static const size_t idx = tail::size;
+    static const field_id idx = tail::size;
     static const size_t size = tail::size + 1;
-    template<typename T> static constexpr size_t idx_of() { return tail::idx_of<T>(); }
-    template<> static constexpr size_t idx_of<head>() { return idx; }
+    template<typename T> static constexpr field_id idx_of() { return tail::idx_of<T>(); }
+    template<> static constexpr field_id idx_of<head>() { return idx; }
   }
   
   template<typename Head, typename ...Tail>
@@ -567,17 +450,13 @@ namespace fields_list_impl {
     }
     template<> inline void add_fptr<fields_list<>>() {}
   }
-  
-  /* e.g.
-  template<typename T>
-  void transfer(foreach_field<list, r1>& a, foreach_field<list, r2>& b) {
-    a.get<T>.insert(std::make_pair(time, b.get<T>));
-  }
-  function_array<list, decltype<transfer<list::head>>, transfer> farray;
-  farray.get<field_example>()(a, t);
-  */
 }
 template<typename ...Input> using fields_list = fields_list_impl::fields_list<Input...>;
+struct entity_field_id {
+  entity_field_id(entity_id e, field_id f):e(e),f(f){}
+  entity_id e;
+  field_id f;
+}
 
 template<typename TimeSteward>
 class time_steward_accessor {
@@ -606,28 +485,29 @@ class time_steward_accessor {
     persistent_map<trigger_id, trigger_info> triggers;
     bool accessed_preexisting_state;
     bool ever_modified;
+    bool triggers_ever_modified;
     bool all_triggers_queued;
-    void accessed(time_steward_accessor const& acc, entity_field_id fid) {
-      if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(fid); }
+    void accessed(time_steward_accessor const& acc, entity_field_id id) {
+      if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(id); }
       // If we already overwrote a field,
       // then this is not accessing the field's state *before* this time.
       if (!ever_modified && !accessed_preexisting_state) {
         accessed_preexisting_state = true;
-        acc.entity_fields_preexisting_state_accessed.insert(fid);
-        triggers = ts_.get_provisional_triggers_active_before(fid);
+        acc.entity_fields_preexisting_state_accessed.push_back(id);
+        triggers = ts_.get_provisional_triggers_active_before(id);
         return true;
       }
       return false;
     }
-    void modified(time_steward_accessor& acc, entity_field_id fid) {
+    void modified(time_steward_accessor& acc, entity_field_id id) {
       if (!ever_modified) {
         ever_modified = true;
-        acc.entity_fields_modified.insert(fid);
+        acc.entity_fields_modified.push_back(id);
       }
       if (!all_triggers_queued) {
         for (std::pair<trigger_id, trigger_info> const& i : triggers) {
           if (!i.in_queue) {
-            acc.triggers_queue.emplace(fid, i.first);
+            acc.triggers_queue.emplace(id, i.first);
             i.in_queue = true;
           }
         }
@@ -652,23 +532,18 @@ class time_steward_accessor {
   };
   
   template<typename Field>
-  void copy_change_from_accessor(accessor::entity_info& src, entity_throughout_time_info& dst) {
-    
-  }
-  
-  template<typename Field>
   inline Field& get_impl(entity_ref e)const {
-    const size_t idx = entity_fields::idx_of<Field>();
+    const field_id idx = entity_fields::idx_of<Field>();
     Field& result = e.data->fields.get<Field>();
-    const entity_field_id fid(e.id, idx);
-    if (e.data->metadata[idx].accessed(*this, fid)) {
+    const entity_field_id id(e.id, idx);
+    if (e.data->metadata[idx].accessed(*this, id)) {
       result = ts_.get_provisional_entity_field_before<Field>(e.id());
     }
     return result;
   }
   
   struct queued_trigger_info {
-    entity_field_id fid;
+    entity_field_id efid;
     trigger_id tid;
   };
     
@@ -688,13 +563,13 @@ public:
   template<typename Field> inline Field const& get    (entity_ref e)const { return get_impl(e); }
   template<typename Field> inline Field      & get_mut(entity_ref e) {
     Field& result = get_impl(e);
-    const size_t idx = entity_fields::idx_of<Field>();
+    const field_id idx = entity_fields::idx_of<Field>();
     e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
     return result;
   }
   template<typename Field>
   inline Field& set(entity_ref e, Field new_contents) {
-    const size_t idx = entity_fields::idx_of<Field>();
+    const field_id idx = entity_fields::idx_of<Field>();
     e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
     Field& result = e.data->fields.get<Field>();
     result = new_contents;
@@ -704,20 +579,24 @@ public:
   void create_event(std::unique_ptr<const consequential_event> e) {
     fresh_new_upcoming_events.push_back(std::move(e));
   };
-  void create_trigger(entity_field_id fid, trigger_id tid, std::shared_ptr<const trigger> t) {
-    entity_ref e = get(fid.eid)
-    field_metadata& metadata = e.data->metadata[fid.fid];
-    trigger_info& inf = metadata.triggers[tid];
-    inf.t = t;
-    if (!inf.in_queue) {
-      triggers_queue.emplace(fid, tid);
+  void set_trigger(entity_field_id id, trigger_id tid, std::shared_ptr<const trigger> t) {
+    entity_ref e = get(id.e);
+    field_metadata& metadata = e.data->metadata[id.f];
+    if (!metadata.triggers_ever_modified) {
+      metadata.triggers_ever_modified = true;
+      entity_fields_triggers_modified.push_back(id);
     }
-    inf.in_queue = true;
-  };
-  void delete_trigger(entity_field_id fid, trigger_id tid) {
-    entity_ref e = get(fid.eid)
-    field_metadata& metadata = e.data->metadata[fid.fid];
-    metadata.triggers.erase(tid);
+    if (t) {
+      trigger_info& inf = metadata.triggers[tid];
+      inf.t = t;
+      if (!inf.in_queue) {
+        triggers_queue.emplace(id, tid);
+      }
+      inf.in_queue = true;
+    }
+    else {
+      metadata.triggers.erase(tid);
+    }
   };
   time_type now()const {
     return time_.base_time;
@@ -745,8 +624,9 @@ private:
   std::vector<std::unique_ptr<consequential_event>> fresh_new_upcoming_events;
   std::vector<upcoming_event_info> stale_new_upcoming_events;
   std::unordered_set<entity_field_id> *event_whenfunc_access_tracker;
-  std::unordered_set<entity_field_id> entity_fields_modified;
-  std::unordered_set<entity_field_id> entity_fields_preexisting_state_accessed;
+  std::vector<entity_field_id> entity_fields_modified;
+  std::vector<entity_field_id> entity_fields_triggers_modified;
+  std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
 
   siphash_id create_id() { return siphash_id(time_.id(), ids_created_++); }
     
@@ -796,7 +676,9 @@ struct extended_time {
   // TODO: a structure with better copy asymptotics than std::vector and better constant speed for short values.
   std::vector<siphash_id> tiebreakers;
   siphash_id id()const { return tiebreakers.back(); }
+  
   struct first_t{}; struct last_t{}; static const first_t first; static const last_t last;
+  extended_time():base_time(TimeTypeInfo::never),tiebreakers(siphash_id()){}
   extended_time(time_type base_time, first_t):base_time(base_time),tiebreakers(siphash_id::least()){}
   extended_time(time_type base_time,  last_t):base_time(base_time),tiebreakers(siphash_id::greatest()){}
   extended_time(time_type base_time, siphash_id tiebreaker):base_time(base_time),tiebreakers(id){}
@@ -843,29 +725,33 @@ namespace time_steward_system {
 template<class TimeTypeInfo = time_type_info<>, class FieldsList/*, class Event = */>
 class time_steward {
 public:
+  typedef FieldsList entity_fields;
   typedef time_steward_accessor<time_steward> accessor;
+  
   typedef typename TimeTypeInfo::time_type time_type;
   static const time_type min_time = TimeTypeInfo::min_time;
   static const time_type never = TimeTypeInfo::never;
-  typedef EntityData entity;
+  
   // TODO can the action/event/trigger stuff be template parameters rather than always being virtual classes to be subclassed?
   class action {
   public:
     virtual void operator()(accessor* accessor)const = 0;
     virtual ~action(){}
   };
+  class trigger {
+  public:
+    virtual void operator()(accessor* accessor, accessor::entity_ref e)const = 0;
+    virtual ~trigger(){}
+  };
   typedef action event;
-  typedef action trigger;
   class consequential_event : virtual public event {
   public:
-    virtual void operator()(accessor* accessor)const = 0;
     virtual time_type when(accessor const* accessor)const = 0;
   };
 private:
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
   typedef impl::extended_time<TimeTypeInfo> extended_time;
   typedef extended_time event_pile_id;
-  typedef std::set<extended_time> time_set;
   
   struct event_pile_info {
     event_pile_info(std::shared_ptr<event> instigating_event) :
@@ -875,7 +761,7 @@ private:
       {}
     event_pile_info(std::shared_ptr<event> instigating_event,
                     extended_time instigating_event_creation_time,
-                    std::unordered_set<entity_field_id> instigating_event_creation_dependencies) :
+                    std::unordered_set<entity_field_id>&& instigating_event_creation_dependencies) :
       instigating_event (instigating_event),
       instigating_event_creation_time (instigating_event_creation_time),
       instigating_event_creation_dependencies (instigating_event_creation_dependencies),
@@ -900,31 +786,31 @@ private:
   struct field_metadata_throughout_time {
     std::map<extended_time, persistent_map<trigger_id, trigger_info>> triggers_changes;
     std::unordered_set<event_pile_id> event_piles_which_accessed_this;
-    std::set<event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
+    std::multimap<extended_time, event_pile_id> event_piles_whose_instigating_event_creation_accessed_this;
   };
   struct entity_throughout_time_info {
-    fields_list_impl::foreach_field<FieldsList, field_throughout_time> fields;
-    fields_list_impl::foreach_field_array<FieldsList, field_metadata_throughout_time> metadata;
+    fields_list_impl::foreach_field<entity_fields, field_throughout_time> fields;
+    fields_list_impl::foreach_field_array<entity_fields, field_metadata_throughout_time> metadata;
   };
   
   void cut_off_events(bool cut, entity_throughout_time_info& dst, field_id id, extended_time const& cutoff_time, extended_time const& events_before_this_are_already_cut_off) {
-    for (auto ev = dst.metadata[id].event_piles_whose_instigating_event_creation_accessed_this.upper_bound(time);
-         ev != dst.metadata[id].event_piles_whose_instigating_event_creation_accessed_this.end(); ++ev) {
-      event_pile_info& pile_info = *event_piles.find(*ev);
-      if ((pile_info.instigating_event_creation_time < cutoff_time) &&
-        (pile_info.instigating_event_creation_time >= events_before_this_are_already_cut_off)) {
-        if (cut) {
-          if (pile_info.num_instigating_event_creation_dependencies_cut_off == 0) {
-            if (pile_info.has_been_executed) { event_piles_not_correctly_executed.insert(*ev); }
-            else                              { event_piles_not_correctly_executed.erase (*ev); }
-          }
-          ++pile_info.num_instigating_event_creation_dependencies_cut_off;
+    // lower_bound(), because event creation takes place after the action of an event_pile
+    // and therefore refer to the value after it, not the one before it.
+    const auto begin_iter = dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.lower_bound(events_before_this_are_already_cut_off);
+    const auto end_iter = dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.lower_bound(cutoff_time);
+    for (auto ev = begin_iter; ev != end_iter; ++ev) {
+      event_pile_info& pile_info = *event_piles.find(ev->second);
+      if (cut) {
+        if (pile_info.num_instigating_event_creation_dependencies_cut_off == 0) {
+          if (pile_info.has_been_executed) { event_piles_not_correctly_executed.insert(*ev); }
+          else                             { event_piles_not_correctly_executed.erase (*ev); }
         }
-        else {
-          --pile_info.num_instigating_event_creation_dependencies_cut_off;
-          if (pile_info.should_be_executed()) {
-            event_piles_not_correctly_executed.insert(*ev);
-          }
+        ++pile_info.num_instigating_event_creation_dependencies_cut_off;
+      }
+      else {
+        --pile_info.num_instigating_event_creation_dependencies_cut_off;
+        if (pile_info.should_be_executed()) {
+          event_piles_not_correctly_executed.insert(*ev);
         }
       }
     }
@@ -933,60 +819,48 @@ private:
   void copy_field_change_from_accessor(extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
     const auto p = dst.fields.get<Field>().insert(std::make_pair(time, src.get<Field>()));
     assert(p.second);
-    cut_off_events(true, dst, FieldsList::idx_of<Field>(), time, (p.first == dst.fields.get<Field>().begin()) ? min_time : boost::prior(p.first)->first);
+    cut_off_events(true, dst, entity_fields::idx_of<Field>(), time, (p.first == dst.fields.get<Field>().begin()) ? min_time : boost::prior(p.first)->first);
   }
-    
   
-  void invalidate_event_piles_that_accessed_entity_when_it_was_defined_by_the_change_at(entity_throughout_time_info& e, extended_time const& change_time) {
-    const auto next_change = e.changes.upper_bound(change_time);
-    // upper_bound(), because references at the same extended_time as a event_pile
-    // are that event_pile's own references, and refer to the previous state of the entity.
-    const auto invalidated_event_piles_begin = e.event_piles_which_accessed_this.upper_bound(change_time);
-    const auto invalidated_event_piles_end = (next_change == e.changes.end()) ? e.event_piles_which_accessed_this.end() : e.event_piles_which_accessed_this.upper_bound(next_change->first);
-    // TODO: better to do this with something like std::move?
-    for (auto i = invalidated_event_piles_begin; i != invalidated_event_piles_end; ) {
-      assert(*i != change_time);
-      event_piles_not_correctly_executed.insert(*i);
-      e.event_piles_which_accessed_this.erase(i++);
-    }
-  }
   template<typename Field>
   void undo_field_change(extended_time const& time, entity_throughout_time_info& dst) {
     const auto change_iter = dst.fields.get<Field>().find(time);
     assert (change_iter != dst.fields.get<Field>().end());
     const auto change_end_iter = boost::next(change_iter);
     {
+      // lower_bound(), because event creation takes place after the action of an event_pile
+      // and therefore refer to the value after it, not the one before it.
+      const auto begin_iter = dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.lower_bound(time);
       const auto end_iter = (change_end_iter == dst.fields.get<Field>().end()) ?
         dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.end() : 
-        dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.upper_bound(change_end_iter->first);
-      for (auto i = dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.upper_bound(time); i != end_iter; ) {
+        dst.metadata.event_piles_whose_instigating_event_creation_accessed_this.lower_bound(change_end_iter->first);
+      for (auto i = begin_iter; i != end_iter; ) {
         erase_instigating_event(*(i++));
       }
     }
     {
+      // upper_bound(), because references at the same extended_time as a event_pile
+      // are that event_pile's own references, and refer to the previous state of the entity.
       const auto begin_iter = dst.metadata.event_piles_which_accessed_this.upper_bound(time);
       const auto end_iter = (change_end_iter == dst.fields.get<Field>().end()) ?
         dst.metadata.event_piles_which_accessed_this.end() : 
         dst.metadata.event_piles_which_accessed_this.upper_bound(change_end_iter->first);
-      // TODO is this std::move any faster? I feel that it is less-easy-to-understand code.
-      //std::move(begin_iter, end_iter, std::inserter(event_piles_not_correctly_executed, event_piles_not_correctly_executed.end()));
-      for (auto i = begin_iter; i != end_iter; ) {
-        e.event_piles_which_accessed_this.erase(i++);
-        event_piles_not_correctly_executed.insert(*i);
+      for (auto i = begin_iter; i != end_iter; ++i) {
+        event_piles_not_correctly_executed.insert(i->second);
       }
     }
-    cut_off_events(false, dst, FieldsList::idx_of<Field>(), time, (change_iter == dst.fields.get<Field>().begin()) ? min_time : boost::prior(change_iter)->first);
+    cut_off_events(false, dst, entity_fields::idx_of<Field>(), time, (change_iter == dst.fields.get<Field>().begin()) ? min_time : boost::prior(change_iter)->first);
     dst.fields.get<Field>().erase(change_iter);
   }
   
   static const fields_list_impl::function_array<
-    FieldsList,
-    decltype(copy_field_change_from_accessor<FieldsList::head>),
+    entity_fields,
+    decltype(copy_field_change_from_accessor<entity_fields::head>),
     copy_field_change_from_accessor>
     copy_field_change_from_accessor_funcs;
   static const fields_list_impl::function_array<
-    FieldsList,
-    decltype(undo_field_change<FieldsList::head>),
+    entity_fields,
+    decltype(undo_field_change<entity_fields::head>),
     undo_field_change>
     undo_field_change_funcs;
   
@@ -1042,7 +916,7 @@ public:
 private:
   entities_map entities;
   event_piles_map event_piles;
-  time_set event_piles_not_correctly_executed;
+  std::set<extended_time> event_piles_not_correctly_executed;
   
   void update_through_time(extended_time const& time) {
     while (!is_updated_through(time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
@@ -1063,15 +937,20 @@ private:
   template<typename Field>
   Field const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
     const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) {
-      return Field();
-    }
+    if (entity_stream_iter == entities.end()) { return Field(); }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto next_change_iter = e.get<Field>().changes.upper_bound(time);
-    if (next_change_iter == e.changes.begin()) {
-      return Field();
-    }
+    const auto next_change_iter = e.fields.get<Field>().changes.upper_bound(time);
+    if (next_change_iter == e.changes.begin()) { return Field(); }
+    return &*boost::prior(next_change_iter)->second;
+  }
+  persistent_map<trigger_id, trigger_info> get_provisional_triggers_active_before(entity_field_id id, extended_time const& time)const {
+    const auto entity_stream_iter = entities.find(id.e);
+    if (entity_stream_iter == entities.end()) { return persistent_map<trigger_id, trigger_info>(); }
+    
+    entity_throughout_time_info const& e = entity_stream_iter->second;
+    const auto next_change_iter = e.metadata[id.f].triggers_changes.upper_bound(time);
+    if (next_change_iter == e.changes.begin()) { return persistent_map<trigger_id, trigger_info>(); }
     return &*boost::prior(next_change_iter)->second;
   }
   
@@ -1091,7 +970,7 @@ private:
         const auto entity_stream_iter = entities.find(id.e);
         assert (entity_stream_iter != entities.end());
         field_metadata_throughout_time& metadata = entity_stream_iter->second.metadata[id.f];
-        metadata.event_piles_whose_instigating_event_creation_accessed_this.erase(time);
+        metadata.event_piles_whose_instigating_event_creation_accessed_this.erase(pile_info.instigating_event_creation_time);
       }
       if (pile_info.has_been_executed) {
         event_piles_not_correctly_executed.insert(time);
@@ -1130,13 +1009,18 @@ private:
         pile_info.entity_fields_pile_modified.insert(id);
         copy_change_from_accessor_funcs[id.f](time, a.entities.find(id.e)->fields, *entities.find(id.e));
       }
+      for (entity_field_id const& id : a.entity_fields_triggers_modified) {
+        pile_info.entity_fields_pile_modified.insert(id);
+        const auto p = entities[id.e].metadata[id.f].triggers_changes.insert(std::make_pair(time, a.entities.find(id.e)->metadata.triggers));
+        assert(p.second);
+      }
       
       for (accessor::upcoming_event_info ev : a.stale_new_upcoming_events) {
-        insert_instigating_event(ev.time, event_pile_info(ev.e, time, ev.dependencies));
-        pile_info.instigating_events_pile_created.insert(ev.time);
         for (entity_field_id id : ev.dependencies) {
-          entities[id.e].metadata[id.f].event_piles_whose_instigating_event_creation_accessed_this.insert(ev.time);
+          entities[id.e].metadata[id.f].event_piles_whose_instigating_event_creation_accessed_this.insert(std::make_pair(time, ev.time));
         }
+        insert_instigating_event(ev.time, event_pile_info(ev.e, time, std::move(ev.dependencies)));
+        pile_info.instigating_events_pile_created.insert(ev.time);
       }
       // a is destroyed here
     }
