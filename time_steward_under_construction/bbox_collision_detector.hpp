@@ -48,8 +48,22 @@ private:
   value_type v_;
 };
 
+template<typename T, typename ...List>
+struct type_is_in_list;
+template<typename T>
+struct type_is_in_list<T>() { static const bool value = false; }
+template<typename T, typename Head, typename ...Tail>
+struct type_is_in_list<T, Head, Tail...>() { static const bool value = std::is_same<T, Head> || type_is_in_list<T, Tail...>; }
+
 template<num_bits_type CoordinateBits, num_coordinates_type NumDimensions>
-struct bbox_collision_detector_accessories {
+struct bbox_collision_detector_system {
+  static const num_bits_type coordinate_bits = SpatialEntitySubclass::coordinate_bits;
+  static const num_coordinates_type num_dimensions = SpatialEntitySubclass::num_dimensions;
+  static_assert(num_dimensions >= 0, "You can't make a space with negative dimensions!");
+  typedef ptrdiff_t num_zboxes_type;
+  static_assert(num_dimensions < std::numeric_limits<num_zboxes_type>::digits - 1,
+    "We don't permit so many dimensions that one bounding_box might need more zboxes than we can count.");
+  static_assert(coordinate_bits >= 0, "You can't have an int type with negative bits!");
 public:
   static const num_bits_type coordinate_bits = CoordinateBits;
   static const num_coordinates_type num_dimensions = NumDimensions;
@@ -314,11 +328,86 @@ public:
   }
 };
 
+// The bbox_collision_detector has a "z-tree".  This
+// is a binary tree.  Keys in the tree are zboxes (see above).
+// Values are entity_ids; each zbox may have any number
+// of entity_ids.  This code is happy for objects to overlap
+// each other, and besides, even non-overlapping objects often
+// have a minimal containing zbox in common.
+//
+// Because of the definition of zboxes, either they are
+// A: the same, and thus the same ztree_node
+// B: one is smaller and fully within the node, and it is a
+//          descendant of the other
+// C: they don't overlap at all, and in the ztree neither is a
+//          descendant of the other.
+// (In particular, zboxes can't partially overlap each other.)
+//
+// An object may need to be in up to (2**num_dimensions) zboxes
+// so that the area covered by its zboxes is only a constant
+// factor larger than the object's regular (non-z-order) bounding
+// box.  Consider an object that's a box of width 2 or 3 with
+// x min-coordinate 10111111 and max 11000001 (binary).  The minimal
+// common prefix there is just a single bit; a single bit means
+// a huge box.  Conceptually, dimensions' bits are interleaved
+// before looking for a common prefix; any dimension has the
+// potential to differ in a high bit and disrupt the common prefix.
+// Splitting the object across two zboxes, for each dimension,
+// is sufficient to avoid this explosion.
+//
+// Specifically, a ztree is a Patricia trie on z-ordered
+// bits (zboxes), where the bits are seen as a sequence with the
+// highest-order bits first and the sequence-length equal to the
+// number of high bits specified by a given key/ztree_node/zbox.
+// The ztree_node happens to contain (unlike typical tries) the
+// entire key that it represents, because the key is small and
+// constant-sized and it's generally easier to do so.
+//
+// What goes into children[0] vs. children[1]?  If trying to insert, say,
+// the zbox B = 10100??? (binary, 5 high bits, 3 low bits) into
+// A = 10??????, B goes at or below A's child1 because B's next bit
+// after A's bits is 1.  (Current: 10, next: 101).
+//
+// If there would be a node with zero entity_ids and
+// only one child, then that child node goes there directly
+// instead of that trivial node.  If the tree, to be correct,
+// needs nodes with two children and zero entity_ids,
+// then it will have them.
+/*
+
+If there's one zbox in the tree [call it Z]
+
+root_node = ztree_node {
+  Z
+  entity_id()
+  entity_id()
+  entity_id()
+}
+
+Two zboxes that differ at bit B:
+child0 of a node with B ignored bits is the child whose Bth bit is 0.
+root_node = ztree_node at entity_id FOO {
+  the common leading bits of Z1 and Z2, with B ignored bits
+  entity_id()
+  entity_id to ztree_node {
+    Z1
+    FOO
+    entity_id()
+    entity_id()
+  }
+  entity_id to ztree_node {
+    Z2
+    FOO
+    entity_id()
+    entity_id()
+  }
+}
+
+*/
 struct ztree_node {
   const zbox here;
-  entity_id child0;
-  entity_id child1;
   entity_id parent;
+  std::array<entity_id, 2> children;
   persistent_set<entity_id> objects_here;
 
   ztree_node(zbox box, entity_id parent):here(box),parent(parent){}
@@ -333,160 +422,54 @@ struct spatial_entity_metadata {
 struct bbox_collision_detector_root_node {
   entity_id root_node_id_;
 };
-template<class FuncsType>
-struct bbox_collision_detector_funcs {
-  FuncsType funcs_;
-  
-  template<bool empty> struct bbox_collision_detector_funcs_field { typedef bbox_collision_detector_funcs value; }
-  template<> struct bbox_collision_detector_funcs_field<true> { typedef time_steward_system::fields_list<> value; }
-  
-  typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bbox_collision_detector_root_node, bbox_collision_detector_funcs_field<std::is_empty<FuncsType>::value>> fields;
-};
 
+typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bbox_collision_detector_root_node> fields;
 
-}; // struct bbox_collision_detector_accessories
-
-
-#if 0
-template<class TimeSteward, num_bits_type CoordinateBits, num_coordinates_type NumDimensions>
-class bbox_collision_detector_spatial_entity : virtual public TimeSteward::entity {
+template<typename ...SpatialFields>
+struct with_spatial_fields {
 public:
-  template<typename T> using entity_id = time_steward_system::entity_id<T>;
-  template<typename T> using entity_ref = time_steward_system::entity_ref<T>;
-  typedef TimeSteward time_steward;
-  typedef typename time_steward::time_type time_type;
-  typedef typename time_steward::accessor accessor;
-  static const num_bits_type coordinate_bits = CoordinateBits;
-  typedef typename boost::uint_t<coordinate_bits>::fast coordinate_type;
-  static const num_coordinates_type num_dimensions = NumDimensions;
-  typedef bbox_collision_detector_accessories<coordinate_bits, num_dimensions> accessories;
-  typedef typename accessories::bounding_box bounding_box;
-  typedef typename accessories::coordinate_array coordinate_array;
-  
-  //For the subclass to implement:
-  //
-  //static bounding_box bbox(accessor const* accessor,
-  //                         entity_ref<const SpatialEntitySubclass> ent) = 0;
-  //
-  //static time_type escape_time(accessor const* accessor,
-  //                             entity_ref<const SpatialEntitySubclass> ent,
-  //                             bounding_box const& bbox) = 0;
-  //
-  // returns nullptr for "no interaction"
-  //static std::unique_ptr<event_type> next_interaction(accessor const* accessor,
-  //                       entity_ref<const SpatialEntitySubclass> ent1,
-  //                       entity_ref<const SpatialEntitySubclass> ent2) = 0;
+class spatial_fields_ref {
+public:
+  spatial_fields_ref(entity_ref e, accessor const* accessor):e(e),accessor(accessor){}
+  template<typename SpatialField>
+  optional<SpatialField> const& get() {
+    static_assert(type_is_in_list<SpatialField, SpatialFields...>::value, "Trying to access a non-spatial field with a spatial_fields_ref");
+    return accessor->get<SpatialField>(e);
+  }
 private:
-  template<typename SpatialEntitySubclass> friend class bbox_collision_detector;
+  entity_ref e;
+  accessor const* accessor;
 };
-#endif
-
-template<typename TimeSteward, class FuncsType>
-class bbox_collision_detector_stuff {
-private:
-  static const num_bits_type coordinate_bits = SpatialEntitySubclass::coordinate_bits;
-  static const num_coordinates_type num_dimensions = SpatialEntitySubclass::num_dimensions;
-  static_assert(num_dimensions >= 0, "You can't make a space with negative dimensions!");
-  typedef ptrdiff_t num_zboxes_type;
-  static_assert(num_dimensions < std::numeric_limits<num_zboxes_type>::digits - 1,
-    "We don't permit so many dimensions that one bounding_box might need more zboxes than we can count.");
-  static_assert(coordinate_bits >= 0, "You can't have an int type with negative bits!");
-  typedef bbox_collision_detector_accessories<coordinate_bits, num_dimensions> accessories;
-  template<typename T> using entity_id = time_steward_system::entity_id<T>;
-  template<typename T> using entity_ref = time_steward_system::entity_ref<T>;
+  
+// For the FuncsType to implement:
+//
+// bounding_box bbox(accessor const* accessor, entity_ref e)
+// time_type escape_time(accessor const* accessor, entity_ref e, bounding_box const& bbox)
+// // returns never for "no interaction"
+// time_type interaction_time(spatial_fields_ref s0, spatial_fields_ref s1)
+// void interact(accessor* accessor, entity_ref e0, entity_ref e1)
+//
+// If FuncsType::required_field exists,
+// FuncsType is constructed with one argument: the given field of the bbox_collision_detector root entity.
+// Otherwise, FuncsType is default-constructed.
+template<typename TimeSteward, class FuncsType, typename ...SpatialFields>
+class operations {
 public:
   typedef typename TimeSteward time_steward;
   typedef typename time_steward::time_type time_type;
-  typedef typename accessories::coordinate_type coordinate_type;
-  typedef typename accessories::coordinate_array coordinate_array;
-  typedef typename accessories::bounding_box bounding_box;
 private:
   typedef typename time_steward::accessor accessor;
-  typedef typename accessories::zbox zbox;
-  
-public:
-  // The bbox_collision_detector has a "z-tree".  This
-  // is a binary tree.  Keys in the tree are zboxes (see above).
-  // Values are entity_ids; each zbox may have any number
-  // of entity_ids.  This code is happy for objects to overlap
-  // each other, and besides, even non-overlapping objects often
-  // have a minimal containing zbox in common.
-  //
-  // Because of the definition of zboxes, either they are
-  // A: the same, and thus the same ztree_node
-  // B: one is smaller and fully within the node, and it is a
-  //          descendant of the other
-  // C: they don't overlap at all, and in the ztree neither is a
-  //          descendant of the other.
-  // (In particular, zboxes can't partially overlap each other.)
-  //
-  // An object may need to be in up to (2**num_dimensions) zboxes
-  // so that the area covered by its zboxes is only a constant
-  // factor larger than the object's regular (non-z-order) bounding
-  // box.  Consider an object that's a box of width 2 or 3 with
-  // x min-coordinate 10111111 and max 11000001 (binary).  The minimal
-  // common prefix there is just a single bit; a single bit means
-  // a huge box.  Conceptually, dimensions' bits are interleaved
-  // before looking for a common prefix; any dimension has the
-  // potential to differ in a high bit and disrupt the common prefix.
-  // Splitting the object across two zboxes, for each dimension,
-  // is sufficient to avoid this explosion.
-  //
-  // Specifically, a ztree is a Patricia trie on z-ordered
-  // bits (zboxes), where the bits are seen as a sequence with the
-  // highest-order bits first and the sequence-length equal to the
-  // number of high bits specified by a given key/ztree_node/zbox.
-  // The ztree_node happens to contain (unlike typical tries) the
-  // entire key that it represents, because the key is small and
-  // constant-sized and it's generally easier to do so.
-  //
-  // What goes into child0 vs. child1?  If trying to insert, say,
-  // the zbox B = 10100??? (binary, 5 high bits, 3 low bits) into
-  // A = 10??????, B goes at or below A's child1 because B's next bit
-  // after A's bits is 1.  (Current: 10, next: 101).
-  //
-  // If there would be a node with zero entity_ids and
-  // only one child, then that child node goes there directly
-  // instead of that trivial node.  If the tree, to be correct,
-  // needs nodes with two children and zero entity_ids,
-  // then it will have them.
-  /*
-
-  If there's one zbox in the tree [call it Z]
-
-  tree = ztree_node {
-    Z
-    nullptr
-    nullptr
-  }
-
-  Two zboxes that differ at bit B:
-  child0 of a node with B ignored bits is the child whose Bth bit is 0.
-  tree = ztree_node {
-    the common leading bits of Z1 and Z2, with B ignored bits
-    ptr to ztree_node {
-      Z1
-      nullptr
-      nullptr
-    }
-    ptr to ztree_node {
-      Z2
-      nullptr
-      nullptr
-    }
-  }
-
-  */
+  typedef typename time_steward_system::entity_id entity_id;
+  typedef typename accessor::entity_ref entity_ref;
+  using optional = time_steward_system::optional<T>;
+  using time_steward_system::none;
   
 private:
-  template<bool FuncsTypeIsEmpty> static inline bbox_collision_detector_funcs const& get_funcs_impl(accessor* accessor, entity_id bbcd_id) {
-    return accessor->get<bbox_collision_detector_funcs>(accessor->get(bbcd_id))->funcs_;
-  }
-  template<> static inline bbox_collision_detector_funcs const& get_funcs_impl(accessor* accessor, entity_id bbcd_id) {
-    return bbox_collision_detector_funcs();
-  }
-  static inline bbox_collision_detector_funcs const& get_funcs(accessor* accessor, entity_id bbcd_id) {
-    return get_funcs<std::is_empty<FuncsType>::value>(accessor, bbcd_id);
+  template<class Enable = void> static inline FuncsType const& get_funcs(accessor*, entity_id) { return FuncsType(); }
+  template<> static inline FuncsType const& get_funcs
+  <typename std::enable_if<std::is_object<typename FuncsType::required_field>::value>::type>
+  (accessor* accessor, entity_id bbcd_id) {
+    return FuncsType(*accessor->get<FuncsType::required_field>(accessor->get(bbcd_id)));
   }
   
   class spatial_entity_interaction : public time_steward::consequential_event {
@@ -494,7 +477,7 @@ private:
     spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id id0, entity_id id1) : bbcd_id(bbcd_id),id0(id0),id1(id1) {}
 
     void operator()(accessor* accessor)const override {
-      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      FuncsType funcs = get_funcs(accessor, bbcd_id);
       entity_ref e0 = accessor->get(id0);
       entity_ref e1 = accessor->get(id1);
       funcs.interact(accessor, e0, e1);
@@ -502,8 +485,8 @@ private:
     time_type when(accessor const* accessor)const override {
       entity_ref e0 = accessor->get(id0);
       entity_ref e1 = accessor->get(id1);
-      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
-      return funcs.interaction_time(accessor->get<each spatial field>(e0), accessor->get<each spatial field>(e1));
+      FuncsType funcs = get_funcs(accessor, bbcd_id);
+      return funcs.interaction_time(spatial_fields_ref(e0, accessor), spatial_fields_ref(e1, accessor));
     }
     entity_id bbcd_id;
     entity_id id0;
@@ -515,14 +498,14 @@ private:
 
     void operator()(accessor* accessor)const override {
       entity_ref e = accessor->get(spatial_entity_id);
-      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      FuncsType funcs = get_funcs(accessor, bbcd_id);
       bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
       insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
       gather_events(accessor, bbcd_id, funcs, e);
     }
     time_type when(accessor const* accessor)const override {
       entity_ref e = accessor->get(spatial_entity_id);
-      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      FuncsType funcs = get_funcs(accessor, bbcd_id);
       return funcs.escape_time(accessor, e, accessor->get<spatial_entity_metadata>(e)->find(bbcd_id)->zboxes_union);
     }
     entity_id bbcd_id;
@@ -533,7 +516,7 @@ private:
     spatial_entity_changes_trigger(entity_id bbcd_id) : bbcd_id(bbcd_id) {}
 
     void operator()(accessor* accessor, entity_ref e)const override {
-      bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+      FuncsType funcs = get_funcs(accessor, bbcd_id);
       bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
       const bounding_box bbox = funcs.bbox(accessor, e);
       if (!metadata.zboxes_union.subsumes(bbox)) {
@@ -545,11 +528,22 @@ private:
   };
   
 public:
-  static void insert(accessor* accessor, entity_ref bbcd_ref, entity_ref e, entity_ref hint_object = entity_ref()) {
+  static entity_ref create_bbox_collision_detector(accessor* accessor) {
+    entity_ref result = accessor->create_entity();
+    accessor->set<bbox_collision_detector_root_node>(result, bbox_collision_detector_root_node(entity_id()));
+    return result;
+  }
+  template<>
+  static entity_ref create_bbox_collision_detector(accessor* accessor, typename FuncsType::required_field const& f) {
+    entity_ref result = create_bbox_collision_detector();
+    accessor->set<typename FuncsType::required_field>(result, f);
+    return result;
+  }
+  static void insert(accessor* accessor, entity_id bbcd_id, entity_ref e, entity_ref hint_object = entity_ref()) {
     // TODO maybe time_steward can treat the different members of the outer_metadata map as different fields,
     // (WRT access/back-in-time-change semantics) since we usually only want to access/modify one of them?
     // Or is that too unlikely to be useful? Some sort of profiling may help later.
-    bbox_collision_detector_funcs const& funcs = get_funcs(accessor, bbcd_id);
+    FuncsType funcs = get_funcs(accessor, bbcd_id);
     auto& outer_metadata = accessor->get_mut<spatial_entity_metadata>(e);
     if (!outer_metadata) { outer_metadata = spatial_entity_metadata(); }
     persistent_set<entity_id> hint_nodes;
@@ -559,12 +553,10 @@ public:
     insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
     gather_events(accessor, bbcd_id, bbcd, e);
     
-    for each spatial field 
-    accessor->create_trigger(eid, bbcd_ref.id(), spatial_entity_changes_trigger(bbcd_ref.id()));
+    set_triggers(accessor, bbcd_id, e, spatial_entity_changes_trigger(bbcd_id));
   }
   static void erase(accessor* accessor, entity_id bbcd_id, entity_ref e) {
-    for each spatial field 
-    accessor->delete_trigger(eid, bbcd_id);
+    set_triggers(accessor, bbcd_id, e, nullptr);
     // TODO: what about the outstanding events?
     
     bbcd_entry_metadata& metadata = *accessor->get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
@@ -573,6 +565,16 @@ public:
   }
   
 private:
+  template<typename ...SpatialFieldsSubset>
+  inline void set_triggers(accessor*, entity_id, entity_ref, shared_ptr<trigger>);
+  template<>
+  inline void set_triggers<>(accessor*, entity_id, entity_ref, shared_ptr<trigger>)  {}
+  template<typename Head, typename ...Tail>
+  inline void set_triggers<Head, Tail...>(accessor* accessor, entity_id bbcd_id, entity_ref e, shared_ptr<trigger> t) {
+    accessor->set_trigger<Head>(e, bbcd_id, t);
+    set_triggers<Tail...>(accessor, bbcd_id, e, t);
+  }
+  
   static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
                                     bbcd_entry_metadata& metadata, persistent_set<entity_id> nodes) {
     for (entity_id node_id : nodes) {
@@ -728,11 +730,11 @@ private:
         if (zb.overlaps(bbox)) {
           entity_ref best_hint_ref;
           if (hint_nodes.empty()) {
-            if ((*root)->root_node_id_) {
+            if ((*root) && (*root)->root_node_id_) {
               best_hint_ref = accessor->get((*root)->root_node_id_);
             }
             else {
-              entity_ref best_hint_ref = accessor->create_entity();
+              best_hint_ref = accessor->create_entity();
               accessor->set<ztree_node>(best_hint_ref, ztree_node(zb, entity_id()));
               accessor->set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), best_hint_ref.id());
             }
@@ -1067,7 +1069,9 @@ public:
     filter_impl(accessor, accessor->get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, results, getcost);
     return results;
   }
+}; // struct operations
+}; // struct with_spatial_fields
+}; // struct bbox_collision_detector_system
 
-public:
-  ztree_node const* debug_get_tree()const { return &*objects_tree_; }
-};
+
+

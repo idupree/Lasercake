@@ -373,6 +373,9 @@ typedef siphash_id entity_id;
 const entity_id global_object_id = siphash_id::least();
 
 typedef size_t field_id;
+template<typename T>
+using optional = boost::optional<T>;
+using boost::none;
 
 namespace fields_list_impl {
   class fields_list_nature_base { typedef fields_list_nature confirm; };
@@ -394,9 +397,10 @@ namespace fields_list_impl {
     static const size_t size = 0;
     template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
   }
-  
   template<typename Head, typename ...Tail>
-  class fields_list_contents<generic_input, Head, Tail...> {
+  class fields_list_contents<nonempty_fields_list, Head, Tail...> : fields_list<Head::head, Head::tail, Tail...> {}
+  template<typename HeadNature, typename Head, typename ...Tail>
+  class fields_list_contents<HeadNature, Head, Tail...> {
     typedef nonempty_fields_list fields_list_nature;
     typedef Head head;
     typedef fields_list<Tail...> tail;
@@ -406,17 +410,10 @@ namespace fields_list_impl {
     template<> static constexpr field_id idx_of<head>() { return idx; }
   }
   
-  template<typename Head, typename ...Tail>
-  class fields_list_contents<nonempty_fields_list, Head, Tail...> {
-    typedef nonempty_fields_list fields_list_nature;
-    typedef Head Head::head;
-    typedef fields_list<Head::tail, Tail...> tail;
-  }
-  
   template<>
   class fields_list<> : public fields_list_contents<empty_fields_list> {};
   template<typename Head, typename ...Tail>
-  class fields_list<Head, Tail...> : public fields_list_contents<get_fields_list_nature<Head>, Head, Tail...> {};
+  class fields_list<Head, Tail...> : public fields_list_contents<get_fields_list_nature<Head>::type, Head, Tail...> {};
 
   template<class FieldsList, template<typename> class repeated>
   class foreach_field {
@@ -425,8 +422,8 @@ namespace fields_list_impl {
     foreach_field<FieldsList::tail, repeated> tail;
     template<typename T> inline repeated<T>& get() { return tail.get<T>(); }
     template<typename T> inline repeated<T> const& get()const { return tail.get<T>(); }
-    template<> inline repeated<head_type>& get<FieldsList::head>() { return head; }
-    template<> inline repeated<head_type> const& get<FieldsList::head>()const { return head; }
+    template<> inline head_type& get<FieldsList::head>() { return head; }
+    template<> inline head_type const& get<FieldsList::head>()const { return head; }
   }
   template<template<typename> class repeated>
   class foreach_field<fields_list<>, repeated> {
@@ -476,18 +473,23 @@ class time_steward_accessor {
     bool in_queue;
   };
   
-  template<typename Field>
-  using field_info = Field;
-  /*struct field_info {
-    Field data;
-  };*/
+  struct queued_trigger_info {
+    entity_field_id efid;
+    trigger_id tid;
+  };
+    
+  struct upcoming_event_info {
+    std::shared_ptr<const consequential_event> e;
+    extended_time time;
+    std::unordered_set<entity_id> dependencies;
+  };
   struct field_metadata {
     persistent_map<trigger_id, trigger_info> triggers;
     bool accessed_preexisting_state;
     bool ever_modified;
     bool triggers_ever_modified;
     bool all_triggers_queued;
-    void accessed(time_steward_accessor const& acc, entity_field_id id) {
+    void accessed(time_steward_accessor const& acc, entity_field_id const& id) {
       if (acc.event_whenfunc_access_tracker) { acc.event_whenfunc_access_tracker->insert(id); }
       // If we already overwrote a field,
       // then this is not accessing the field's state *before* this time.
@@ -499,7 +501,7 @@ class time_steward_accessor {
       }
       return false;
     }
-    void modified(time_steward_accessor& acc, entity_field_id id) {
+    void modified(time_steward_accessor& acc, entity_field_id const& id) {
       if (!ever_modified) {
         ever_modified = true;
         acc.entity_fields_modified.push_back(id);
@@ -515,6 +517,12 @@ class time_steward_accessor {
       }
     }
   };
+  
+  template<typename Field>
+  using field_info = optional<Field>;
+  /*struct field_info {
+    Field data;
+  };*/
     
   template<typename FieldsList>
   struct entity_info {
@@ -535,22 +543,30 @@ class time_steward_accessor {
   inline Field& get_impl(entity_ref e)const {
     const field_id idx = entity_fields::idx_of<Field>();
     Field& result = e.data->fields.get<Field>();
-    const entity_field_id id(e.id, idx);
+    const entity_field_id id(e.id(), idx);
     if (e.data->metadata[idx].accessed(*this, id)) {
       result = ts_.get_provisional_entity_field_before<Field>(e.id());
     }
     return result;
   }
-  
-  struct queued_trigger_info {
-    entity_field_id efid;
-    trigger_id tid;
-  };
-    
-  struct upcoming_event_info {
-    std::shared_ptr<const consequential_event> e;
-    extended_time time;
-    std::unordered_set<entity_id> dependencies;
+  void set_trigger_impl(entity_ref e, field_id fid, trigger_id tid, std::shared_ptr<const trigger> t) {
+    const entity_field_id id(e.id(), fid);
+    field_metadata& metadata = e.data->metadata[fid];
+    if (!metadata.triggers_ever_modified) {
+      metadata.triggers_ever_modified = true;
+      entity_fields_triggers_modified.push_back(id);
+    }
+    if (t) {
+      trigger_info& inf = metadata.triggers[tid];
+      inf.t = t;
+      if (!inf.in_queue) {
+        triggers_queue.emplace(id, tid);
+      }
+      inf.in_queue = true;
+    }
+    else {
+      metadata.triggers.erase(tid);
+    }
   };
   
 public:
@@ -560,9 +576,9 @@ public:
     return &e;
   }
   
-  template<typename Field> inline Field const& get    (entity_ref e)const { return get_impl(e); }
+  template<typename Field> inline Field const& get    (entity_ref e)const { return get_impl<Field>(e); }
   template<typename Field> inline Field      & get_mut(entity_ref e) {
-    Field& result = get_impl(e);
+    Field& result = get_impl<Field>(e);
     const field_id idx = entity_fields::idx_of<Field>();
     e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
     return result;
@@ -579,24 +595,9 @@ public:
   void create_event(std::unique_ptr<const consequential_event> e) {
     fresh_new_upcoming_events.push_back(std::move(e));
   };
-  void set_trigger(entity_field_id id, trigger_id tid, std::shared_ptr<const trigger> t) {
-    entity_ref e = get(id.e);
-    field_metadata& metadata = e.data->metadata[id.f];
-    if (!metadata.triggers_ever_modified) {
-      metadata.triggers_ever_modified = true;
-      entity_fields_triggers_modified.push_back(id);
-    }
-    if (t) {
-      trigger_info& inf = metadata.triggers[tid];
-      inf.t = t;
-      if (!inf.in_queue) {
-        triggers_queue.emplace(id, tid);
-      }
-      inf.in_queue = true;
-    }
-    else {
-      metadata.triggers.erase(tid);
-    }
+  template<typename Field>
+  void set_trigger_impl(entity_ref e, trigger_id tid, std::shared_ptr<const trigger> t) {
+    set_trigger_impl(e, entity_fields::idx_of<Field>(), tid, t);
   };
   time_type now()const {
     return time_.base_time;
@@ -781,7 +782,7 @@ private:
   
   
   template<typename Field>
-  using field_throughout_time = std::map<extended_time, Field>;
+  using field_throughout_time = std::map<extended_time, optional<Field>>;
   template<typename Field>
   struct field_metadata_throughout_time {
     std::map<extended_time, persistent_map<trigger_id, trigger_info>> triggers_changes;

@@ -39,23 +39,19 @@
 #include "../bbox_collision_detector.hpp"
 
 typedef int64_t space_coordinate;
-typedef time_steward::time_type time_type;
-const time_type never = time_steward::never;
-template<typename T> using entity_id = time_steward_system::entity_id<T>;
-template<typename T> using entity_ref = time_steward_system::entity_ref<T>;
 const num_coordinates_type num_dimensions = 2;
-typedef bbox_collision_detector_spatial_entity<time_steward, 64, num_dimensions> spatial_entity;
 using boost::optional;
 using boost::none;
 typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate> poly;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, space_coordinate> fd_vector;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, poly> poly_fd_vector;
+typedef time_steward_system::entity_id entity_id;
 
 uint64_t space_to_bbox(space_coordinate const& input) {
-  return uint64_t(int64_t(input));
+  return uint64_t(int64_t(input)) + 0x0101010101010101ULL;
 }
 space_coordinate bbox_to_space(uint64_t input) {
-  return space_coordinate(int64_t(input));
+  return space_coordinate(int64_t(input - 0x0101010101010101ULL));
 }
 
 const int64_t position_units_per_zolttt_per_square_gloppp = 1LL << 6; // plenty to avoid rounding error
@@ -65,20 +61,18 @@ const int64_t position_units_per_zolttt = position_units_per_zolttt_per_gloppp *
 const int64_t arena_width = position_units_per_zolttt << 10;
 const int64_t view_width = arena_width >> 3;
 
-class circle_shape {
-public:
+struct circle_shape {
   circle_shape(poly_fd_vector center, poly radius):center(center),radius(radius){}
   
   poly_fd_vector center;
   poly radius;
 };
 
-class circle_overlaps {
-public:
+struct circle_overlaps {
   persistent_set<entity_id> overlaps;
 };
 
-poly distish(circle const& c1, circle const& c2) {
+poly distish(circle_shape const& c1, circle_shape const& c2) {
   const auto d = c1.center - c2.center;
   const auto d_mag_sq = d.dot(d);
   const auto radsum = c1.radius + c2.radius;
@@ -86,71 +80,31 @@ poly distish(circle const& c1, circle const& c2) {
   return d_mag_sq - r_sq;
 }
 
-typedef bbox_collision_detector<circle, circle::bbcd_funcs> bbox_cd;
-class global_object : public time_steward::entity {
-public:
-  entity_id<bbox_cd> bbcd_id;
+struct global_data {
+  entity_id bbcd_id;
 };
 const entity_id<global_object> global_object_id = time_steward_system::global_object_id<global_object>();
 
 
-typedef time_steward_system::field_list<circle_shape, circle_overlaps, bbox_collision_detector<circle_shape>::fields> fields;
+typedef bbox_collision_detector_system<64, num_dimensions> bbcd_system;
+typedef typename bbcd_system::with_spatial_fields<circle_shape> bbcd_system_with_fields;
+typedef time_steward_system::field_list<circle_shape, circle_overlaps, bbcd_system::fields> fields;
 typedef time_steward_system::time_steward<fields> time_steward;
+typedef time_steward::time_type time_type;
+typedef time_steward::accessor accessor;
+const time_type never = time_steward::never;
+typedef accessor::entity_ref entity_ref;
 
-
-class circles_interact : public time_steward::consequential_event {
-public:
-  circles_interact(entity_id<circle> id0, entity_id<circle> id1) : id0(id0),id1(id1) {}
-  entity_id id0, id1;
-
-  void operator()(time_steward::accessor* accessor)const override {
-    auto c0 = accessor->get_mut<circle_shape>(id0);
-    auto c1 = accessor->get_mut<circle_shape>(id1);
-    const space_coordinate d = distish(*c0,*c1)(accessor->now());
-    
-    const fd_vector diff = (c0->center - c1->center).get_term<space_coordinate>(accessor->now(), 0);
-    const space_coordinate magsq = diff.dot(diff);
-    const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
-    assert ((d < 0) == (magsq - (radsum*radsum) < 0));
-    
-    persistent_map<entity_id>& c0_overlaps = accessor->get_mut<circle_overlaps>(id0)->overlaps;
-    persistent_map<entity_id>& c1_overlaps = accessor->get_mut<circle_overlaps>(id1)->overlaps;
-    if (d < 0) {
-      c0_overlaps.insert(id1);
-      c1_overlaps.insert(id0);
-    }
-    else {
-      c0_overlaps.erase(id1);
-      c1_overlaps.erase(id0);
-    }
-    update_acceleration(accessor, id0);
-    update_acceleration(accessor, id1);
-  }
-  time_type when(time_steward::accessor const* accessor)const override {
-    auto c0 = accessor->get<circle_shape>(id0);
-    auto c1 = accessor->get<circle_shape>(id1);
-    
-    const poly d = distish(c0, c1);
-    const bool overlapping = c0->overlaps.find(c1.id()) != c0->overlaps.end();
-    if (d(0) < 0) {
-      return accessor->now() + (overlapping ? (time_units_per_gloppp>>6) : 0);
-    }
-    for (auto i = d.sign_interval_boundaries_upper_bound(accessor->now()); i != d.sign_interval_boundaries_end(); ++i) {
-      if ((d(*i) < 0) != overlapping) {
-        return *i;
-      }
-    }
-    return never;
-  }
-};
   
-void update_acceleration(time_steward::accessor const* accessor, circle const& c) {
+void update_acceleration(accessor const* accessor, entity_ref e) {
   fd_vector new_acceleration(0,0);
-  for (entity_id<const circle> other_id : overlaps) {
+  circle_shape const& c0 = *accessor->get<circle_shape>(e);
+  for (entity_id other_id : *accessor->get<circle_overlaps>(e)) {
     auto other = accessor->get(other_id);
-    const fd_vector diff = (center - other->center).get_term<space_coordinate>(accessor->now(), 0);
+    circle_shape const& c1 = *accessor->get<circle_shape>(other);
+    const fd_vector diff = (c0.center - c1.center).get_term<space_coordinate>(accessor->now(), 0);
     const space_coordinate magsq = diff.dot(diff);
-    const space_coordinate radsum = radius(accessor->now()) + other->radius(accessor->now());
+    const space_coordinate radsum = c0.radius(accessor->now()) + c1.radius(accessor->now());
     if (magsq - (radsum*radsum) < 0) { // not necessarily <0, if there are two interacts at the same time
       // simple hack!
       const space_coordinate mag = isqrt(magsq);
@@ -161,7 +115,7 @@ void update_acceleration(time_steward::accessor const* accessor, circle const& c
       }
     }
   }
-  center.set_term(accessor->now(), 2, new_acceleration);
+  c0.center.set_term(accessor->now(), 2, new_acceleration);
 }
   
 class bbcd_funcs {
@@ -200,14 +154,57 @@ public:
     return result;
   }
   
-  create_interactions(accessor* accessor,
-                        entity_ref<const circle> ent1,
-                        entity_ref<const circle> ent2) {
-    const auto unsafe_c1_id = time_steward_system::reinterpret_entity_id<circle>(ent1.id());
-    const auto unsafe_c2_id = time_steward_system::reinterpret_entity_id<circle>(ent2.id());
-    accessor->create_event(make_unique<circles_interact>(unsafe_c1_id, unsafe_c2_id));
+  time_type interaction_time(bbcd_system_with_fields::spatial_fields_ref s0, bbcd_system_with_fields::spatial_fields_ref s1) {
+    auto c0 = s0.get<circle_shape>();
+    auto c1 = s1.get<circle_shape>();
+    
+    const poly d = distish(c0, c1);
+    if (d(0) < 0) {
+      return accessor->now() + (time_units_per_gloppp>>6);
+    }
+    for (auto i = d.sign_interval_boundaries_upper_bound(accessor->now()); i != d.sign_interval_boundaries_end(); ++i) {
+      if ((d(*i) < 0) != overlapping) {
+        return *i;
+      }
+    }
+    return never;
+  }
+  
+  void interact(accessor const* accessor, entity_ref e0, entity_ref e1) {
+    auto c0 = accessor->get_mut<circle_shape>(id0);
+    auto c1 = accessor->get_mut<circle_shape>(id1);
+    const space_coordinate d = distish(*c0,*c1)(accessor->now());
+    
+    const fd_vector diff = (c0->center - c1->center).get_term<space_coordinate>(accessor->now(), 0);
+    const space_coordinate magsq = diff.dot(diff);
+    const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
+    assert ((d < 0) == (magsq - (radsum*radsum) < 0));
+    
+    persistent_map<entity_id>& c0_overlaps = accessor->get_mut<circle_overlaps>(id0)->overlaps;
+    persistent_map<entity_id>& c1_overlaps = accessor->get_mut<circle_overlaps>(id1)->overlaps;
+    if (d < 0) {
+      c0_overlaps.insert(id1);
+      c1_overlaps.insert(id0);
+    }
+    else {
+      c0_overlaps.erase(id1);
+      c1_overlaps.erase(id0);
+    }
+    update_acceleration(accessor, id0);
+    update_acceleration(accessor, id1);
+  }
+public:
+  circles_interact(entity_id<circle> id0, entity_id<circle> id1) : id0(id0),id1(id1) {}
+  entity_id id0, id1;
+
+  void operator()(time_steward::accessor* accessor)const override 
+  time_type when(time_steward::accessor const* accessor)const override {
   }
 };
+};
+
+typedef typename bbcd_system::operations<time_steward, , circle_shape>;
+
 
 struct circles_overlapping_bbox_filter {
   circles_overlapping_bbox_filter(time_steward::accessor const* accessor, circle::bounding_box bbox):accessor(accessor),bbox(bbox){}
