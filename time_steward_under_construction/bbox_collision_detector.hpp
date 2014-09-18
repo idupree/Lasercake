@@ -424,30 +424,12 @@ struct bbox_collision_detector_root_node {
 };
 
 typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bbox_collision_detector_root_node> fields;
-
-template<typename ...SpatialFields>
-struct with_spatial_fields {
-public:
-class spatial_fields_ref {
-public:
-  spatial_fields_ref(entity_ref e, accessor const* accessor):e(e),accessor(accessor){}
-  template<typename SpatialField>
-  optional<SpatialField> const& get() {
-    static_assert(type_is_in_list<SpatialField, SpatialFields...>::value, "Trying to access a non-spatial field with a spatial_fields_ref");
-    return accessor->get<SpatialField>(e);
-  }
-private:
-  entity_ref e;
-  accessor const* accessor;
-};
   
 // For the FuncsType to implement:
 //
 // bounding_box bbox(accessor const* accessor, entity_ref e)
 // time_type escape_time(accessor const* accessor, entity_ref e, bounding_box const& bbox)
-// // returns never for "no interaction"
-// time_type interaction_time(spatial_fields_ref s0, spatial_fields_ref s1)
-// void interact(accessor* accessor, entity_ref e0, entity_ref e1)
+// void anticipate_interactions(accessor* accessor, entity_ref e0, entity_ref e1)
 //
 // If FuncsType::required_field exists,
 // FuncsType is constructed with one argument: the given field of the bbox_collision_detector root entity.
@@ -472,27 +454,7 @@ private:
     return FuncsType(*accessor->get<FuncsType::required_field>(accessor->get(bbcd_id)));
   }
   
-  class spatial_entity_interaction : public time_steward::consequential_event {
-  public:
-    spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id id0, entity_id id1) : bbcd_id(bbcd_id),id0(id0),id1(id1) {}
-
-    void operator()(accessor* accessor)const override {
-      FuncsType funcs = get_funcs(accessor, bbcd_id);
-      entity_ref e0 = accessor->get(id0);
-      entity_ref e1 = accessor->get(id1);
-      funcs.interact(accessor, e0, e1);
-    }
-    time_type when(accessor const* accessor)const override {
-      entity_ref e0 = accessor->get(id0);
-      entity_ref e1 = accessor->get(id1);
-      FuncsType funcs = get_funcs(accessor, bbcd_id);
-      return funcs.interaction_time(spatial_fields_ref(e0, accessor), spatial_fields_ref(e1, accessor));
-    }
-    entity_id bbcd_id;
-    entity_id id0;
-    entity_id id1;
-  };
-  class spatial_entity_escapes_its_zboxes : public time_steward::consequential_event {
+  class spatial_entity_escapes_its_zboxes : public time_steward::event {
   public:
     spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
 
@@ -500,7 +462,7 @@ private:
       entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
       bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
-      insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
+      update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
       gather_events(accessor, bbcd_id, funcs, e);
     }
     time_type when(accessor const* accessor)const override {
@@ -511,20 +473,22 @@ private:
     entity_id bbcd_id;
     entity_id spatial_entity_id;
   };
-  class spatial_entity_changes_trigger : public time_steward::trigger {
+  class spatial_entity_changes_trigger : public time_steward::event {
   public:
-    spatial_entity_changes_trigger(entity_id bbcd_id) : bbcd_id(bbcd_id) {}
+    spatial_entity_changes_trigger(entity_id bbcd_id, entity_id spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
 
-    void operator()(accessor* accessor, entity_ref e)const override {
+    void operator()(accessor* accessor)const override {
+      entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
       bbcd_entry_metadata const& metadata = *accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id);
       const bounding_box bbox = funcs.bbox(accessor, e);
       if (!metadata.zboxes_union.subsumes(bbox)) {
-        insert_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
+        update_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
       }
       gather_events(accessor, bbcd_id, funcs, e);
     }
     entity_id bbcd_id;
+    entity_id spatial_entity_id;
   };
   
 public:
@@ -550,13 +514,14 @@ public:
     if (hint_object) {
       hint_nodes = accessor->get<spatial_entity_metadata>(e)->data.find(bbcd_id)->nodes;
     }
-    insert_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
+    update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
     gather_events(accessor, bbcd_id, bbcd, e);
     
     set_triggers(accessor, bbcd_id, e, spatial_entity_changes_trigger(bbcd_id));
+    accessor->set_trigger(trigger_id(bbcd_id, e.id()), shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
   }
   static void erase(accessor* accessor, entity_id bbcd_id, entity_ref e) {
-    set_triggers(accessor, bbcd_id, e, nullptr);
+    accessor->set_trigger(trigger_id(bbcd_id, e.id()));
     // TODO: what about the outstanding events?
     
     bbcd_entry_metadata& metadata = *accessor->get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
@@ -565,15 +530,6 @@ public:
   }
   
 private:
-  template<typename ...SpatialFieldsSubset>
-  inline void set_triggers(accessor*, entity_id, entity_ref, shared_ptr<trigger>);
-  template<>
-  inline void set_triggers<>(accessor*, entity_id, entity_ref, shared_ptr<trigger>)  {}
-  template<typename Head, typename ...Tail>
-  inline void set_triggers<Head, Tail...>(accessor* accessor, entity_id bbcd_id, entity_ref e, shared_ptr<trigger> t) {
-    accessor->set_trigger<Head>(e, bbcd_id, t);
-    set_triggers<Tail...>(accessor, bbcd_id, e, t);
-  }
   
   static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
                                     bbcd_entry_metadata& metadata, persistent_set<entity_id> nodes) {
@@ -613,13 +569,13 @@ private:
   }
   
   
-  class insert_zboxes {
+  class update_zboxes {
     accessor* accessor;
     entity_id bbcd_id;
     entity_ref e;
     bbcd_entry_metadata& metadata;
   public:
-    insert_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, persistent_set<entity_id> hint_nodes)
+    update_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, persistent_set<entity_id> hint_nodes)
       :
       accessor(accessor),
       bbcd_id(bbcd_id),
@@ -712,7 +668,6 @@ private:
         zboxes_union_size_minus_one[i] = ((i < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size) ? (base_box_size<<1) : base_box_size)-1;
       }
       metadata.zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
-      accessor->create_event(make_unique<spatial_entity_escapes_its_zboxes>(bbcd_id, e.id()));
       
       persistent_set<entity_id> old_nodes_to_remove = metadata.nodes;
       for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
@@ -830,14 +785,17 @@ private:
     // TODO is there an efficient way to avoid duplicating the search of joint ancestors?
     accessor* accessor;
     entity_ref e;
+    FuncsType funcs;
     std::unordered_set<entity_id> interaction_possibilities_already_found;
     gather_events(accessor* accessor, entity_id bbcd_id, entity_ref e)
       :
       accessor(accessor),
       bbcd_id(bbcd_id),
-      e(e)
+      e(e),
+      funcs(get_funcs(accessor, bbcd_id))
     {
       bbcd_entry_metadata& metadata = *accessor->get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      accessor->anticipate_event(shared_ptr<spatial_entity_escapes_its_zboxes>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
       for (entity_id node_id : metadata->nodes) {
         entity_ref node_ref = accessor->get(node_id);
         auto& node = accessor->get<ztree_node>(node_ref);
@@ -862,7 +820,7 @@ private:
       for (entity_id other_id : node->objects_here) {
         auto p = interaction_possibilities_already_found.insert(other_id);
         if (p.second) {
-          accessor->create_event(spatial_entity_interaction(bbcd_id, e.id(), other_id));
+          funcs.anticipate_interactions(accessor, e, accessor->get(other_id));
         }
       }
     }
@@ -1070,7 +1028,6 @@ public:
     return results;
   }
 }; // struct operations
-}; // struct with_spatial_fields
 }; // struct bbox_collision_detector_system
 
 
