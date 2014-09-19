@@ -434,7 +434,7 @@ typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bb
 // If FuncsType::required_field exists,
 // FuncsType is constructed with one argument: the given field of the bbox_collision_detector root entity.
 // Otherwise, FuncsType is default-constructed.
-template<typename TimeSteward, class FuncsType, typename ...SpatialFields>
+template<typename TimeSteward, class FuncsType>
 class operations {
 public:
   typedef typename TimeSteward time_steward;
