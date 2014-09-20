@@ -409,7 +409,7 @@ root_node = ztree_node at entity_id FOO {
 
 */
 struct ztree_node {
-  const zbox here;
+  zbox here;
   entity_id parent;
   std::array<entity_id, 2> children;
   persistent_set<entity_id> objects_here;
@@ -534,7 +534,7 @@ private:
           squish_node(accessor, bbcd_id, e, 0);
         }
       }
-      metadata->nodes.erase(node_id);
+      metadata.nodes.erase(node_id);
     }
   }
   
@@ -718,7 +718,7 @@ private:
           hint_node_ref = add_joint_parent_node(hint_node_ref, box);
         }
       }
-      return insert_zbox_downwards(accessor_, hint_node_ref, e, box);
+      return insert_zbox_downwards(hint_node_ref, box);
     }
     void insert_zbox_at(optional<ztree_node>& node, entity_id node_id) {
       node->objects_here.insert(e.id());
@@ -754,7 +754,7 @@ private:
       auto& new_node = accessor_->template set<ztree_node>(new_node_ref, ztree_node(zbox::smallest_joint_parent(node->here, box), node->parent));
       node->parent = new_node_ref.id();
       if (!new_node->parent) {
-        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), node_ref.id());
+        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), bbox_collision_detector_root_node(node_ref.id()));
       }
       
       assert_if_ASSERT_EVERYTHING(new_node->here.num_low_bits() > node->here.num_low_bits());

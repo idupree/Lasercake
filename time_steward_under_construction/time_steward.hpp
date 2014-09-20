@@ -451,10 +451,11 @@ namespace fields_list_impl {
   public:
     function_array() { add_fptr<FieldsList>(); }
   private:
-    template<class SubList> inline void add_fptr() {
+    template<class SubList> inline std::enable_if_t< std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value> add_fptr() {
       foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)>::template get<typename SubList::head>() = &FuncClass::template func<typename SubList::head>;
-      if (std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value) { add_fptr<typename SubList::tail>(); }
+      add_fptr<typename SubList::tail>();
     }
+    template<class SubList> inline std::enable_if_t<!std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value> add_fptr() {}
   };
 }
 template<typename ...Input> using fields_list = fields_list_impl::fields_list<Input...>;
@@ -462,6 +463,7 @@ struct entity_field_id {
   entity_field_id(entity_id e, field_id f):e(e),f(f){}
   entity_id e;
   field_id f;
+  bool operator==(entity_field_id const& o)const { return (e == o.e) && (f == o.f); }
 };
 
 } //end namespace time_steward_system
@@ -714,11 +716,15 @@ private:
     trigger_id tid;
     std::unordered_set<entity_field_id> entity_fields_pile_accessed;
     std::unordered_set<entity_field_id> entity_fields_pile_modified;
+    std::unordered_set<trigger_id> triggers_changed;
     bool creation_cut_off;
     bool has_been_executed;
     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
   };
   
+  // Hack, TODO fix: Non-static so that C++ doesn't make it a compile-time constant.
+  // (We need to return references into it.)
+  /*static*/ const fields_list_impl::foreach_field<entity_fields, optional> field_absent;
   
   template<typename Field>
   using field_throughout_time = std::map<extended_time, optional<Field>>;
@@ -811,8 +817,9 @@ private:
     }
   };
   
-  static const fields_list_impl::function_array<entity_fields, copy_field_change_from_accessor> copy_field_change_from_accessor_funcs;
-  static const fields_list_impl::function_array<entity_fields, undo_field_change> undo_field_change_funcs;
+  // Hack, TODO fix: Non-static so that C++ doesn't make it a compile-time constant.
+  /*static*/ const fields_list_impl::function_array<entity_fields, copy_field_change_from_accessor> copy_field_change_from_accessor_funcs;
+  /*static*/ const fields_list_impl::function_array<entity_fields, undo_field_change> undo_field_change_funcs;
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
@@ -886,12 +893,12 @@ private:
   template<typename Field>
   optional<Field> const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
     const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) { return none; }
+    if (entity_stream_iter == entities.end()) { return field_absent.template get<Field>(); }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto next_change_iter = e.fields.template get<Field>().changes.upper_bound(time);
-    if (next_change_iter == e.changes.begin()) { return none; }
-    return &*boost::prior(next_change_iter)->second;
+    const auto next_change_iter = e.fields.template get<Field>().upper_bound(time);
+    if (next_change_iter == e.fields.template get<Field>().begin()) { return field_absent.template get<Field>(); }
+    return boost::prior(next_change_iter)->second;
   }
   
   void insert_instigating_event(extended_time const& time, event_pile_info const& e) {
@@ -931,8 +938,8 @@ private:
     
     if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
-      accessor a(this, time);
-      a.process_event(pile_info.instigating_event.get(), bool(pile_info.tid));
+      accessor a(this, time, bool(pile_info.tid));
+      a.process_event(pile_info.instigating_event.get());
       
       for (entity_field_id const& id : a.entity_fields_preexisting_state_accessed) {
         pile_info.entity_fields_pile_accessed.insert(id);
@@ -941,34 +948,44 @@ private:
         assert(p.second);
         if (pile_info.tid) {
           persistent_set<trigger_id> new_triggers;
-          if (!metadata.triggers_pointing_at_this_changes.empty()) { new_triggers = metadata.triggers_pointing_at_this_changes.back(); }
+          const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower/upper bound shouldn't matter because there shouldn't be an entry now.
+          if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
+            new_triggers = boost::prior(next_triggers_iter)->second;
+          }
           new_triggers.insert(pile_info.tid);
-          // Mega hack sZInnn3FkZy0yg: if the trigger accessed the same field both now and before, this insert happens anyway and the below insert fails.
+          // Hack sZInnn3FkZy0yg: insert even if there's no change, so that the below code can catch it.
           metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
         }
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
         pile_info.entity_fields_pile_modified.insert(id);
-        copy_field_change_from_accessor_funcs[id.f](this, time, a.entities.find(id.e)->fields, *entities.find(id.e));
+        (*copy_field_change_from_accessor_funcs[id.f])(this, time, a.entities.find(id.e)->second.fields, entities.find(id.e)->second);
       }
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
         pile_info.triggers_changed.insert(t.first);
         update_trigger(false, t.first, time, true, t.second);
       }
       if (pile_info.tid) {
-        auto call_iter = triggers.find(pile_info.tid)->find(time);
+        auto& trigger_info = triggers.find(pile_info.tid)->second;
+        auto call_iter = trigger_info.find(time);
         for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
-          insert_instigating_event(ev.first, event_pile_info(ev.second, time));
+          insert_instigating_event(ev.first, event_pile_info(ev.second));
           call_iter->second.anticipated_events.insert(ev.first);
         }
-        if (call_iter != triggers.begin()) {
-          for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->entity_fields_pile_accessed) {
+        if (call_iter != trigger_info.begin()) {
+          for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
             auto& metadata = entities[former_trigger_access.e].metadata[former_trigger_access.f];
-            persistent_set<trigger_id> new_triggers;
-            if (!metadata.triggers_pointing_at_this_changes.empty()) { new_triggers = metadata.triggers_pointing_at_this_changes.back(); }
-            const auto p2 = new_triggers.erase(pile_info.tid);
-            // Mega hack sZInnn3FkZy0yg: if the trigger accessed the same field both now and before, the above insert happens anyway and this insert fails.
-            metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
+            const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower_bound: we want to find the entry at this time
+            if (next_triggers_iter->first == time) {
+              // Hack sZInnn3FkZy0yg: we inserted above, so don't remove now.
+            }
+            else {
+              assert (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin());
+              persistent_set<trigger_id> new_triggers = boost::prior(next_triggers_iter)->second;
+              const auto p2 = new_triggers.erase(pile_info.tid);
+              assert (p2);
+              metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
+            }
           }
         }
       }
@@ -990,33 +1007,33 @@ private:
     const auto event_pile_iter = event_piles.find(time);
     assert (event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
-    if (!pile_info.has_been_executed) return;
+    if (!pile_info.has_been_executed) return false;
     
     for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
-      auto& metadata = entities.find(id.e)->metadata[id.f];
+      auto& metadata = entities.find(id.e)->second.metadata[id.f];
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
       assert(j);
       if (pile_info.tid) {
-        metadata.triggers_changes.erase(time);
+        metadata.triggers_pointing_at_this_changes.erase(time);
       }
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-      undo_field_change_funcs[id.f](this, time, *entities.find(id.e));
+      (*undo_field_change_funcs[id.f])(this, time, entities.find(id.e)->second);
     }
     for (trigger_id const& tid : pile_info.triggers_changed) {
-      const extended_time trigger_call_time = trigger_call_time(tid, time);
       update_trigger(true, tid, time);
     }
     if (pile_info.tid) {
-      auto call_iter = triggers.find(pile_info.tid)->find(time);
+      auto& trigger_info = triggers.find(pile_info.tid)->second;
+      auto call_iter = trigger_info.find(time);
       for (extended_time const& t : call_iter->second.anticipated_events) {
         erase_instigating_event(t);
       }
       call_iter->second.anticipated_events.clear();
-      if (call_iter != triggers.begin()) {
-        for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->entity_fields_pile_accessed) {
-          auto& metadata = entities.find(former_trigger_access.e)->metadata[former_trigger_access.f];
-          metadata.triggers_changes.erase(time);
+      if (call_iter != trigger_info.begin()) {
+        for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
+          auto& metadata = entities.find(former_trigger_access.e)->second.metadata[former_trigger_access.f];
+          metadata.triggers_pointing_at_this_changes.erase(time);
         }
       }
     }
