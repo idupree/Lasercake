@@ -424,6 +424,7 @@ struct spatial_entity_metadata {
   persistent_map<entity_id, bbcd_entry_metadata> data;
 };
 struct bbox_collision_detector_root_node {
+  bbox_collision_detector_root_node(entity_id root_node_id_):root_node_id_(root_node_id_){}
   entity_id root_node_id_;
 };
 
@@ -447,11 +448,12 @@ private:
   typedef typename time_steward::accessor accessor;
   typedef typename time_steward::event event;
   typedef typename time_steward::trigger trigger;
+  typedef typename time_steward_system::trigger_id trigger_id;
   typedef typename time_steward_system::entity_id entity_id;
   typedef typename accessor::entity_ref entity_ref;
   
 private:
-  static inline FuncsType const& get_funcs(accessor*, entity_id) { return FuncsType(); }
+  static inline FuncsType get_funcs(accessor*, entity_id) { return FuncsType(); }
   
   class spatial_entity_escapes_its_zboxes : public time_steward::event {
   public:
@@ -460,14 +462,9 @@ private:
     void operator()(accessor* accessor)const override {
       entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
-      bbcd_entry_metadata const& metadata = *accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
       update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
       gather_events(accessor, bbcd_id, funcs, e);
-    }
-    time_type when(accessor const* accessor)const override {
-      entity_ref e = accessor->get(spatial_entity_id);
-      FuncsType funcs = get_funcs(accessor, bbcd_id);
-      return funcs.escape_time(accessor, e, accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->zboxes_union);
     }
     entity_id bbcd_id;
     entity_id spatial_entity_id;
@@ -479,7 +476,7 @@ private:
     void operator()(accessor* accessor)const override {
       entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
-      bbcd_entry_metadata const& metadata = *accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id);
+      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
       const bounding_box bbox = funcs.bbox(accessor, e);
       if (!metadata.zboxes_union.subsumes(bbox)) {
         update_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
@@ -505,19 +502,18 @@ public:
     if (!outer_metadata) { outer_metadata = spatial_entity_metadata(); }
     persistent_set<entity_id> hint_nodes;
     if (hint_object) {
-      hint_nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->nodes;
+      hint_nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second.nodes;
     }
     update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
     gather_events(accessor, bbcd_id, funcs, e);
     
-    set_triggers(accessor, bbcd_id, e, spatial_entity_changes_trigger(bbcd_id));
-    accessor->set_trigger(trigger_id(bbcd_id, e.id()), new spatial_entity_changes_trigger(bbcd_id, e.id()));
+    accessor->set_trigger(trigger_id(bbcd_id, e.id()), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
   }
   static void erase(accessor* accessor, entity_id bbcd_id, entity_ref e) {
     accessor->set_trigger(trigger_id(bbcd_id, e.id()));
     // TODO: what about the outstanding events?
     
-    bbcd_entry_metadata& metadata = *accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
+    bbcd_entry_metadata& metadata = accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
     erase_from_nodes(accessor, bbcd_id, e, metadata, metadata->nodes);
     accessor->template get_mut<spatial_entity_metadata>(e)->erase(bbcd_id);
   }
@@ -555,7 +551,7 @@ private:
       }
     }
     for (entity_id stolen_object_id : node->objects_here) {
-      auto& nodes = accessor->template get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->data.find(bbcd_id)->nodes;
+      auto& nodes = accessor->template get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->data.find(bbcd_id)->second.nodes;
       nodes.erase(stolen_node_id);
       nodes.insert(e.id());
     }
@@ -684,7 +680,7 @@ private:
             else {
               best_hint_ref = accessor->create_entity();
               accessor->template set<ztree_node>(best_hint_ref, ztree_node(zb, entity_id()));
-              accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), best_hint_ref.id());
+              accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), bbox_collision_detector_root_node(best_hint_ref.id()));
             }
           }
           else {
@@ -778,22 +774,23 @@ private:
     // TODO is there an efficient way to avoid duplicating the search of joint ancestors?
     accessor* accessor_;
     entity_id bbcd_id;
-    entity_ref e;
     FuncsType funcs;
+    entity_ref e;
     std::unordered_set<entity_id> interaction_possibilities_already_found;
-    gather_events(accessor* accessor, entity_id bbcd_id, entity_ref e)
+  public:
+    gather_events(accessor* accessor, entity_id bbcd_id, FuncsType funcs, entity_ref e)
       :
       accessor_(accessor),
       bbcd_id(bbcd_id),
-      e(e),
-      funcs(get_funcs(accessor, bbcd_id))
+      funcs(funcs),
+      e(e)
     {
-      bbcd_entry_metadata& metadata = *accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id);
-      accessor->anticipate_event(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id()));
-      for (entity_id node_id : metadata->nodes) {
+      bbcd_entry_metadata& metadata = accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
+      accessor->anticipate_event(funcs.escape_time(accessor, e, metadata.zboxes_union), std::shared_ptr<event>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
+      for (entity_id node_id : metadata.nodes) {
         entity_ref node_ref = accessor->get(node_id);
         auto& node = accessor->template get<ztree_node>(node_ref);
-        gather_events_downwards(node_ref);
+        gather_events_downwards(node);
         if (node->parent) {
           entity_ref node_ref2 = accessor->get(node->parent);
           while (true) {
@@ -809,6 +806,7 @@ private:
         }
       }
     }
+  private:
     
     void gather_events_at(optional<ztree_node> const& node) {
       for (entity_id other_id : node->objects_here) {
@@ -993,7 +991,7 @@ private:
           }
         }
         for(entity_id id : node->children) {
-          filter_impl(id, results, getcost);
+          filter_impl(accessor, id, results, getcost);
         }
       }
     }

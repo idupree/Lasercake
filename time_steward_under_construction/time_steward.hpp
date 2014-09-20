@@ -401,6 +401,7 @@ namespace fields_list_impl {
     typedef empty_fields_list fields_list_nature;
     static const size_t size = 0;
     //template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
+    // TODO find a way to make invalid-field errors more readable
   };
   template<typename Head, typename ...Tail>
   class fields_list_contents<nonempty_fields_list, Head, Tail...> : public fields_list<typename Head::head, typename Head::tail, Tail...> {};
@@ -412,8 +413,8 @@ namespace fields_list_impl {
     typedef fields_list<Tail...> tail;
     static const field_id idx = tail::size;
     static const size_t size = tail::size + 1;
-    template<typename T> static constexpr std::enable_if< std::is_same<T, head>::value, field_id> idx_of() { return idx; }
-    template<typename T> static constexpr std::enable_if<!std::is_same<T, head>::value, field_id> idx_of() { return tail::template idx_of<T>(); }
+    template<typename T> static constexpr std::enable_if_t< std::is_same<T, head>::value, field_id> idx_of() { return idx; }
+    template<typename T> static constexpr std::enable_if_t<!std::is_same<T, head>::value, field_id> idx_of() { return tail::template idx_of<T>(); }
   };
   
   template<>
@@ -427,10 +428,10 @@ namespace fields_list_impl {
     repeated<head> head_;
     foreach_field<typename FieldsList::tail, repeated> tail_;
   public:
-    template<typename T> inline std::enable_if< std::is_same<T, head>::value, repeated<T>&> get() { return head_; }
-    template<typename T> inline std::enable_if<!std::is_same<T, head>::value, repeated<T>&> get() { return tail_.get<T>(); }
-    template<typename T> inline std::enable_if< std::is_same<T, head>::value, repeated<T> const&> get()const { return head_; }
-    template<typename T> inline std::enable_if<!std::is_same<T, head>::value, repeated<T> const&> get()const { return tail_.get<T>(); }
+    template<typename T> inline std::enable_if_t< std::is_same<T, head>::value, repeated<T>&> get() { return head_; }
+    template<typename T> inline std::enable_if_t<!std::is_same<T, head>::value, repeated<T>&> get() { return tail_.get<T>(); }
+    template<typename T> inline std::enable_if_t< std::is_same<T, head>::value, repeated<T> const&> get()const { return head_; }
+    template<typename T> inline std::enable_if_t<!std::is_same<T, head>::value, repeated<T> const&> get()const { return tail_.get<T>(); }
   };
   template<template<typename> class repeated>
   class foreach_field<fields_list<>, repeated> {
@@ -439,11 +440,10 @@ namespace fields_list_impl {
   };
   
   template<class FieldsList, typename repeated>
-  class foreach_field_array {
-    std::array<repeated, FieldsList::size> data;
+  class foreach_field_array : public std::array<repeated, FieldsList::size> {
   public:
-    template<typename T> inline repeated& get() { return data[FieldsList::template idx_of<T>()]; }
-    template<typename T> inline repeated const& get()const { return data[FieldsList::template idx_of<T>()]; }
+    template<typename T> inline repeated& get() { return (*this)[FieldsList::template idx_of<T>()]; }
+    template<typename T> inline repeated const& get()const { return (*this)[FieldsList::template idx_of<T>()]; }
   };
   
   template<class FieldsList, class FuncClass>
@@ -488,7 +488,7 @@ private:
   struct field_metadata {
     bool accessed_preexisting_state;
     bool ever_modified;
-    void accessed(time_steward_accessor const& acc, entity_field_id const& id) {
+    bool accessed(time_steward_accessor const& acc, entity_field_id const& id) {
       // If we already overwrote a field,
       // then this is not accessing the field's state *before* this time.
       if (!ever_modified && !accessed_preexisting_state) {
@@ -521,9 +521,12 @@ private:
 public:
   struct entity_ref {
   public:
+    entity_ref():data(nullptr){}
+    operator bool()const { return bool(data); }
     entity_id id()const { return data->id; }
   private:
     entity_info* data;
+    entity_ref(entity_info* data):data(data){}
     friend class time_steward_accessor;
   };
   
@@ -531,10 +534,10 @@ private:
   template<typename Field>
   inline optional<Field>& get_impl(entity_ref e)const {
     const field_id idx = entity_fields::template idx_of<Field>();
-    Field& result = e.data->fields.get<Field>();
+    optional<Field>& result = e.data->fields.get<Field>();
     const entity_field_id id(e.id(), idx);
     if (e.data->metadata[idx].accessed(*this, id)) {
-      result = ts_.template get_provisional_entity_field_before<Field>(e.id());
+      result = ts_->template get_provisional_entity_field_before<Field>(e.id(), time_);
     }
     return result;
   }
@@ -543,7 +546,7 @@ public:
   inline entity_ref get(entity_id id)const {
     entity_info& e = entities[id];
     e.id = id;
-    return &e;
+    return entity_ref(&e);
   }
   
   template<typename Field> inline optional<Field> const& get    (entity_ref e)const { return get_impl<Field>(e); }
@@ -631,7 +634,7 @@ struct extended_time {
   extended_time():base_time(TimeTypeInfo::never),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id()); }
   extended_time(time_type base_time, first_t):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id::least()); }
   extended_time(time_type base_time,  last_t):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id::greatest()); }
-  extended_time(time_type base_time, siphash_id tiebreaker):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(id); }
+  extended_time(time_type base_time, siphash_id tiebreaker):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(tiebreaker); }
   extended_time(extended_time base_exttime, siphash_id further_tiebreaker)
       :
       base_time(base_exttime.base_time),
@@ -707,8 +710,8 @@ private:
       creation_cut_off (0),
       has_been_executed (false)
       {}
-    trigger_id tid;
     std::shared_ptr<const event> instigating_event;
+    trigger_id tid;
     std::unordered_set<entity_field_id> entity_fields_pile_accessed;
     std::unordered_set<entity_field_id> entity_fields_pile_modified;
     bool creation_cut_off;
@@ -741,10 +744,10 @@ private:
     }
   }
   void update_trigger(bool undoing, trigger_id tid, extended_time const& field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
-    trigger_throughout_time_info& trigger_info = *triggers.find(tid);
+    trigger_throughout_time_info& trigger_info = triggers.find(tid)->second;
     const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound: if we're IN a trigger call, we still want to trigger it again
     if (next_call_iter != trigger_info.begin()) {
-      trigger_call_info& cut_off_call_iter = boost::prior(next_call_iter);
+      const auto cut_off_call_iter = boost::prior(next_call_iter);
       const auto end_iter2 = (next_call_iter == trigger_info.end()) ?
         cut_off_call_iter->second.anticipated_events.end() : 
         cut_off_call_iter->second.anticipated_events.lower_bound(next_call_iter->first); // upper/lower shouldn't matter: anticipated events are never triggers
@@ -765,9 +768,9 @@ private:
     
     const extended_time new_trigger_call_time = trigger_call_time(tid, field_change_andor_creation_time);
     if (undoing) {
-      const auto i = trigger_info.find(new_trigger_call_time); assert(i);
-      --i->field_changes_andor_creations_triggering_this;
-      if (i->field_changes_andor_creations_triggering_this == 0) {
+      const auto i = trigger_info.find(new_trigger_call_time); assert(i != trigger_info.end());
+      --i->second.field_changes_andor_creations_triggering_this;
+      if (i->second.field_changes_andor_creations_triggering_this == 0) {
         trigger_info.erase(i);
         erase_instigating_event(new_trigger_call_time);
       }
@@ -775,35 +778,35 @@ private:
     else {
       // TODO minor: fix duplicate code (id TG0+Xm06xcLdjQ)
       const auto p = trigger_info.insert(std::make_pair(new_trigger_call_time, trigger_call_info()));
-      if (p->second && new_trigger) {
-        insert_instigating_event(std::make_pair(new_trigger_call_time, event_pile_info(new_trigger, tid)));
+      if (p.second && new_trigger) {
+        insert_instigating_event(new_trigger_call_time, event_pile_info(new_trigger, tid));
       }
-      ++p->first.field_changes_andor_creations_triggering_this;
+      ++p.first->second.field_changes_andor_creations_triggering_this;
     }
   }
   void update_triggers(bool undoing, entity_throughout_time_info& dst, field_id id, extended_time const& field_change_time) {
     const auto next_triggers_iter = dst.metadata[id].triggers_pointing_at_this_changes.lower_bound(field_change_time);
     if (next_triggers_iter == dst.metadata[id].triggers_pointing_at_this_changes.begin()) return;
     const auto triggers_iter = boost::prior(next_triggers_iter);
-    for (auto tid : *triggers_iter) {
+    for (auto tid : triggers_iter->second) {
       update_trigger(undoing, tid, field_change_time);
     }
   }
   
   struct copy_field_change_from_accessor {
     template<typename Field>
-    static void func(extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
+    static void func(time_steward* ts, extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
       const auto p = dst.fields.template get<Field>().insert(std::make_pair(time, src.template get<Field>()));
       assert(p.second);
-      update_triggers(false, dst, entity_fields::template idx_of<Field>(), time);
+      ts->update_triggers(false, dst, entity_fields::template idx_of<Field>(), time);
     }
   };
   struct undo_field_change {
     template<typename Field>
-    static void func(extended_time const& time, entity_throughout_time_info& dst) {
+    static void func(time_steward* ts, extended_time const& time, entity_throughout_time_info& dst) {
       const auto change_iter = dst.fields.template get<Field>().find(time);
       assert (change_iter != dst.fields.template get<Field>().end());
-      update_triggers(true, dst, entity_fields::template idx_of<Field>(), time);
+      ts->update_triggers(true, dst, entity_fields::template idx_of<Field>(), time);
       dst.fields.template get<Field>().erase(change_iter);
     }
   };
@@ -818,7 +821,7 @@ private:
 public:
   time_steward() {}
   
-  void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
+  void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<const event> e) {
     // This function is one of exactly two places where
     // (persistent) extended_times are created.
     // Uniqueness justification:
@@ -845,7 +848,7 @@ public:
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
     extended_time et(time, extended_time::last);
     update_through_time(et);
-    return std::unique_ptr<accessor>(new accessor(this, et));
+    return std::unique_ptr<accessor>(new accessor(this, et, false));
   }
   
   // Some functions for external client code to regulate how much processing the time_steward
@@ -881,17 +884,17 @@ private:
     return get_provisional_entity_data_before(id, time);
   }*/
   template<typename Field>
-  Field const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
+  optional<Field> const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
     const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) { return Field(); }
+    if (entity_stream_iter == entities.end()) { return none; }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
     const auto next_change_iter = e.fields.template get<Field>().changes.upper_bound(time);
-    if (next_change_iter == e.changes.begin()) { return Field(); }
+    if (next_change_iter == e.changes.begin()) { return none; }
     return &*boost::prior(next_change_iter)->second;
   }
   
-  void insert_instigating_event(extended_time const& time, event_pile_info& e) {
+  void insert_instigating_event(extended_time const& time, event_pile_info const& e) {
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
     const auto p2 = event_piles_not_correctly_executed.insert(time);
@@ -946,7 +949,7 @@ private:
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
         pile_info.entity_fields_pile_modified.insert(id);
-        copy_field_change_from_accessor_funcs[id.f](time, a.entities.find(id.e)->fields, *entities.find(id.e));
+        copy_field_change_from_accessor_funcs[id.f](this, time, a.entities.find(id.e)->fields, *entities.find(id.e));
       }
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
         pile_info.triggers_changed.insert(t.first);
@@ -998,7 +1001,7 @@ private:
       }
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-      undo_field_change_funcs[id.f](time, *entities.find(id.e));
+      undo_field_change_funcs[id.f](this, time, *entities.find(id.e));
     }
     for (trigger_id const& tid : pile_info.triggers_changed) {
       const extended_time trigger_call_time = trigger_call_time(tid, time);

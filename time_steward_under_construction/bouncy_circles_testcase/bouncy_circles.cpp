@@ -88,7 +88,7 @@ struct global_data {
 };
 
 typedef bbox_collision_detector_system<64, num_dimensions> bbcd_system;
-typedef time_steward_system::fields_list<circle_shape, circle_overlaps, bbcd_system::fields> fields;
+typedef time_steward_system::fields_list<global_data, circle_shape, circle_overlaps, bbcd_system::fields> fields;
 typedef time_steward_system::time_steward<fields> time_steward;
 typedef time_steward::accessor accessor;
 typedef time_steward::event event;
