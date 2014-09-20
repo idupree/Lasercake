@@ -704,7 +704,7 @@ public:
     }
     return result;
   }
-  template<typename DomainType, typename ValueType>
+  template<typename ValueType, typename DomainType>
   void set_term(DomainType const& where, uint32_t which_term, finite_dimensional_vector<num_dimensions, ValueType> new_value) {
     for (int i = 0; i < num_dimensions; ++i) {
       data[i].set_term(where, which_term, new_value[i]);

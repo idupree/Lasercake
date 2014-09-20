@@ -334,6 +334,9 @@ public:
   bool operator!=(siphash_id const& o)const {
     return (data_[0] != o.data_[0]) || (data_[1] != o.data_[1]);
   }
+  operator bool()const {
+    return (*this) == null();
+  }
 private:
   constexpr siphash_id(data_type data):data_(data){}
   data_type data_;
@@ -370,6 +373,7 @@ struct time_type_info {
 };
 
 typedef siphash_id entity_id;
+typedef siphash_id trigger_id;
 const entity_id global_object_id = siphash_id::least();
 
 typedef size_t field_id;
@@ -378,85 +382,103 @@ using optional = boost::optional<T>;
 using boost::none;
 
 namespace fields_list_impl {
-  class fields_list_nature_base { typedef fields_list_nature confirm; };
-  class empty_fields_list : public fields_list_nature {};
-  class nonempty_fields_list : public fields_list_nature {};
-  class generic_input : public fields_list_nature {};
+  class fields_list_nature_base {};
+  class empty_fields_list : public fields_list_nature_base {};
+  class nonempty_fields_list : public fields_list_nature_base {};
+  class generic_input : public fields_list_nature_base {};
   
   struct two { char c[2]; };
-  template<class T> std::enable_if<std::base_of<fields_list_nature_base, T::fields_list_nature>, char> test();
-  template<class T> two test();
-  template<class T, bool is_specified> struct get_fields_list_nature_impl { typedef T::fields_list_nature type; }
-  template<class T> struct get_fields_list_nature_impl<false> { typedef generic_input type; }
-  template<class T> struct get_fields_list_nature { typedef get_fields_list_nature_impl<T, sizeof(test<T>())==1>::type type; }
+  template<class T> std::enable_if_t<std::is_base_of<fields_list_nature_base, typename T::fields_list_nature>::value, char> test(int);
+  template<class T> two test(...);
+  template<class T, bool is_specified> struct get_fields_list_nature_impl { typedef typename T::fields_list_nature type; };
+  template<class T> struct get_fields_list_nature_impl<T, false> { typedef generic_input type; };
+  template<class T> struct get_fields_list_nature { typedef typename get_fields_list_nature_impl<T, sizeof(test<T>(0))==1>::type type; };
 
   template<typename ...Input> class fields_list;
   template<typename HeadNature, typename ...Input> class fields_list_contents;
   template<> class fields_list_contents<empty_fields_list> {
+  public:
     typedef empty_fields_list fields_list_nature;
     static const size_t size = 0;
-    template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
-  }
+    //template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
+  };
   template<typename Head, typename ...Tail>
-  class fields_list_contents<nonempty_fields_list, Head, Tail...> : fields_list<Head::head, Head::tail, Tail...> {}
+  class fields_list_contents<nonempty_fields_list, Head, Tail...> : public fields_list<typename Head::head, typename Head::tail, Tail...> {};
   template<typename HeadNature, typename Head, typename ...Tail>
   class fields_list_contents<HeadNature, Head, Tail...> {
+  public:
     typedef nonempty_fields_list fields_list_nature;
     typedef Head head;
     typedef fields_list<Tail...> tail;
     static const field_id idx = tail::size;
     static const size_t size = tail::size + 1;
-    template<typename T> static constexpr field_id idx_of() { return tail::idx_of<T>(); }
-    template<> static constexpr field_id idx_of<head>() { return idx; }
-  }
+    template<typename T> static constexpr std::enable_if< std::is_same<T, head>::value, field_id> idx_of() { return idx; }
+    template<typename T> static constexpr std::enable_if<!std::is_same<T, head>::value, field_id> idx_of() { return tail::template idx_of<T>(); }
+  };
   
   template<>
   class fields_list<> : public fields_list_contents<empty_fields_list> {};
   template<typename Head, typename ...Tail>
-  class fields_list<Head, Tail...> : public fields_list_contents<get_fields_list_nature<Head>::type, Head, Tail...> {};
+  class fields_list<Head, Tail...> : public fields_list_contents<typename get_fields_list_nature<Head>::type, Head, Tail...> {};
 
   template<class FieldsList, template<typename> class repeated>
   class foreach_field {
-    typedef repeated<FieldsList::head> head_type;
-    head_type head;
-    foreach_field<FieldsList::tail, repeated> tail;
-    template<typename T> inline repeated<T>& get() { return tail.get<T>(); }
-    template<typename T> inline repeated<T> const& get()const { return tail.get<T>(); }
-    template<> inline head_type& get<FieldsList::head>() { return head; }
-    template<> inline head_type const& get<FieldsList::head>()const { return head; }
-  }
+    typedef typename FieldsList::head head;
+    repeated<head> head_;
+    foreach_field<typename FieldsList::tail, repeated> tail_;
+  public:
+    template<typename T> inline std::enable_if< std::is_same<T, head>::value, repeated<T>&> get() { return head_; }
+    template<typename T> inline std::enable_if<!std::is_same<T, head>::value, repeated<T>&> get() { return tail_.get<T>(); }
+    template<typename T> inline std::enable_if< std::is_same<T, head>::value, repeated<T> const&> get()const { return head_; }
+    template<typename T> inline std::enable_if<!std::is_same<T, head>::value, repeated<T> const&> get()const { return tail_.get<T>(); }
+  };
   template<template<typename> class repeated>
   class foreach_field<fields_list<>, repeated> {
-    template<typename T> inline repeated<T>& get() { static_assert(false, "No field of that type exists"); }
-    template<typename T> inline repeated<T> const& get()const { static_assert(false, "No field of that type exists"); }
-  }
+    //template<typename T> inline repeated<T>& get() { static_assert(false, "No field of that type exists"); }
+    //template<typename T> inline repeated<T> const& get()const { static_assert(false, "No field of that type exists"); }
+  };
   
-  template<class FieldsList, class repeated>
+  template<class FieldsList, typename repeated>
   class foreach_field_array {
     std::array<repeated, FieldsList::size> data;
-    template<typename T> inline repeated& get() { return data[FieldsList::idx_of<T>()]; }
-    template<typename T> inline repeated const& get()const { return data[FieldsList::idx_of<T>()]; }
-  }
+  public:
+    template<typename T> inline repeated& get() { return data[FieldsList::template idx_of<T>()]; }
+    template<typename T> inline repeated const& get()const { return data[FieldsList::template idx_of<T>()]; }
+  };
   
-  template<class FieldsList, typename FuncType, template<typename> FuncType func_template>
-  class function_array : foreach_field_array<FuncType*> {
+  template<class FieldsList, class FuncClass>
+  class function_array : public foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)> {
+  public:
     function_array() { add_fptr<FieldsList>(); }
+  private:
     template<class SubList> inline void add_fptr() {
-      get<SubList::head>() = &func_template<SubList::head>;
-      add_fptr<SubList::tail>();
+      foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)>::template get<typename SubList::head>() = &FuncClass::template func<typename SubList::head>;
+      if (std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value) { add_fptr<typename SubList::tail>(); }
     }
-    template<> inline void add_fptr<fields_list<>>() {}
-  }
+  };
 }
 template<typename ...Input> using fields_list = fields_list_impl::fields_list<Input...>;
 struct entity_field_id {
   entity_field_id(entity_id e, field_id f):e(e),f(f){}
   entity_id e;
   field_id f;
+};
+
+} //end namespace time_steward_system
+namespace std {
+  template<>
+  class hash<time_steward_system::entity_field_id> {
+    public:
+    size_t operator()(time_steward_system::entity_field_id const& i)const {
+      return std::hash<time_steward_system::siphash_id>()(i.e) + i.f;
+    }
+  };
 }
+namespace time_steward_system {
 
 template<typename TimeSteward>
 class time_steward_accessor {
+private:
   typedef typename TimeSteward::entity_fields entity_fields;
   typedef typename TimeSteward::extended_time extended_time;
   typedef typename TimeSteward::time_type time_type;
@@ -464,7 +486,6 @@ class time_steward_accessor {
   typedef typename TimeSteward::trigger trigger;
   
   struct field_metadata {
-    persistent_map<trigger_id, trigger_info> triggers;
     bool accessed_preexisting_state;
     bool ever_modified;
     void accessed(time_steward_accessor const& acc, entity_field_id const& id) {
@@ -473,7 +494,6 @@ class time_steward_accessor {
       if (!ever_modified && !accessed_preexisting_state) {
         accessed_preexisting_state = true;
         acc.entity_fields_preexisting_state_accessed.push_back(id);
-        triggers = ts_.get_provisional_triggers_active_before(id);
         return true;
       }
       return false;
@@ -492,13 +512,13 @@ class time_steward_accessor {
     Field data;
   };*/
     
-  template<typename FieldsList>
   struct entity_info {
     entity_id id;
     fields_list_impl::foreach_field<entity_fields, field_info> fields;
-    fields_list_impl::foreach_field_array<field_metadata> metadata;
+    fields_list_impl::foreach_field_array<entity_fields, field_metadata> metadata;
   };
   
+public:
   struct entity_ref {
   public:
     entity_id id()const { return data->id; }
@@ -507,13 +527,14 @@ class time_steward_accessor {
     friend class time_steward_accessor;
   };
   
+private:
   template<typename Field>
-  inline Field& get_impl(entity_ref e)const {
-    const field_id idx = entity_fields::idx_of<Field>();
+  inline optional<Field>& get_impl(entity_ref e)const {
+    const field_id idx = entity_fields::template idx_of<Field>();
     Field& result = e.data->fields.get<Field>();
     const entity_field_id id(e.id(), idx);
     if (e.data->metadata[idx].accessed(*this, id)) {
-      result = ts_.get_provisional_entity_field_before<Field>(e.id());
+      result = ts_.template get_provisional_entity_field_before<Field>(e.id());
     }
     return result;
   }
@@ -525,18 +546,18 @@ public:
     return &e;
   }
   
-  template<typename Field> inline Field const& get    (entity_ref e)const { return get_impl<Field>(e); }
-  template<typename Field> inline Field      & get_mut(entity_ref e) {
-    Field& result = get_impl<Field>(e);
-    const field_id idx = entity_fields::idx_of<Field>();
+  template<typename Field> inline optional<Field> const& get    (entity_ref e)const { return get_impl<Field>(e); }
+  template<typename Field> inline optional<Field>      & get_mut(entity_ref e) {
+    optional<Field>& result = get_impl<Field>(e);
+    const field_id idx = entity_fields::template idx_of<Field>();
     e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
     return result;
   }
   template<typename Field>
-  inline Field& set(entity_ref e, Field new_contents) {
-    const field_id idx = entity_fields::idx_of<Field>();
+  inline optional<Field>& set(entity_ref e, optional<Field> new_contents) {
+    const field_id idx = entity_fields::template idx_of<Field>();
     e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
-    Field& result = e.data->fields.get<Field>();
+    optional<Field>& result = e.data->fields.get<Field>();
     result = new_contents;
     return result;
   }
@@ -547,7 +568,7 @@ public:
     new_upcoming_events.push_back(std::make_pair((when == time_.base_time) ? extended_time(time_, create_id()) : extended_time(when, create_id()), e));
   };
   void set_trigger(trigger_id id, std::shared_ptr<const trigger> t) {
-    trigger_changes.push_back(std::make_pair(id, t));
+    trigger_changes[id] = t;
   };
   trigger_id set_trigger(std::shared_ptr<const trigger> t) {
     trigger_id id = create_id();
@@ -578,7 +599,7 @@ private:
   size_t ids_created_;
   mutable std::unordered_map<entity_id, entity_info> entities;
   
-  std::vector<std::pair<trigger_id, std::shared_ptr<const trigger>>> trigger_changes;
+  std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
   std::vector<entity_field_id> entity_fields_modified;
   mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
@@ -614,7 +635,7 @@ struct extended_time {
   extended_time(extended_time base_exttime, siphash_id further_tiebreaker)
       :
       base_time(base_exttime.base_time),
-      tiebreakers(base_exttime.tiebreakers)
+      tiebreakers(base_exttime.tiebreakers),
       non_trigger_detail_tiebreakers_size(base_exttime.non_trigger_detail_tiebreakers_size)
   {
     tiebreakers.resize(non_trigger_detail_tiebreakers_size);
@@ -652,11 +673,12 @@ namespace std {
 }
 namespace time_steward_system {
 
-template<class TimeTypeInfo = time_type_info<>, class FieldsList/*, class Event = */>
+template<class FieldsList/*, class Event = */, class TimeTypeInfo = time_type_info<>>
 class time_steward {
 public:
   typedef FieldsList entity_fields;
   typedef time_steward_accessor<time_steward> accessor;
+  friend class time_steward_accessor<time_steward>;
   
   typedef typename TimeTypeInfo::time_type time_type;
   static const time_type min_time = TimeTypeInfo::min_time;
@@ -666,8 +688,9 @@ public:
   class event {
   public:
     virtual void operator()(accessor* accessor)const = 0;
-    virtual ~action(){}
+    virtual ~event(){}
   };
+  typedef event trigger;
 private:
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
   typedef impl::extended_time<TimeTypeInfo> extended_time;
@@ -696,7 +719,6 @@ private:
   
   template<typename Field>
   using field_throughout_time = std::map<extended_time, optional<Field>>;
-  template<typename Field>
   struct field_metadata_throughout_time {
     std::map<extended_time, persistent_set<trigger_id>> triggers_pointing_at_this_changes;
     std::set<extended_time> event_piles_which_accessed_this;
@@ -705,10 +727,11 @@ private:
     fields_list_impl::foreach_field<entity_fields, field_throughout_time> fields;
     fields_list_impl::foreach_field_array<entity_fields, field_metadata_throughout_time> metadata;
   };
+  typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
   extended_time trigger_call_time(trigger_id id, extended_time const& when_triggered) {
     extended_time result = when_triggered;
-    for (i = result.non_trigger_detail_tiebreakers_size-1; ; ++i) {
+    for (size_t i = result.non_trigger_detail_tiebreakers_size-1; ; ++i) {
       trigger_id next_tiebreaker(id, result.tiebreakers[i]);
       if (i+1 == result.tiebreakers.size() || next_tiebreaker > result.tiebreakers[i+1]) {
         result.tiebreakers.resize(i+2);
@@ -729,7 +752,7 @@ private:
         const auto pile_iter = event_piles.find(*i);
         if (undoing) {
           pile_iter->second.creation_cut_off = false;
-          if (pile_info.should_be_executed()) { event_piles_not_correctly_executed.insert(pile_iter->first); }
+          if (pile_iter->second.should_be_executed()) { event_piles_not_correctly_executed.insert(pile_iter->first); }
         }
         else {
           pile_iter->second.creation_cut_off = true;
@@ -737,6 +760,7 @@ private:
           else                                     { event_piles_not_correctly_executed.erase (pile_iter->first); }
         }
       }
+      if (!undoing && !force_trigger_change) { new_trigger = event_piles.find(cut_off_call_iter->first)->second.instigating_event; }
     }
     
     const extended_time new_trigger_call_time = trigger_call_time(tid, field_change_andor_creation_time);
@@ -749,7 +773,6 @@ private:
       }
     }
     else {
-      if (!force_trigger_change) { new_trigger = event_piles.find(*i)->second.instigating_event; }
       // TODO minor: fix duplicate code (id TG0+Xm06xcLdjQ)
       const auto p = trigger_info.insert(std::make_pair(new_trigger_call_time, trigger_call_info()));
       if (p->second && new_trigger) {
@@ -766,42 +789,36 @@ private:
       update_trigger(undoing, tid, field_change_time);
     }
   }
-  template<typename Field>
-  void copy_field_change_from_accessor(extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
-    const auto p = dst.fields.get<Field>().insert(std::make_pair(time, src.get<Field>()));
-    assert(p.second);
-    update_triggers(false, dst, entity_fields::idx_of<Field>(), time);
-  }
   
-  template<typename Field>
-  void undo_field_change(extended_time const& time, entity_throughout_time_info& dst) {
-    const auto change_iter = dst.fields.get<Field>().find(time);
-    assert (change_iter != dst.fields.get<Field>().end());
-    update_triggers(true, dst, entity_fields::idx_of<Field>(), time);
-    dst.fields.get<Field>().erase(change_iter);
-  }
+  struct copy_field_change_from_accessor {
+    template<typename Field>
+    static void func(extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
+      const auto p = dst.fields.template get<Field>().insert(std::make_pair(time, src.template get<Field>()));
+      assert(p.second);
+      update_triggers(false, dst, entity_fields::template idx_of<Field>(), time);
+    }
+  };
+  struct undo_field_change {
+    template<typename Field>
+    static void func(extended_time const& time, entity_throughout_time_info& dst) {
+      const auto change_iter = dst.fields.template get<Field>().find(time);
+      assert (change_iter != dst.fields.template get<Field>().end());
+      update_triggers(true, dst, entity_fields::template idx_of<Field>(), time);
+      dst.fields.template get<Field>().erase(change_iter);
+    }
+  };
   
-  static const fields_list_impl::function_array<
-    entity_fields,
-    decltype(copy_field_change_from_accessor<entity_fields::head>),
-    copy_field_change_from_accessor>
-    copy_field_change_from_accessor_funcs;
-  static const fields_list_impl::function_array<
-    entity_fields,
-    decltype(undo_field_change<entity_fields::head>),
-    undo_field_change>
-    undo_field_change_funcs;
+  static const fields_list_impl::function_array<entity_fields, copy_field_change_from_accessor> copy_field_change_from_accessor_funcs;
+  static const fields_list_impl::function_array<entity_fields, undo_field_change> undo_field_change_funcs;
   
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
   typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
   typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
-
-  friend class time_steward_accessor<time_steward>;
 public:
   time_steward() {}
   
-  void insert_fiat_event(time_type time, uint64_t distinguisher, std::unique_ptr<event> e) {
+  void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
     // This function is one of exactly two places where
     // (persistent) extended_times are created.
     // Uniqueness justification:
@@ -845,6 +862,7 @@ private:
   entities_map entities;
   event_piles_map event_piles;
   std::set<extended_time> event_piles_not_correctly_executed;
+  std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
   
   void update_through_time(extended_time const& time) {
     while (!is_updated_through(time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
@@ -868,7 +886,7 @@ private:
     if (entity_stream_iter == entities.end()) { return Field(); }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto next_change_iter = e.fields.get<Field>().changes.upper_bound(time);
+    const auto next_change_iter = e.fields.template get<Field>().changes.upper_bound(time);
     if (next_change_iter == e.changes.begin()) { return Field(); }
     return &*boost::prior(next_change_iter)->second;
   }
@@ -890,7 +908,7 @@ private:
       }
       else {
         event_piles_not_correctly_executed.erase(time);
-        event_piles.erase(event_iter);
+        event_piles.erase(event_pile_iter);
       }
     }
   }
@@ -919,11 +937,11 @@ private:
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
-          persistent_set new_triggers;
-          if (!metadata.triggers_changes.empty()) { new_triggers = metadata.triggers_changes.back(); }
+          persistent_set<trigger_id> new_triggers;
+          if (!metadata.triggers_pointing_at_this_changes.empty()) { new_triggers = metadata.triggers_pointing_at_this_changes.back(); }
           new_triggers.insert(pile_info.tid);
           // Mega hack sZInnn3FkZy0yg: if the trigger accessed the same field both now and before, this insert happens anyway and the below insert fails.
-          metadata.triggers_changes.insert(std::make_pair(time, new_triggers));
+          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
         }
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
@@ -931,7 +949,7 @@ private:
         copy_field_change_from_accessor_funcs[id.f](time, a.entities.find(id.e)->fields, *entities.find(id.e));
       }
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
-        pile_info.triggers_changed.insert(ev.first);
+        pile_info.triggers_changed.insert(t.first);
         update_trigger(false, t.first, time, true, t.second);
       }
       if (pile_info.tid) {
@@ -943,11 +961,11 @@ private:
         if (call_iter != triggers.begin()) {
           for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->entity_fields_pile_accessed) {
             auto& metadata = entities[former_trigger_access.e].metadata[former_trigger_access.f];
-            persistent_set new_triggers;
-            if (!metadata.triggers_changes.empty()) { new_triggers = metadata.triggers_changes.back(); }
+            persistent_set<trigger_id> new_triggers;
+            if (!metadata.triggers_pointing_at_this_changes.empty()) { new_triggers = metadata.triggers_pointing_at_this_changes.back(); }
             const auto p2 = new_triggers.erase(pile_info.tid);
             // Mega hack sZInnn3FkZy0yg: if the trigger accessed the same field both now and before, the above insert happens anyway and this insert fails.
-            metadata.triggers_changes.insert(std::make_pair(time, new_triggers));
+            metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
           }
         }
       }
@@ -983,7 +1001,7 @@ private:
       undo_field_change_funcs[id.f](time, *entities.find(id.e));
     }
     for (trigger_id const& tid : pile_info.triggers_changed) {
-      const extended_time trigger_call_time = trigger_call_time(id, time);
+      const extended_time trigger_call_time = trigger_call_time(tid, time);
       update_trigger(true, tid, time);
     }
     if (pile_info.tid) {
@@ -1008,7 +1026,7 @@ private:
       event_piles_not_correctly_executed.insert(time);
     }
     if (!pile_info.instigating_event) {
-      event_piles.erase(event_iter);
+      event_piles.erase(event_pile_iter);
       return true;
     }
     return false;

@@ -33,67 +33,70 @@
 static const double cube_size = 1;
 static const time_type view_duration = time_units_per_gloppp * 10;
 
-void draw_ztree_node(gl_triangles& triangles, bbox_cd::ztree_node const* node, time_type time, gl_data_format::color color) {
-  if (node) {
-    bbox_cd::bounding_box bbox = node->here.get_bbox();
+void draw_ztree_node(gl_triangles& triangles, time_steward::accessor const* accessor, entity_id id, gl_data_format::color color) {
+  if (id) {
+    auto const& node = accessor->get<bbcd_system::ztree_node>(accessor->get(id));
+    bbcd_system::bounding_box bbox = node->here.get_bbox();
     if (bbox.size_minus_one()[0]<arena_width){
       gl_polygon polygon;
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        (cube_size*time/view_duration)-cube_size/2,
+        (cube_size*accessor->now()/view_duration)-cube_size/2,
         bbox_to_space(bbox.min()[0])*cube_size/view_width,
         bbox_to_space(bbox.min()[1])*cube_size/view_width,
         color));
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        (cube_size*time/view_duration)-cube_size/2,
+        (cube_size*accessor->now()/view_duration)-cube_size/2,
         bbox_to_space(bbox.min()[0])*cube_size/view_width,
         bbox_to_space(bbox.max()[1])*cube_size/view_width,
         color));
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        (cube_size*time/view_duration)-cube_size/2,
+        (cube_size*accessor->now()/view_duration)-cube_size/2,
         bbox_to_space(bbox.max()[0])*cube_size/view_width,
         bbox_to_space(bbox.max()[1])*cube_size/view_width,
         color));
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        (cube_size*time/view_duration)-cube_size/2,
+        (cube_size*accessor->now()/view_duration)-cube_size/2,
         bbox_to_space(bbox.max()[0])*cube_size/view_width,
         bbox_to_space(bbox.min()[1])*cube_size/view_width,
         color));
       push_wireframe_polygon(triangles, bbox.size_minus_one()[0]*cube_size/view_width/30, polygon);
     }
-    draw_ztree_node(triangles, node->child0.get(), time, color);
-    draw_ztree_node(triangles, node->child1.get(), time, color);
+    for (entity_id i : node->children) {
+      draw_ztree_node(triangles, accessor, i, color);
+    }
   }
 }
 
 void draw_time(gl_triangles& triangles, time_steward& w, time_type time, gl_data_format::color color) {
-  circle::coordinate_array min;
-  circle::coordinate_array max;
+  bbcd_system::coordinate_array min;
+  bbcd_system::coordinate_array max;
   for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
     min[i] = space_to_bbox(-view_width/2);
     max[i] = space_to_bbox(view_width/2);
   }
-  const circle::bounding_box view_box = circle::bounding_box::min_and_max(min,max);
+  const bbcd_system::bounding_box view_box = bbcd_system::bounding_box::min_and_max(min,max);
   
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
-  auto bbcd = accessor->get(accessor->get(global_object_id)->bbcd_id);
-  std::unordered_set<entity_id<const circle>> visible_circles = bbcd->filter(circles_overlapping_bbox_filter(accessor.get(), view_box));
-  for (entity_id<const circle> id : visible_circles) {
+  auto bbcd_id = accessor->get<global_data>(accessor->get(time_steward_system::global_object_id))->bbcd_id;
+  std::unordered_set<entity_id> visible_circles = bbcd_operations::filter(accessor.get(), bbcd_id, circles_overlapping_bbox_filter(accessor.get(), view_box));
+  for (entity_id id : visible_circles) {
     auto e = accessor->get(id);
+    auto c = accessor->get<circle_shape>(e);
     gl_polygon polygon;
-    double x = (double)e->center(0)(accessor->now())*cube_size/view_width;
-    double y = (double)e->center(1)(accessor->now())*cube_size/view_width;
-    double rad = (double)e->radius(accessor->now())*cube_size/view_width;
+    double x = (double)c->center(0)(accessor->now())*cube_size/view_width;
+    double y = (double)c->center(1)(accessor->now())*cube_size/view_width;
+    double rad = (double)c->radius(accessor->now())*cube_size/view_width;
     std::cerr<<x<<","<<y<<","<<rad<<"\n";
     for (double theta = 0; theta < 6.283; theta += 0.3) {
       polygon.vertices_.push_back(gl_data_format::vertex_with_color(
         (cube_size*time/view_duration)-cube_size/2,
         x + std::cos(theta)*rad,
         y + std::sin(theta)*rad,
-        e->overlaps.empty() ? color : gl_data_format::color(0x00ffffb0)));
+        accessor->get<circle_overlaps>(e)->overlaps.empty() ? color : gl_data_format::color(0x00ffffb0)));
     }
     push_wireframe_polygon(triangles, rad/5, polygon);
   }
-  draw_ztree_node(triangles, bbcd->debug_get_tree(), time, color);
+  draw_ztree_node(triangles, accessor.get(), accessor->get<bbcd_system::bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, color);
 }
 
 gl_triangles display(vector3<double> const& where, time_steward& w, time_type focus_time) {
@@ -300,7 +303,7 @@ void do_gl(time_steward& w, time_type time, double wid, double height_angle, dou
 }
 
 
-time_steward steward(make_unique<global_object>());
+time_steward steward;
 double view_length = 2*cube_size;
 double height_angle = 0;
 double rot = 0;
@@ -343,7 +346,7 @@ static void Draw(void) {
 int main(int argc, char **argv)
 {
   bounded_int_calculus::test();
-  steward.insert_fiat_event(0, make_unique<initialize_world>());
+  steward.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
   glutCreateWindow("bouncy circles");
