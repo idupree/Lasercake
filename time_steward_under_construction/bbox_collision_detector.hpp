@@ -497,15 +497,13 @@ public:
     // TODO maybe time_steward can treat the different members of the outer_metadata map as different fields,
     // (WRT access/back-in-time-change semantics) since we usually only want to access/modify one of them?
     // Or is that too unlikely to be useful? Some sort of profiling may help later.
-    FuncsType funcs = get_funcs(accessor, bbcd_id);
     auto& outer_metadata = accessor->template get_mut<spatial_entity_metadata>(e);
     if (!outer_metadata) { outer_metadata = spatial_entity_metadata(); }
-    persistent_set<entity_id> hint_nodes;
+    bbcd_entry_metadata& metadata = outer_metadata->data[bbcd_id]; // default-construct
     if (hint_object) {
-      hint_nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second.nodes;
+      // hack: copy over the object's nodes as a hint for where to insert
+      metadata.nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second.nodes;
     }
-    update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), hint_nodes);
-    gather_events(accessor, bbcd_id, funcs, e);
     
     accessor->set_trigger(trigger_id(bbcd_id, e.id()), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
   }
@@ -525,35 +523,39 @@ private:
     for (entity_id node_id : nodes) {
       entity_ref node_ref = accessor->get(node_id);
       auto& node = accessor->template get_mut<ztree_node>(node_ref);
-      node->objects_here.erase(e.id());
-      if (node->objects_here.empty()) {
-        if (!node->children[0]) {
-          squish_node(accessor, bbcd_id, e, 1);
-        }
-        else if (!node->children[1]) {
-          squish_node(accessor, bbcd_id, e, 0);
+      if (node) {
+        node->objects_here.erase(e.id());
+        if (node->objects_here.empty()) {
+          if (!node->children[0]) {
+            squish_node(accessor, bbcd_id, node_ref, 1);
+          }
+          else if (!node->children[1]) {
+            squish_node(accessor, bbcd_id, node_ref, 0);
+          }
         }
       }
       metadata.nodes.erase(node_id);
     }
   }
   
-  static void squish_node(accessor* accessor, entity_id bbcd_id, entity_ref e, size_t which_child) {
+  static void squish_node(accessor* accessor, entity_id bbcd_id, entity_ref node_ref, size_t which_child) {
     // (old child a.k.a. new 'node' could be none)
-    auto& node = accessor->template get_mut<ztree_node>(e);
+    auto& node = accessor->template get_mut<ztree_node>(node_ref);
     entity_id stolen_node_id = node->children[which_child];
     auto& stolen_node = accessor->template get_mut<ztree_node>(accessor->get(stolen_node_id));
     node = stolen_node;
     stolen_node = none;
-    for (entity_id stolen_child_id : node->children) {
-      if (stolen_child_id) {
-        accessor->template get_mut<ztree_node>(accessor->get(stolen_child_id))->parent = e.id();
+    if (node) {
+      for (entity_id stolen_child_id : node->children) {
+        if (stolen_child_id) {
+          accessor->template get_mut<ztree_node>(accessor->get(stolen_child_id))->parent = node_ref.id();
+        }
       }
-    }
-    for (entity_id stolen_object_id : node->objects_here) {
-      auto& nodes = accessor->template get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->data.find(bbcd_id)->second.nodes;
-      nodes.erase(stolen_node_id);
-      nodes.insert(e.id());
+      for (entity_id stolen_object_id : node->objects_here) {
+        auto& nodes = accessor->template get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->data.find(bbcd_id)->second.nodes;
+        nodes.erase(stolen_node_id);
+        nodes.insert(node_ref.id());
+      }
     }
   }
   
@@ -671,7 +673,8 @@ private:
           }
         }
         const zbox zb = zbox::box_from_coords(coords, exp * num_dimensions + num_dims_using_one_zbox_of_twice_base_box_size);
-        if (zb.overlaps(bbox)) {
+        // while we use the zboxes_union concept, we can't cull this.
+        //if (zb.overlaps(bbox)) {
           entity_ref best_hint_ref;
           if (hint_nodes.empty()) {
             if ((*root) && (*root)->root_node_id_) {
@@ -699,7 +702,7 @@ private:
           }
           entity_ref inserted_at_ref = insert_zbox_with_hint(best_hint_ref, zb);
           old_nodes_to_remove.erase(inserted_at_ref.id());
-        }
+        //}
       }
       erase_from_nodes(accessor, bbcd_id, e, metadata, old_nodes_to_remove);
     }
@@ -785,7 +788,8 @@ private:
       funcs(funcs),
       e(e)
     {
-      bbcd_entry_metadata& metadata = accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
+      
+      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
       accessor->anticipate_event(funcs.escape_time(accessor, e, metadata.zboxes_union), std::shared_ptr<event>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
       for (entity_id node_id : metadata.nodes) {
         entity_ref node_ref = accessor->get(node_id);

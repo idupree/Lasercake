@@ -84,6 +84,7 @@ poly distish(circle_shape const& c1, circle_shape const& c2) {
 }
 
 struct global_data {
+  global_data(entity_id bbcd_id):bbcd_id(bbcd_id){}
   entity_id bbcd_id;
 };
 
@@ -237,9 +238,8 @@ struct circles_overlapping_bbox_filter {
 class initialize_world : public time_steward::event {
 public:
   void operator()(time_steward::accessor* accessor)const override {
-    auto g = accessor->get_mut<global_data>(accessor->get(time_steward_system::global_object_id));
-    auto cd = bbcd_operations::create_bbox_collision_detector(accessor);
-    g->bbcd_id = cd.id();
+    auto bbcd = bbcd_operations::create_bbox_collision_detector(accessor);
+    auto g = accessor->set<global_data>(accessor->get(time_steward_system::global_object_id), global_data(bbcd.id()));
     srand(0);
     for (int i = 0; i < 150; ++i) {
       auto e = accessor->create_entity();
@@ -251,7 +251,8 @@ public:
         poly_fd_vector(poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(xv)), poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(yv))),
         poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>((50+(rand()%100))*arena_width/5000)) // 1-3% the width of the arena
       ));
-      bbcd_operations::insert(accessor, cd.id(), e);
+      accessor->set<circle_overlaps>(e, circle_overlaps());
+      bbcd_operations::insert(accessor, bbcd.id(), e);
     }
   }
 };

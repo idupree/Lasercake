@@ -335,7 +335,7 @@ public:
     return (data_[0] != o.data_[0]) || (data_[1] != o.data_[1]);
   }
   operator bool()const {
-    return (*this) == null();
+    return (*this) != null();
   }
 private:
   constexpr siphash_id(data_type data):data_(data){}
@@ -383,44 +383,54 @@ using boost::none;
 
 namespace fields_list_impl {
   class fields_list_nature_base {};
-  class empty_fields_list : public fields_list_nature_base {};
-  class nonempty_fields_list : public fields_list_nature_base {};
-  class generic_input : public fields_list_nature_base {};
+  class empty_fields_list_nature : public fields_list_nature_base {};
+  class nonempty_fields_list_nature : public fields_list_nature_base {};
+  class generic_input_nature : public fields_list_nature_base {};
   
   struct two { char c[2]; };
   template<class T> std::enable_if_t<std::is_base_of<fields_list_nature_base, typename T::fields_list_nature>::value, char> test(int);
   template<class T> two test(...);
   template<class T, bool is_specified> struct get_fields_list_nature_impl { typedef typename T::fields_list_nature type; };
-  template<class T> struct get_fields_list_nature_impl<T, false> { typedef generic_input type; };
+  template<class T> struct get_fields_list_nature_impl<T, false> { typedef generic_input_nature type; };
   template<class T> struct get_fields_list_nature { typedef typename get_fields_list_nature_impl<T, sizeof(test<T>(0))==1>::type type; };
-
-  template<typename ...Input> class fields_list;
-  template<typename HeadNature, typename ...Input> class fields_list_contents;
-  template<> class fields_list_contents<empty_fields_list> {
+  
+  
+  template<typename ...Input> class make_fields_list;
+  template<typename HeadNature, typename ...Input> class make_fields_list_contents;
+  
+  class empty_fields_list {
   public:
-    typedef empty_fields_list fields_list_nature;
+    typedef empty_fields_list_nature fields_list_nature;
     static const size_t size = 0;
     //template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
     // TODO find a way to make invalid-field errors more readable
   };
   template<typename Head, typename ...Tail>
-  class fields_list_contents<nonempty_fields_list, Head, Tail...> : public fields_list<typename Head::head, typename Head::tail, Tail...> {};
-  template<typename HeadNature, typename Head, typename ...Tail>
-  class fields_list_contents<HeadNature, Head, Tail...> {
+  class nonempty_fields_list {
   public:
-    typedef nonempty_fields_list fields_list_nature;
+    typedef nonempty_fields_list_nature fields_list_nature;
     typedef Head head;
-    typedef fields_list<Tail...> tail;
+    typedef typename make_fields_list<Tail...>::type tail;
     static const field_id idx = tail::size;
     static const size_t size = tail::size + 1;
     template<typename T> static constexpr std::enable_if_t< std::is_same<T, head>::value, field_id> idx_of() { return idx; }
     template<typename T> static constexpr std::enable_if_t<!std::is_same<T, head>::value, field_id> idx_of() { return tail::template idx_of<T>(); }
   };
   
-  template<>
-  class fields_list<> : public fields_list_contents<empty_fields_list> {};
+  template<typename ...Input>
+  struct make_fields_list_contents<   empty_fields_list_nature,      Input...> { typedef    empty_fields_list                type; };
   template<typename Head, typename ...Tail>
-  class fields_list<Head, Tail...> : public fields_list_contents<typename get_fields_list_nature<Head>::type, Head, Tail...> {};
+  struct make_fields_list_contents<       generic_input_nature, Head, Tail...> { typedef nonempty_fields_list<Head, Tail...> type; };
+  template<typename Head, typename ...Tail>
+  struct make_fields_list_contents<nonempty_fields_list_nature, Head, Tail...> {
+    typedef typename make_fields_list<typename Head::head, typename Head::tail, Tail...>::type type;
+  };
+  
+  template<>
+  struct make_fields_list<> { typedef empty_fields_list type; };
+  template<typename Head, typename ...Tail>
+  struct make_fields_list<Head, Tail...> { typedef typename make_fields_list_contents<typename get_fields_list_nature<Head>::type, Head, Tail...>::type type; };
+  
 
   template<class FieldsList, template<typename> class repeated>
   class foreach_field {
@@ -434,7 +444,7 @@ namespace fields_list_impl {
     template<typename T> inline std::enable_if_t<!std::is_same<T, head>::value, repeated<T> const&> get()const { return tail_.get<T>(); }
   };
   template<template<typename> class repeated>
-  class foreach_field<fields_list<>, repeated> {
+  class foreach_field<empty_fields_list, repeated> {
     //template<typename T> inline repeated<T>& get() { static_assert(false, "No field of that type exists"); }
     //template<typename T> inline repeated<T> const& get()const { static_assert(false, "No field of that type exists"); }
   };
@@ -451,14 +461,14 @@ namespace fields_list_impl {
   public:
     function_array() { add_fptr<FieldsList>(); }
   private:
-    template<class SubList> inline std::enable_if_t< std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value> add_fptr() {
+    template<class SubList> inline std::enable_if_t<!std::is_same<SubList, empty_fields_list>::value> add_fptr() {
       foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)>::template get<typename SubList::head>() = &FuncClass::template func<typename SubList::head>;
       add_fptr<typename SubList::tail>();
     }
-    template<class SubList> inline std::enable_if_t<!std::is_same<typename SubList::fields_list_nature, nonempty_fields_list>::value> add_fptr() {}
+    template<class SubList> inline std::enable_if_t< std::is_same<SubList, empty_fields_list>::value> add_fptr() {}
   };
 }
-template<typename ...Input> using fields_list = fields_list_impl::fields_list<Input...>;
+template<typename ...Input> using fields_list = typename fields_list_impl::make_fields_list<Input...>::type;
 struct entity_field_id {
   entity_field_id(entity_id e, field_id f):e(e),f(f){}
   entity_id e;
@@ -750,7 +760,7 @@ private:
     }
   }
   void update_trigger(bool undoing, trigger_id tid, extended_time const& field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
-    trigger_throughout_time_info& trigger_info = triggers.find(tid)->second;
+    trigger_throughout_time_info& trigger_info = triggers[tid];
     const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound: if we're IN a trigger call, we still want to trigger it again
     if (next_call_iter != trigger_info.begin()) {
       const auto cut_off_call_iter = boost::prior(next_call_iter);
@@ -959,7 +969,7 @@ private:
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
         pile_info.entity_fields_pile_modified.insert(id);
-        (*copy_field_change_from_accessor_funcs[id.f])(this, time, a.entities.find(id.e)->second.fields, entities.find(id.e)->second);
+        (*copy_field_change_from_accessor_funcs[id.f])(this, time, a.entities.find(id.e)->second.fields, entities[id.e]);
       }
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
         pile_info.triggers_changed.insert(t.first);
@@ -976,7 +986,7 @@ private:
           for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
             auto& metadata = entities[former_trigger_access.e].metadata[former_trigger_access.f];
             const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower_bound: we want to find the entry at this time
-            if (next_triggers_iter->first == time) {
+            if ((next_triggers_iter != metadata.triggers_pointing_at_this_changes.end()) && (next_triggers_iter->first == time)) {
               // Hack sZInnn3FkZy0yg: we inserted above, so don't remove now.
             }
             else {
