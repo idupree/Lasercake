@@ -337,6 +337,11 @@ public:
   operator bool()const {
     return (*this) != null();
   }
+  
+  friend inline std::ostream& operator<<(std::ostream& os, siphash_id const& s) {
+    os << s.data_[0] << "," << s.data_[1];
+    return os;
+  }
 private:
   constexpr siphash_id(data_type data):data_(data){}
   data_type data_;

@@ -306,7 +306,8 @@ public:
     return true;
   }
   bool get_bit(num_bits_type bit)const {
-    return coords_[bit % num_dimensions] & safe_left_shift_one(bit / num_dimensions);
+    const num_bits_type shift = bit / num_dimensions;
+    return (coords_[bit % num_dimensions] & safe_left_shift_one(shift)) >> shift;
   }
   num_bits_type num_low_bits_by_dimension(num_coordinates_type dim)const {
     return dim_num_low_bits_[dim];
@@ -460,11 +461,8 @@ private:
     spatial_entity_escapes_its_zboxes(entity_id bbcd_id, entity_id spatial_entity_id) : bbcd_id(bbcd_id),spatial_entity_id(spatial_entity_id) {}
 
     void operator()(accessor* accessor)const override {
-      entity_ref e = accessor->get(spatial_entity_id);
-      FuncsType funcs = get_funcs(accessor, bbcd_id);
-      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
-      update_zboxes(accessor, bbcd_id, e, funcs.bbox(accessor, e), metadata.nodes);
-      gather_events(accessor, bbcd_id, funcs, e);
+      // i.e. "activate trigger"
+      accessor->set_trigger(trigger_id(bbcd_id, spatial_entity_id), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, spatial_entity_id)));
     }
     entity_id bbcd_id;
     entity_id spatial_entity_id;
@@ -525,16 +523,20 @@ private:
       auto& node = accessor->template get_mut<ztree_node>(node_ref);
       if (node) {
         node->objects_here.erase(e.id());
-        if (node->objects_here.empty()) {
-          if (!node->children[0]) {
-            squish_node(accessor, bbcd_id, node_ref, 1);
-          }
-          else if (!node->children[1]) {
-            squish_node(accessor, bbcd_id, node_ref, 0);
-          }
-        }
+        maybe_squish_node(accessor, bbcd_id, node_ref);
       }
       metadata.nodes.erase(node_id);
+    }
+  }
+  static void maybe_squish_node(accessor* accessor, entity_id bbcd_id, entity_ref node_ref) {
+    auto& node = accessor->template get_mut<ztree_node>(node_ref);
+    if (node->objects_here.empty()) {
+      if (!node->children[0]) {
+        squish_node(accessor, bbcd_id, node_ref, 1);
+      }
+      else if (!node->children[1]) {
+        squish_node(accessor, bbcd_id, node_ref, 0);
+      }
     }
   }
   
@@ -543,11 +545,13 @@ private:
     auto& node = accessor->template get_mut<ztree_node>(node_ref);
     entity_id stolen_node_id = node->children[which_child];
     auto& stolen_node = accessor->template get_mut<ztree_node>(accessor->get(stolen_node_id));
-    node = stolen_node;
-    stolen_node = none;
-    if (node) {
+    if (stolen_node) {
+      stolen_node->parent = node->parent;
+      node = stolen_node;
+      stolen_node = none;
       for (entity_id stolen_child_id : node->children) {
         if (stolen_child_id) {
+          assert(stolen_child_id != node_ref.id());
           accessor->template get_mut<ztree_node>(accessor->get(stolen_child_id))->parent = node_ref.id();
         }
       }
@@ -556,6 +560,23 @@ private:
         nodes.erase(stolen_node_id);
         nodes.insert(node_ref.id());
       }
+    }
+    else {
+      if (node->parent) {
+        entity_ref parent_ref = accessor->get(node->parent);
+        auto& parent_node = accessor->template get_mut<ztree_node>(parent_ref);
+        if (parent_node->children[0] == node_ref.id()) {
+          parent_node->children[0] = entity_id();
+        }
+        else { assert(parent_node->children[1] == node_ref.id());
+          parent_node->children[1] = entity_id();
+        }
+        maybe_squish_node(accessor, bbcd_id, parent_ref);
+      }
+      else {
+        accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), bbox_collision_detector_root_node(entity_id()));
+      }
+      node = none;
     }
   }
   
@@ -573,7 +594,7 @@ private:
       e(e),
       metadata(accessor->template get_mut<spatial_entity_metadata>(e)->data[bbcd_id])
     {
-      optional<bbox_collision_detector_root_node> const* root;
+      optional<bbox_collision_detector_root_node> const* root = nullptr;
       if (hint_nodes.empty()) {
         root = &accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id));
       }
@@ -689,10 +710,10 @@ private:
           else {
             // Find the best box to use as hint.
             // TODO: can this be less than O((num zboxes)^2)?
-            num_bits_type best_num_low_bits = coordinate_bits + 1;
+            num_bits_type best_num_low_bits = coordinate_bits*num_dimensions + 1;
             for (entity_id node_id : hint_nodes) {
               entity_ref node_ref = accessor->get(node_id);
-              auto& node = accessor->template get<ztree_node>(node_ref);
+              auto const& node = accessor->template get<ztree_node>(node_ref);
               zbox test = zbox::smallest_joint_parent(zb, node->here);
               if (test.num_low_bits() < best_num_low_bits) {
                 best_num_low_bits = test.num_low_bits();
@@ -710,7 +731,7 @@ private:
     // these functions return where the zbox was inserted
     entity_ref insert_zbox_with_hint(entity_ref hint_node_ref, zbox const& box) {
       while (true) {
-        auto& node = accessor_->template get<ztree_node>(hint_node_ref);
+        auto const& node = accessor_->template get<ztree_node>(hint_node_ref);
         if (node->here.subsumes(box)) {
           break;
         }
@@ -719,6 +740,7 @@ private:
         }
         else {
           hint_node_ref = add_joint_parent_node(hint_node_ref, box);
+          break;
         }
       }
       return insert_zbox_downwards(hint_node_ref, box);
@@ -756,8 +778,17 @@ private:
       entity_ref new_node_ref = accessor_->create_entity();
       auto& new_node = accessor_->template set<ztree_node>(new_node_ref, ztree_node(zbox::smallest_joint_parent(node->here, box), node->parent));
       node->parent = new_node_ref.id();
-      if (!new_node->parent) {
-        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), bbox_collision_detector_root_node(node_ref.id()));
+      if (new_node->parent) {
+        auto& parent_node = accessor_->template get_mut<ztree_node>(accessor_->get(new_node->parent));
+        if (parent_node->children[0] == node_ref.id()) {
+          parent_node->children[0] = new_node_ref.id();
+        }
+        else { assert(parent_node->children[1] == node_ref.id());
+          parent_node->children[1] = new_node_ref.id();
+        }
+      }
+      else {
+        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), bbox_collision_detector_root_node(new_node_ref.id()));
       }
       
       assert_if_ASSERT_EVERYTHING(new_node->here.num_low_bits() > node->here.num_low_bits());
@@ -793,13 +824,16 @@ private:
       accessor->anticipate_event(funcs.escape_time(accessor, e, metadata.zboxes_union), std::shared_ptr<event>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
       for (entity_id node_id : metadata.nodes) {
         entity_ref node_ref = accessor->get(node_id);
-        auto& node = accessor->template get<ztree_node>(node_ref);
+        auto const& node = accessor->template get<ztree_node>(node_ref);
         gather_events_downwards(node);
+        //std::cerr << std::hex << "Begin\n";
+        //std::cerr << node->here.num_low_bits() << " " << node->objects_here.size() << " " << node_ref.id() << " " << node->children[0] << " " << node->children[1] << " " << node->parent << "\n";
         if (node->parent) {
           entity_ref node_ref2 = accessor->get(node->parent);
           while (true) {
-            auto& node2 = accessor->template get<ztree_node>(node_ref2);
+            auto const& node2 = accessor->template get<ztree_node>(node_ref2);
             gather_events_at(node2);
+            //std::cerr << node2->here.num_low_bits() << " " << node2->objects_here.size() << " " << node_ref2.id() << " " << node2->children[0] << " " << node2->children[1] << " " << node2->parent << "\n";
             if (node2->parent) {
               node_ref2 = accessor->get(node2->parent);
             }
