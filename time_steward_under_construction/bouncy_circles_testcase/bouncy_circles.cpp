@@ -155,17 +155,20 @@ class bbcd_funcs {
 public:
   typedef bbcd_system::bounding_box bounding_box;
   typedef bbcd_system::coordinate_array coordinate_array;
-  bounding_box bbox(accessor const* accessor, entity_ref e) {
-    auto ci = accessor->get<circle_shape>(e);
+  bounding_box bbox_impl(circle_shape const& ci, time_type t) {
     coordinate_array min;
     coordinate_array max;
     for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
-      space_coordinate c = ci->center(i)(accessor->now());
-      space_coordinate r = ci->radius(accessor->now());
+      space_coordinate c = ci.center(i)(t);
+      space_coordinate r = ci.radius(t);
       min[i] = space_to_bbox(c-r);
       max[i] = space_to_bbox(c+r);
     }
     return bounding_box::min_and_max(min, max);
+  }
+  
+  bounding_box bbox(accessor const* accessor, entity_ref e) {
+    return bbox_impl(*accessor->get<circle_shape>(e), accessor->now());
   }
   
   time_type escape_time(accessor const* accessor, entity_ref e, bounding_box const& bbox) {
@@ -184,6 +187,10 @@ public:
           result = *j;
         }
       }
+    }
+    if (result != never) {
+      assert( bbox.subsumes(bbox_impl(*c, result-1)));
+      assert(!bbox.subsumes(bbox_impl(*c, result  )));
     }
     return result;
   }

@@ -819,6 +819,8 @@ private:
       funcs(funcs),
       e(e)
     {
+      // Never find interactions with yourself:
+      interaction_possibilities_already_found.insert(e.id());
       
       bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
       accessor->anticipate_event(funcs.escape_time(accessor, e, metadata.zboxes_union), std::shared_ptr<event>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
