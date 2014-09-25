@@ -247,8 +247,88 @@ uint64_t siphash24(const void *src,
                    unsigned long src_sz,
                    const char key[16]);
 
+// TODO: move all the data structures stuff before namespace time_steward_system to a better file
 template<typename ...T> using persistent_map = std::map<T...>;
-template<typename ...T> using persistent_set = std::set<T...>;
+template<typename ...T> using persistent_set = std::set<T...>;template<>
+class ordered_stuff {
+  std::pair<uint64_t,uint64_t> make_room_for_split( prefix,  shift,  which) {
+    uint64_t offset = 0;
+    const uint64_t elem_size = 1 << shift;
+    const uint64_t this_level_mask = elem_size * 0x3;
+    if (data[prefix+3*elem_size]) {
+      // split this node to make room for splitting children
+      std::pair<uint64_t,uint64_t> p = make_room_for_split(prefix & ~this_level_mask, shift + 2, (prefix & this_level_mask) >> shift);
+      
+      if (which <= 2) { move_subtree(prefix, shift, 3, p.second + 1*elem_size); }
+      if (which <= 1) { move_subtree(prefix, shift, 2, p.second              ); }
+      if (which <= 0) { move_subtree(prefix, shift, 1, p.first  + 2*elem_size); }
+      
+      if (which == 0) {
+        return std::pair<uint64_t,uint64_t>(p.first, p.first+elem_size);
+      else if (which == 1) {
+        return std::pair<uint64_t,uint64_t>(p.first+1*elem_size, p.first+2*elem_size);
+      }
+      else if (which == 2) {
+        return std::pair<uint64_t,uint64_t>(p.first+2*elem_size, p.second);
+      }
+      else if (which == 3) {
+        return std::pair<uint64_t,uint64_t>(p.second, p.second+1*elem_size);
+      }
+      else {
+        assert(false);
+      }
+    }
+
+    assert (which <= 2);
+    return std::pair<uint64_t,uint64_t>(prefix+which*elem_size, prefix+(which+1)*elem_size);
+  }
+  uint64_t /*offset*/ make_room( prefix,  elem_size,  which) {
+    uint64_t offset = 0;
+    const uint64_t this_level_mask = elem_size * 0x3
+    if (data[prefix+2*elem_size]) {
+      offset += make_room(prefix & ~this_level_mask, elem_size << 2, prefix & this_level_mask);
+      prefix += offset;
+    }
+    if (which == 2) {
+      data[prefix+(elem_size<<2)] = input;
+      return offset + 
+    }
+    else {
+      data[prefix+which*elem_size] = input;
+      return offset;
+    }
+  }
+  insert_before( idx, new_contents) {
+    int shift = 0;
+    // "Make room, then insert."
+    std::pair<uint64_t,uint64_t> p = make_room_for_split(idx & ~3, 1, idx & 3)
+    if (data[(idx & ~((4<<shift)-1)) + (3<<shift)]) {
+      shift += 2;
+    }
+    if (data[(idx & ~((4<<shift)-1)) + (2<<shift)]) {
+      // 2 becoming 3
+      for (int i = (idx | ((4<<shift)-1)); i > (idx & ~((1<<shift)-1)); --i) {
+        data[i + (1<<shift)] = data[i];
+        data[i] = none;
+      }
+      shift -= 2;
+      // 3 becoming 2+2
+      for (int i = (idx | ((4<<shift)-1)); i > (idx & ~((1<<shift)-1)); --i) {
+        data[i + (1<<shift)] = data[i];
+        data[i] = none;
+      }
+    }
+    else {
+      // root splitting
+    }
+    while ((idx & 3) < 3) {
+      data[idx].contents, new_contents = new_contents, data[idx].contents
+      if (!new_contents) return;
+      ++idx;
+    }
+    
+  }
+};
 
 namespace time_steward_system {
 

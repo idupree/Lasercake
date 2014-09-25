@@ -750,7 +750,7 @@ void test() {
 #define SHOULD_EXCEPT(expr) \
 { \
   bool excepted = false; \
-  try { expr; } \
+  try { (expr); } \
   catch(std::logic_error) { excepted = true; } \
   assert(excepted); \
 }
