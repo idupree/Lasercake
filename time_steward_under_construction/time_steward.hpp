@@ -326,45 +326,60 @@ private:
   // are represented by the ID of the first descendant leaf, plus their size/level.
   std::pair<idx_type,idx_type> make_room_for_split(idx_type prefix, num_bits_type child_shift, idx_type which_child) {
     const idx_type child_size = 1 << child_shift;
-    const idx_type which_child_mask = child_size * 0x3;
     if (idx_exists(prefix+3*child_size)) {
       // split this node to make room for splitting children
-      std::pair<idx_type,idx_type> p = make_room_for_split(prefix & ~which_child_mask, child_shift + 2, (prefix & which_child_mask) >> child_shift);
+      const num_bits_type parent_shift = child_shift + 2;
+      const idx_type next_which_child_mask = (1 << parent_shift) * 0x3;
+      std::pair<idx_type,idx_type> p = make_room_for_split(prefix & ~next_which_child_mask, parent_shift, (prefix & next_which_child_mask) >> parent_shift);
       
-      if (which_child <= 2) { move_subtree(prefix + 3*child_size, child_shift-2, p.second + 1*child_size); }
-      if (which_child <= 1) { move_subtree(prefix + 2*child_size, child_shift-2, p.second               ); }
-      if (which_child <= 0) { move_subtree(prefix + 1*child_size, child_shift-2, p.first  + 2*child_size); }
+      // Don't move which_child, because the caller will move it.
+      // Don't put anything into result.first or result.second.
+      if (which_child != 3) { move_subtree_if_necessary(
+        prefix + 3*child_size, child_shift, /*(which_child < 3) ?*/p.second + 1*child_size/*:  p.second            */); }
+      if (which_child != 2) { move_subtree_if_necessary(
+        prefix + 2*child_size, child_shift,   (which_child < 2) ?  p.second                 :  p.first + 2*child_size); }
+      if (which_child != 1) { move_subtree_if_necessary(
+        prefix + 1*child_size, child_shift,   (which_child < 1) ?  p.first  + 2*child_size  :  p.first + 1*child_size); }
+      if (which_child != 0) { move_subtree_if_necessary(
+        prefix               , child_shift, /*(which_child < 0) ?  p.first  + 1*child_size  :*/p.first               ); }
       
       if (which_child == 0) {
-        return std::pair<idx_type,idx_type>(p.first, p.first+child_size);
+        return std::pair<idx_type,idx_type>(p.first               , p.first  + 1*child_size);
       }
       else if (which_child == 1) {
-        return std::pair<idx_type,idx_type>(p.first+1*child_size, p.first+2*child_size);
+        return std::pair<idx_type,idx_type>(p.first + 1*child_size, p.first  + 2*child_size);
       }
       else if (which_child == 2) {
-        return std::pair<idx_type,idx_type>(p.first+2*child_size, p.second);
+        return std::pair<idx_type,idx_type>(p.first + 2*child_size, p.second              );
       }
       else if (which_child == 3) {
-        return std::pair<idx_type,idx_type>(p.second, p.second+1*child_size);
+        return std::pair<idx_type,idx_type>(p.second,               p.second + 1*child_size);
       }
       else {
         assert(false);
       }
     }
 
-    assert (which_child <= 2);
-    return std::pair<idx_type,idx_type>(prefix+which_child*child_size, prefix+(which_child+1)*child_size);
+    // Make result.second empty. Don't move which_child, because the caller will handle it.
+    assert (which_child < 3);
+    if ((which_child < 2) && idx_exists(prefix + 2*child_size)) { move_subtree(prefix + 2*child_size, child_shift, prefix + 3*child_size); }
+    if  (which_child < 1)                                       { move_subtree(prefix + 1*child_size, child_shift, prefix + 2*child_size); }
+    return std::pair<idx_type,idx_type>(prefix + which_child*child_size, prefix + (which_child+1)*child_size);
   }
-  void move_subtree(idx_type prefix, num_bits_type child_shift, idx_type new_prefix) {
-    const idx_type child_size = 1 << child_shift;
-    for (int i = 3; i >= 0; --i) {
-      const idx_type child_prefix = prefix + child_size*i;
-      if (child_shift == 0) {
-        move_entry(child_prefix, new_prefix+i);
-      }
-      else {
+  void move_subtree_if_necessary(idx_type prefix, num_bits_type node_shift, idx_type new_prefix) {
+    if (prefix != new_prefix) { move_subtree(prefix, node_shift, new_prefix); }
+  }
+  void move_subtree(idx_type prefix, num_bits_type node_shift, idx_type new_prefix) {
+    if (node_shift == 0) {
+      move_entry(prefix, new_prefix);
+    }
+    else {
+      const num_bits_type child_shift = node_shift-2;
+      const idx_type child_size = 1 << child_shift;
+      for (int i = 3; i >= 0; --i) {
+        const idx_type child_prefix = prefix + child_size*i;
         if (idx_exists(child_prefix)) {
-          move_subtree(child_prefix, child_shift - 2, new_prefix + child_size*i);
+          move_subtree(child_prefix, child_shift, new_prefix + child_size*i);
         }
       }
     }
@@ -373,6 +388,7 @@ private:
     if (new_idx != idx) {
       auto i = data.find(idx);
       if (i != data.end()) {
+        i->second.data->idx = new_idx;
         auto p = data.insert(std::make_pair(new_idx, i->second));
         assert(p.second);
         data.erase(i);
@@ -802,7 +818,7 @@ private:
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
-  time_steward_accessor(TimeSteward const* ts, extended_time const& time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0){}
+  time_steward_accessor(TimeSteward const* ts, extended_time time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0){}
   void process_event(event const* e) {
     (*e)(this);
   }
@@ -877,21 +893,23 @@ private:
       // create a sentinel with no children at the end
       // time_type() is a hack - without it, compiler tries to pass max_time as reference and gets undefined reference
       const extended_time sentinel = all_extended_times.construct(time_type(max_time));
+      all_extended_times.put_only(sentinel);
       base_time_roots.insert(sentinel);
     }
     const extended_time result = all_extended_times.construct(t);
     const auto i = base_time_roots.lower_bound(result);
     assert(i != base_time_roots.end());
     if ((*i)->base_time == t) { return *i; }
-    all_extended_times.put_before(*i, result);
+    all_extended_times.put_before(result, *i);
     base_time_roots.emplace_hint(i, result);
     return result;
   }
   /*static*/ extended_time get_base_time_end(time_type t)const {
     extended_time root = get_base_time_root(t);
     if (root->children.empty()) {
-      // create a sentinel with no children at the end - TODO reduced duplicate code ID GszZcyzY/wwUQg
+      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
       const extended_time sentinel = all_extended_times.construct(t, siphash_id::greatest());
+      all_extended_times.put_after(sentinel, root);
       root->children.insert(sentinel);
       return sentinel;
     }
@@ -900,16 +918,16 @@ private:
   template <class... Args>
   /*static*/ extended_time make_extended_time_impl(extended_time parent, Args&&... args)const {
     if (parent->children.empty()) {
-      // create a sentinel with no children at the end - TODO reduced duplicate code ID GszZcyzY/wwUQg
+      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
       const extended_time sentinel = all_extended_times.construct(parent->base_time, siphash_id::greatest());
+      all_extended_times.put_after(sentinel, parent);
       parent->children.insert(sentinel);
-      return sentinel;
     }
     const extended_time result = all_extended_times.construct(parent->base_time, std::forward<Args>(args)...);
     const auto i = parent->children.lower_bound(result);
     assert(i != parent->children.end());
     if (**i == *result) { return *i; }
-    all_extended_times.put_before(*i, result);
+    all_extended_times.put_before(result, *i);
     parent->children.emplace_hint(i, result);
     return result;
   }
@@ -965,7 +983,7 @@ private:
   };
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
-  void update_trigger(bool undoing, trigger_id tid, extended_time const& field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
+  void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
     trigger_throughout_time_info& trigger_info = triggers[tid];
     const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound: if we're IN a trigger call, we still want to trigger it again
     if (next_call_iter != trigger_info.begin()) {
@@ -1006,7 +1024,7 @@ private:
       ++p.first->second.field_changes_andor_creations_triggering_this;
     }
   }
-  void update_triggers(bool undoing, entity_throughout_time_info& dst, field_id id, extended_time const& field_change_time) {
+  void update_triggers(bool undoing, entity_throughout_time_info& dst, field_id id, extended_time field_change_time) {
     const auto next_triggers_iter = dst.metadata[id].triggers_pointing_at_this_changes.lower_bound(field_change_time);
     if (next_triggers_iter == dst.metadata[id].triggers_pointing_at_this_changes.begin()) return;
     const auto triggers_iter = boost::prior(next_triggers_iter);
@@ -1017,7 +1035,7 @@ private:
   
   struct copy_field_change_from_accessor {
     template<typename Field>
-    static void func(time_steward* ts, extended_time const& time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
+    static void func(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
       const auto p = dst.fields.template get<Field>().insert(std::make_pair(time, src.template get<Field>()));
       assert(p.second);
       ts->update_triggers(false, dst, entity_fields::template idx_of<Field>(), time);
@@ -1025,7 +1043,7 @@ private:
   };
   struct undo_field_change {
     template<typename Field>
-    static void func(time_steward* ts, extended_time const& time, entity_throughout_time_info& dst) {
+    static void func(time_steward* ts, extended_time time, entity_throughout_time_info& dst) {
       const auto change_iter = dst.fields.template get<Field>().find(time);
       assert (change_iter != dst.fields.template get<Field>().end());
       ts->update_triggers(true, dst, entity_fields::template idx_of<Field>(), time);
@@ -1089,24 +1107,24 @@ private:
   std::set<extended_time> event_piles_not_correctly_executed;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
   
-  void update_through_time(extended_time const& time) {
+  void update_through_time(extended_time time) {
     while (!is_updated_through(time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
   }
-  void update_until_time  (extended_time const& time) {
+  void update_until_time  (extended_time time) {
     while (!is_updated_until  (time)) execute_event_pile(*event_piles_not_correctly_executed.begin());
   }
-  bool is_updated_until  (extended_time const& time)const {
+  bool is_updated_until  (extended_time time)const {
     return event_piles_not_correctly_executed.empty() || *event_piles_not_correctly_executed.begin() >= time;
   }
-  bool is_updated_through(extended_time const& time)const {
+  bool is_updated_through(extended_time time)const {
     return event_piles_not_correctly_executed.empty() || *event_piles_not_correctly_executed.begin() >  time;
   }
-  /*entity const* get_actual_entity_data_before(entity_id<entity> const& id, extended_time const& time) {
+  /*entity const* get_actual_entity_data_before(entity_id<entity> const& id, extended_time time) {
     update_until_time(time);
     return get_provisional_entity_data_before(id, time);
   }*/
   template<typename Field>
-  optional<Field> const& get_provisional_entity_field_before(entity_id id, extended_time const& time)const {
+  optional<Field> const& get_provisional_entity_field_before(entity_id id, extended_time time)const {
     const auto entity_stream_iter = entities.find(id);
     if (entity_stream_iter == entities.end()) { return field_absent.template get<Field>(); }
     
@@ -1116,13 +1134,14 @@ private:
     return boost::prior(next_change_iter)->second;
   }
   
-  void insert_instigating_event(extended_time const& time, event_pile_info const& e) {
+  void insert_instigating_event(extended_time time, event_pile_info const& e) {
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
     const auto p2 = event_piles_not_correctly_executed.insert(time);
+    assert(*p2.first == time);
     assert(p2.second);
   }
-  void erase_instigating_event(extended_time const& time) {
+  void erase_instigating_event(extended_time time) {
     const auto event_pile_iter = event_piles.find(time);
     if (event_pile_iter != event_piles.end()) {
       event_pile_info& pile_info = event_pile_iter->second;
@@ -1141,7 +1160,7 @@ private:
   // execute_event_pile() is a safe operation.
   // If you execute a change that won't actually happen, it will just end
   // up getting invalidated later.
-  void execute_event_pile(extended_time const& time) {
+  void execute_event_pile(extended_time time) {
     const auto event_pile_iter = event_piles.find(time);
     assert(event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
@@ -1218,7 +1237,7 @@ private:
   // So it too is a "safe" operation (no amount of calling it
   // with bogus values will change us from valid to invalid),
   // because if you undo anything, it's slated to be redone.
-  bool unexecute_event_pile(extended_time const& time) {
+  bool unexecute_event_pile(extended_time time) {
     const auto event_pile_iter = event_piles.find(time);
     assert (event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
@@ -1241,7 +1260,7 @@ private:
     if (pile_info.tid) {
       auto& trigger_info = triggers.find(pile_info.tid)->second;
       auto call_iter = trigger_info.find(time);
-      for (extended_time const& t : call_iter->second.anticipated_events) {
+      for (extended_time t : call_iter->second.anticipated_events) {
         erase_instigating_event(t);
       }
       call_iter->second.anticipated_events.clear();
