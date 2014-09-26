@@ -251,42 +251,66 @@ uint64_t siphash24(const void *src,
 template<typename ...T> using persistent_map = std::map<T...>;
 template<typename ...T> using persistent_set = std::set<T...>;
 
+namespace ordered_stuff_system {
+typedef uint64_t idx_type;
+typedef uint32_t num_bits_type;
+const idx_type no_idx = std::numeric_limits<idx_type>::max();
+
+namespace impl {
+template<typename ValueType>
+struct entry {
+  template <class... Args>
+  entry(idx_type idx, Args&&... args):idx(idx),contents(std::forward<Args>(args)...){}
+  idx_type idx;
+  ValueType contents;
+};
+template<typename ValueType> class ordered_stuff;
+template<typename ValueType>
+struct entry_ref {
+public:
+  entry_ref():data(nullptr){}
+  bool operator<(entry_ref const& o)const { return data->idx < o.data->idx; }
+  ValueType& operator*()const { return data->contents; }
+  ValueType* operator->()const { return &data->contents; }
+private:
+  entry_ref(entry<ValueType>* data):data(data){}
+  entry<ValueType>* data;
+  friend class ordered_stuff<ValueType>;
+  friend class std::hash<entry_ref>;
+};
+}
+
 template<typename ValueType>
 class ordered_stuff {
-private:
-  typedef uint64_t idx_type;
-  typedef uint32_t num_bits_type;
-  struct entry {
-    entry(idx_type idx, ValueType const& contents):idx(idx),contents(contents){}
-    idx_type idx;
-    ValueType contents;
-  };
+  typedef impl::entry<ValueType> entry;
 public:
-  struct entry_ref {
-  public:
-    entry_ref():data(nullptr){}
-    bool operator<(entry_ref const& o)const { return data->idx < o.data->idx; }
-    ValueType& operator*()const { return data->contents; }
-    ValueType* operator->()const { return &data->contents; }
-  private:
-    entry_ref(entry* data):data(data){}
-    entry* data;
-    friend class ordered_stuff;
-  };
-  // TODO: emplace?
-  entry_ref insert_before(entry_ref ref, ValueType const& new_contents) {
-    std::pair<idx_type,idx_type> p = make_room_for_split(ref.data->idx & ~3, 0, ref.data->idx & 3);
-    move_entry(idx, p.second);
-    return place_at(p.first, new_contents);
+  typedef impl::entry_ref<ValueType> entry_ref;
+  template <class... Args>
+  entry_ref construct(Args&&... args) {
+    // TODO: don't leak memory (reference count?)
+    // TODO: better allocator
+    return entry_ref(new entry(no_idx, std::forward<Args>(args)...));
   }
-  entry_ref insert_after(entry_ref ref, ValueType const& new_contents) {
-    std::pair<idx_type,idx_type> p = make_room_for_split(ref.data->idx & ~3, 0, ref.data->idx & 3);
+
+  // TODO: allow moving and deletion
+  void put_only(entry_ref moving) {
+    return place_at(0, moving);
+  }
+  void put_before(entry_ref moving, entry_ref relative_to) {
+    const idx_type idx = relative_to.data->idx;
+    std::pair<idx_type,idx_type> p = make_room_for_split(idx & ~3, 0, idx & 3);
+    move_entry(idx, p.second);
+    return place_at(p.first, moving);
+  }
+  void put_after(entry_ref moving, entry_ref relative_to) {
+    const idx_type idx = relative_to.data->idx;
+    std::pair<idx_type,idx_type> p = make_room_for_split(idx & ~3, 0, idx & 3);
     move_entry(idx, p.first);
-    return place_at(p.second, new_contents);
+    return place_at(p.second, moving);
   }
 private:
   // TODO: a custom hashtable for this so we don't need the extra layer of pointers
-  std::unordered_map<idx_type, std::unique_ptr<entry>> data;
+  std::unordered_map<idx_type, entry_ref> data;
   bool idx_exists(idx_type idx)const { return data.find(idx) != data.end(); }
   
   // The data forms - mathematically, but not in memory - a lenient B-tree with 2,3,or 4 children for each node.
@@ -344,20 +368,31 @@ private:
     if (new_idx != idx) {
       auto i = data.find(idx);
       if (i != data.end()) {
-        auto p = data.insert(std::pair<idx_type, std::unique_ptr<entry>>(idx, nullptr));
+        auto p = data.insert(std::make_pair(new_idx, i->second));
         assert(p.second);
-        p.first->second.swap(i->second);
-        p.first->second->idx = idx;
         data.erase(i);
       }
     }
   }
-  entry_ref place_at(idx_type idx, ValueType const& new_contents) {
-    auto p = data.insert(std::pair<idx_type, std::unique_ptr<entry>>(idx, new entry(idx, new_contents)));
+  void place_at(idx_type idx, entry_ref moving) {
+    assert(moving.data->idx == no_idx);
+    moving.data->idx = idx;
+    auto p = data.insert(std::make_pair(idx, moving));
     assert(p.second);
-    return entry_ref(p.first->second.get());
   }
 };
+} // namespace ordered_stuff_system
+using ordered_stuff_system::ordered_stuff;
+namespace std {
+  template<typename ValueType>
+  class hash<typename ordered_stuff_system::impl::entry_ref<ValueType>> {
+    public:
+    size_t operator()(ordered_stuff_system::impl::entry_ref<ValueType> const& i)const {
+      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
+      return std::hash<decltype(i.data)>(i.data);
+    }
+  };
+}
 
 namespace time_steward_system {
 
@@ -477,12 +512,13 @@ struct combine_hash_with_integer {
   }
 };
 
-template<typename TimeType = int64_t, TimeType Never = std::numeric_limits<TimeType>::min(), TimeType MinTime = Never+1, class CombineHashWithTimeTypeFuncType = combine_hash_with_integer<TimeType>>
+template<typename TimeType = int64_t, TimeType Never = std::numeric_limits<TimeType>::min(), TimeType MinTime = Never+1, TimeType MaxTime = std::numeric_limits<TimeType>::max(), class CombineHashWithTimeTypeFuncType = combine_hash_with_integer<TimeType>>
 struct time_type_info {
   static_assert(Never < MinTime, "Never must be less than MinTime");
   typedef TimeType time_type;
   static const TimeType never = Never;
   static const TimeType min_time = MinTime;
+  static const TimeType max_time = MaxTime;
   typedef CombineHashWithTimeTypeFuncType combine_hash_with_time_type_func_type;
 };
 
@@ -811,6 +847,7 @@ public:
   
   typedef typename TimeTypeInfo::time_type time_type;
   static const time_type min_time = TimeTypeInfo::min_time;
+  static const time_type max_time = TimeTypeInfo::max_time;
   static const time_type never = TimeTypeInfo::never;
   
   // TODO can the action/event/trigger stuff be template parameters rather than always being virtual classes to be subclassed?
@@ -825,60 +862,66 @@ private:
   
   static const uint32_t not_a_trigger = std::numeric_limits<uint32_t>::max();
   struct extended_time_metadata {
+    typedef typename ordered_stuff<extended_time_metadata>::entry_ref extended_time;
+    
     extended_time_metadata(){}
     extended_time_metadata(siphash_id id):id(id),trigger_iteration(not_a_trigger){}
     extended_time_metadata(siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
       id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
     
-    // TODO consolidate
-    std::set<extended_time_metadata, extended_time> children; // usually empty; optimize for size when empty
+    struct sort_sibling_extended_times_by_metadata {
+      bool operator()(extended_time a, extended_time b)const {
+        if (a->trigger_iteration != b->trigger_iteration) {}return a->trigger_iteration < b->trigger_iteration;
+        return a->id < b->id;
+      }
+    };
     
-    siphash_id id;
-    uint32_t trigger_iteration;
-    extended_time closest_non_trigger_ancestor;
+    // TODO: can we optimize for size in common cases?
+    siphash_id id; // unused for base_time_roots
+    uint32_t trigger_iteration; // constant not_a_trigger for all non-triggers
+    extended_time closest_non_trigger_ancestor; // unused for all non-triggers
+    std::set<extended_time, sort_sibling_extended_times_by_metadata> children; // usually empty
     
-    // note: comparison only valid between siblings
     bool operator==(extended_time_metadata const& o)const {
-      return trigger_iteration == o.trigger_iteration && id == o.id;
-    }
-    bool operator<(extended_time_metadata const& o)const {
-      if (trigger_iteration != o.trigger_iteration) return trigger_iteration < o.trigger_iteration;
-      return id < o.id;
+      return id == o.id;
     }
   };
   
-  typedef ordered_stuff<extended_time_metadata>::entry_ref extended_time;
-  static ordered_stuff<extended_time_metadata> extended_times;
+  typedef typename extended_time_metadata::extended_time extended_time;
+  static ordered_stuff<extended_time_metadata> all_extended_times;
   static std::map<time_type, extended_time> base_time_roots;
   
   static extended_time get_base_time_root(time_type t) {
     if (base_time_roots.empty()) {
       // create a sentinel with no children at the end
-      base_time_roots.emplace(max_time, extended_times.insert_only(extended_time_metadata()));
+      base_time_roots.emplace(max_time, all_extended_times.put_only(extended_time_metadata()));
     }
     const auto i = base_time_roots.lower_bound(t);
     if (i->first == t) { return i->second; }
     assert(i != base_time_roots.end());
-    const auto j = base_times.emplace_hint(i, t, extended_times.insert_before(i->second, extended_time_metadata()));
-    return j->second;
-  }
-  static extended_time make_extended_time_impl(extended_time t, extended_time_metadata meta) {
-    if (t.children.empty()) {
-      // create a sentinel with no children at the end
-      t.children.emplace(siphash_id::last(), extended_times.insert_after(t, extended_time_metadata(siphash_id::last())));
-    }
-    const auto i = t.children.lower_bound(meta);
-    assert(i != t.children.end());
-    if (i->first == meta) { return i->second; }
-    extended_time result = extended_times.insert_before(i->second, meta);
-    const auto j = t.children.emplace_hint(i, meta, result);
-    j->second = result;
+    const extended_time result = all_extended_times.construct();
+    all_extended_times.put_before(i->second, result);
+    base_time_roots.emplace_hint(i, t, result);
     return result;
   }
-  static extended_time make_extended_time(time_type t, siphash_id id) {
+  template <class... Args>
+  static extended_time make_extended_time_impl(extended_time t, Args&&... args) {
+    if (t.children.empty()) {
+      // create a sentinel with no children at the end
+      t.children.emplace(siphash_id::greatest(), all_extended_times.insert_after(t, extended_time_metadata(siphash_id::greatest())));
+    }
+    const extended_time result = all_extended_times.construct(std::forward<Args>(args)...);
+    const auto i = t.children.lower_bound(result);
+    assert(i != t.children.end());
+    if (*i->first == *result) { return i->second; }
+    all_extended_times.put_before(i->second, result);
+    t.children.emplace_hint(i, result);
+    return result;
+  }
+  static extended_time make_event_time(time_type t, siphash_id id) {
     return make_extended_time_impl(get_base_time(t), id);
   }
-  static extended_time make_extended_time(extended_time t, siphash_id id) {
+  static extended_time make_event_time(extended_time t, siphash_id id) {
     return make_extended_time_impl(t->closest_non_trigger_ancestor ? t->closest_non_trigger_ancestor : t, id);
   }
   static extended_time trigger_call_time(trigger_id tid, extended_time when_triggered) {
@@ -886,7 +929,7 @@ private:
     const siphash_id id(t->id, tid, when_triggered->trigger_iteration);
     const uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 :
       (when_triggered->trigger_iteration + (when_triggered->id >= id) ? 1 : 0);
-    return make_extended_time_impl(t, extended_time_metadata(id, trigger_iteration, t)));
+    return make_extended_time_impl(t, id, trigger_iteration, t);
   }
   
   struct trigger_call_info {
