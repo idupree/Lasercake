@@ -462,7 +462,7 @@ private:
 
     void operator()(accessor* accessor)const override {
       // i.e. "activate trigger"
-      accessor->set_trigger(trigger_id(bbcd_id, spatial_entity_id), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, spatial_entity_id)));
+      accessor->set_trigger(trigger_id::combining(bbcd_id, spatial_entity_id), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, spatial_entity_id)));
     }
     entity_id bbcd_id;
     entity_id spatial_entity_id;
@@ -503,10 +503,10 @@ public:
       metadata.nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second.nodes;
     }
     
-    accessor->set_trigger(trigger_id(bbcd_id, e.id()), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
+    accessor->set_trigger(trigger_id::combining(bbcd_id, e.id()), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
   }
   static void erase(accessor* accessor, entity_id bbcd_id, entity_ref e) {
-    accessor->set_trigger(trigger_id(bbcd_id, e.id()));
+    accessor->set_trigger(trigger_id::combining(bbcd_id, e.id()));
     // TODO: what about the outstanding events?
     
     bbcd_entry_metadata& metadata = accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;

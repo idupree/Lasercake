@@ -256,6 +256,7 @@ typedef uint64_t idx_type;
 typedef uint32_t num_bits_type;
 const idx_type no_idx = std::numeric_limits<idx_type>::max();
 
+template<typename ValueType> class ordered_stuff;
 namespace impl {
 template<typename ValueType>
 struct entry {
@@ -264,12 +265,17 @@ struct entry {
   idx_type idx;
   ValueType contents;
 };
-template<typename ValueType> class ordered_stuff;
 template<typename ValueType>
 struct entry_ref {
 public:
   entry_ref():data(nullptr){}
-  bool operator<(entry_ref const& o)const { return data->idx < o.data->idx; }
+  bool operator< (entry_ref const& o)const { return data->idx <  o.data->idx; }
+  bool operator> (entry_ref const& o)const { return data->idx >  o.data->idx; }
+  bool operator<=(entry_ref const& o)const { return data->idx <= o.data->idx; }
+  bool operator>=(entry_ref const& o)const { return data->idx >= o.data->idx; }
+  bool operator==(entry_ref const& o)const { return data == o.data; }
+  bool operator!=(entry_ref const& o)const { return data != o.data; }
+  operator bool()const { return bool(data); }
   ValueType& operator*()const { return data->contents; }
   ValueType* operator->()const { return &data->contents; }
 private:
@@ -319,7 +325,6 @@ private:
   // Since a node's first child always exists, parent nodes (which have no data)
   // are represented by the ID of the first descendant leaf, plus their size/level.
   std::pair<idx_type,idx_type> make_room_for_split(idx_type prefix, num_bits_type child_shift, idx_type which_child) {
-    idx_type offset = 0;
     const idx_type child_size = 1 << child_shift;
     const idx_type which_child_mask = child_size * 0x3;
     if (idx_exists(prefix+3*child_size)) {
@@ -389,7 +394,7 @@ namespace std {
     public:
     size_t operator()(ordered_stuff_system::impl::entry_ref<ValueType> const& i)const {
       // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
-      return std::hash<decltype(i.data)>(i.data);
+      return std::hash<decltype(i.data)>()(i.data);
     }
   };
 }
@@ -402,12 +407,15 @@ namespace time_steward_system {
 const char siphash_key[16] = { 0xb7, 0xac, 0x3d, 0xf8, 0xc3, 0xa2, 0x8c, 0xd9, 0x3a, 0x10, 0x91, 0x68, 0x09, 0x02, 0x74, 0x0e };
 #pragma GCC diagnostic pop
 
-
 // siphash_id takes anything that's hashable and turns it into a
 // fixed-size, statistically almost certainly unique, equality-comparable
 // and orderable data structure (i.e. 128 bits of data).  The ==
 // is true iff the things are the same; the < is an arbitrary total ordering.
+namespace impl {
+  template<typename... Args> struct combining_helper;
+}
 class siphash_id {
+  template<typename... Args> friend struct impl::combining_helper;
   typedef std::array<uint64_t,2> data_type;
 public:
   // Implementation note:
@@ -435,25 +443,12 @@ public:
   //
   // JP
   
-  // These constructors combine all the entropy from all the arguments.
-  siphash_id(uint64_t i){
-    uint64_t in[] = { i };
-    data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
-    ++in[0];
-    data_[1] = siphash24((void*)in, sizeof(in), siphash_key);
-  }
-  siphash_id(siphash_id a, uint64_t i){
-    uint64_t in[] = { a.data_[0], a.data_[1], i };
-    data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
-    ++in[0];
-    data_[1] = siphash24((void*)in, sizeof(in), siphash_key);
-  }
-  siphash_id(siphash_id a, siphash_id b){
-    uint64_t in[] = { a.data_[0], a.data_[1], b.data_[0], b.data_[1] };
-    data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
-    ++in[0];
-    data_[1] = siphash24((void*)in, sizeof(in), siphash_key);
-  }
+public:
+  // Accepts any combination of siphash_ids and types castable to uint64_t.
+  // Combines all the entropy from all the arguments.
+  template<typename... Args>
+  static siphash_id combining(Args... args);
+  
   // null siphash
   constexpr siphash_id() : data_({{ 0, 0 }}) {}
   constexpr static siphash_id null() {
@@ -491,6 +486,39 @@ private:
   data_type data_;
   friend class std::hash<siphash_id>;
 };
+namespace impl {
+  template<typename... Args> struct combining_helper;
+  template<> struct combining_helper<> {
+    static const size_t next_idx = 0;
+    static inline void enter_arg(uint64_t[]){}
+  };
+  template<typename... Tail> struct combining_helper<siphash_id, Tail...> {
+    static const size_t next_idx = combining_helper<Tail...>::next_idx + 2;
+    static inline void enter_arg(uint64_t in[], siphash_id head, Tail... tail) {
+      combining_helper<Tail...>::enter_arg(in, tail...);
+      in[combining_helper<Tail...>::next_idx] = head.data_[0];
+      in[combining_helper<Tail...>::next_idx+1] = head.data_[1];
+    }
+  };
+  template<typename Head, typename... Tail> struct combining_helper<Head, Tail...> {
+    static const size_t next_idx = combining_helper<Tail...>::next_idx + 1;
+    static inline void enter_arg(uint64_t in[], Head head, Tail... tail) {
+      combining_helper<Tail...>::enter_arg(in, tail...);
+      in[combining_helper<Tail...>::next_idx] = uint64_t(head);
+    }
+  };
+  template<typename Head, typename... Tail> struct combining_helper<Head&, Tail...> : public combining_helper<Head, Tail...> {};
+}
+template<typename... Args>
+siphash_id siphash_id::combining(Args... args) {
+  siphash_id result;
+  uint64_t in[impl::combining_helper<Args...>::next_idx];
+  impl::combining_helper<Args...>::enter_arg(in, args...);
+  result.data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
+  ++in[0];
+  result.data_[1] = siphash24((void*)in, sizeof(in), siphash_key);
+  return result;
+}
 
 } //end namespace time_steward_system
 namespace std {
@@ -508,7 +536,7 @@ namespace time_steward_system {
 template<typename IntType>
 struct combine_hash_with_integer {
   siphash_id operator()(siphash_id const& hash, IntType i)const noexcept {
-    return siphash_id(hash, static_cast<uint64_t>(i));
+    return siphash_id::combining(hash, static_cast<uint64_t>(i));
   }
 };
 
@@ -729,8 +757,11 @@ public:
   
   void anticipate_event(time_type when, std::shared_ptr<const event> e) {
     assert(is_trigger_); // TODO an exception
-    assert(when >= time_.base_time); // TODO an exception
-    new_upcoming_events.push_back(std::make_pair((when == time_.base_time) ? extended_time(time_, create_id()) : extended_time(when, create_id()), e));
+    assert(when >= time_->base_time); // TODO an exception
+    const extended_time ext_when = (when == time_->base_time) ?
+      /*TimeSteward::*/ts_->make_event_time(time_, create_id()) :
+      /*TimeSteward::*/ts_->make_event_time(when , create_id());
+    new_upcoming_events.push_back(std::make_pair(ext_when, e));
   };
   void set_trigger(trigger_id id, std::shared_ptr<const trigger> t) {
     trigger_changes[id] = t;
@@ -741,7 +772,7 @@ public:
     return id;
   };
   time_type now()const {
-    return time_.base_time;
+    return time_->base_time;
   }
   entity_ref create_entity() {
     // All entity IDs must be unique.
@@ -769,7 +800,7 @@ private:
   std::vector<entity_field_id> entity_fields_modified;
   mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
 
-  siphash_id create_id() { return siphash_id(time_.id(), ids_created_++); }
+  siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
   time_steward_accessor(TimeSteward const* ts, extended_time const& time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0){}
   void process_event(event const* e) {
@@ -778,65 +809,6 @@ private:
   friend TimeSteward;
 };
 
-namespace impl {
-template<typename TimeTypeInfo>
-struct extended_time {
-  typedef typename TimeTypeInfo::time_type time_type;
-
-  time_type base_time;
-  // We construct extended_times with new unique ids;
-  // some of them extend old extended_times, so tiebreakers.front() is not unique among extended_times.
-  // However, tiebreakers.back() is unique among extended_times.
-  // TODO: a structure with better copy asymptotics than std::vector and better constant speed for short values.
-  std::vector<siphash_id> tiebreakers;
-  uint32_t non_trigger_detail_tiebreakers_size;
-  siphash_id id()const { return tiebreakers.back(); }
-  
-  struct first_t{}; struct last_t{}; static const first_t first; static const last_t last;
-  extended_time():base_time(TimeTypeInfo::never),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id()); }
-  extended_time(time_type base_time, first_t):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id::least()); }
-  extended_time(time_type base_time,  last_t):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(siphash_id::greatest()); }
-  extended_time(time_type base_time, siphash_id tiebreaker):base_time(base_time),non_trigger_detail_tiebreakers_size(1) { tiebreakers.push_back(tiebreaker); }
-  extended_time(extended_time base_exttime, siphash_id further_tiebreaker)
-      :
-      base_time(base_exttime.base_time),
-      tiebreakers(base_exttime.tiebreakers),
-      non_trigger_detail_tiebreakers_size(base_exttime.non_trigger_detail_tiebreakers_size)
-  {
-    tiebreakers.resize(non_trigger_detail_tiebreakers_size);
-    tiebreakers.push_back(further_tiebreaker);
-  }
-  
-  bool operator==(extended_time const& o)const { return id() == o.id(); }
-  bool operator!=(extended_time const& o)const { return id() != o.id(); }
-  bool operator<(extended_time const& o)const {
-    if (base_time != o.base_time) { return base_time < o.base_time; }
-    const bool tdts_unequal = non_trigger_detail_tiebreakers_size != o.non_trigger_detail_tiebreakers_size;
-    for (size_t i = 0; ; ++i) {
-      if (tdts_unequal && i == o.non_trigger_detail_tiebreakers_size) { return false; }
-      if (tdts_unequal && i == non_trigger_detail_tiebreakers_size) { return true; }
-      if (i == o.tiebreakers.size()) { return false; }
-      if (i == tiebreakers.size()) { return true; }
-      if (tiebreakers[i] != o.tiebreakers[i]) { return tiebreakers[i] < o.tiebreakers[i]; }
-    }
-  }
-  bool operator>(extended_time const& o)const { return o < *this; }
-  bool operator>=(extended_time const& o)const { return !(*this < o); }
-  bool operator<=(extended_time const& o)const { return !(o < *this); }
-};
-}
-
-} //end namespace time_steward_system
-namespace std {
-  template<typename TimeTypeInfo>
-  class hash<time_steward_system::impl::extended_time<TimeTypeInfo>> {
-    public:
-    size_t operator()(time_steward_system::impl::extended_time<TimeTypeInfo> const& t)const {
-      return std::hash<time_steward_system::siphash_id>()(t.id());
-    }
-  };
-}
-namespace time_steward_system {
 
 template<class FieldsList/*, class Event = */, class TimeTypeInfo = time_type_info<>>
 class time_steward {
@@ -864,12 +836,13 @@ private:
   struct extended_time_metadata {
     typedef typename ordered_stuff<extended_time_metadata>::entry_ref extended_time;
     
-    extended_time_metadata(){}
-    extended_time_metadata(siphash_id id):id(id),trigger_iteration(not_a_trigger){}
-    extended_time_metadata(siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
-      id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
+    extended_time_metadata(time_type base_time):base_time(base_time){}
+    extended_time_metadata(time_type base_time, siphash_id id):
+      base_time(base_time),id(id),trigger_iteration(not_a_trigger){}
+    extended_time_metadata(time_type base_time, siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
+      base_time(base_time),id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
     
-    struct sort_sibling_extended_times_by_metadata {
+    struct sort_sibling_extended_times_by_id {
       bool operator()(extended_time a, extended_time b)const {
         if (a->trigger_iteration != b->trigger_iteration) {}return a->trigger_iteration < b->trigger_iteration;
         return a->id < b->id;
@@ -877,10 +850,11 @@ private:
     };
     
     // TODO: can we optimize for size in common cases?
+    time_type base_time;
     siphash_id id; // unused for base_time_roots
     uint32_t trigger_iteration; // constant not_a_trigger for all non-triggers
     extended_time closest_non_trigger_ancestor; // unused for all non-triggers
-    std::set<extended_time, sort_sibling_extended_times_by_metadata> children; // usually empty
+    std::set<extended_time, sort_sibling_extended_times_by_id> children; // usually empty
     
     bool operator==(extended_time_metadata const& o)const {
       return id == o.id;
@@ -888,45 +862,66 @@ private:
   };
   
   typedef typename extended_time_metadata::extended_time extended_time;
-  static ordered_stuff<extended_time_metadata> all_extended_times;
-  static std::map<time_type, extended_time> base_time_roots;
+  struct sort_extended_times_by_base_time {
+    bool operator()(extended_time a, extended_time b)const {
+      return a->base_time < b->base_time;
+    }
+  };
+  // statics must also be declared outside the class like other globals
+  //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
+  /*static*/ mutable ordered_stuff<extended_time_metadata> all_extended_times;
+  /*static*/ mutable std::set<extended_time, sort_extended_times_by_base_time> base_time_roots;
   
-  static extended_time get_base_time_root(time_type t) {
+  /*static*/ extended_time get_base_time_root(time_type t)const {
     if (base_time_roots.empty()) {
       // create a sentinel with no children at the end
-      base_time_roots.emplace(max_time, all_extended_times.put_only(extended_time_metadata()));
+      // time_type() is a hack - without it, compiler tries to pass max_time as reference and gets undefined reference
+      const extended_time sentinel = all_extended_times.construct(time_type(max_time));
+      base_time_roots.insert(sentinel);
     }
-    const auto i = base_time_roots.lower_bound(t);
-    if (i->first == t) { return i->second; }
+    const extended_time result = all_extended_times.construct(t);
+    const auto i = base_time_roots.lower_bound(result);
     assert(i != base_time_roots.end());
-    const extended_time result = all_extended_times.construct();
-    all_extended_times.put_before(i->second, result);
-    base_time_roots.emplace_hint(i, t, result);
+    if ((*i)->base_time == t) { return *i; }
+    all_extended_times.put_before(*i, result);
+    base_time_roots.emplace_hint(i, result);
     return result;
+  }
+  /*static*/ extended_time get_base_time_end(time_type t)const {
+    extended_time root = get_base_time_root(t);
+    if (root->children.empty()) {
+      // create a sentinel with no children at the end - TODO reduced duplicate code ID GszZcyzY/wwUQg
+      const extended_time sentinel = all_extended_times.construct(t, siphash_id::greatest());
+      root->children.insert(sentinel);
+      return sentinel;
+    }
+    return *boost::prior(root->children.end());
   }
   template <class... Args>
-  static extended_time make_extended_time_impl(extended_time t, Args&&... args) {
-    if (t.children.empty()) {
-      // create a sentinel with no children at the end
-      t.children.emplace(siphash_id::greatest(), all_extended_times.insert_after(t, extended_time_metadata(siphash_id::greatest())));
+  /*static*/ extended_time make_extended_time_impl(extended_time parent, Args&&... args)const {
+    if (parent->children.empty()) {
+      // create a sentinel with no children at the end - TODO reduced duplicate code ID GszZcyzY/wwUQg
+      const extended_time sentinel = all_extended_times.construct(parent->base_time, siphash_id::greatest());
+      parent->children.insert(sentinel);
+      return sentinel;
     }
-    const extended_time result = all_extended_times.construct(std::forward<Args>(args)...);
-    const auto i = t.children.lower_bound(result);
-    assert(i != t.children.end());
-    if (*i->first == *result) { return i->second; }
-    all_extended_times.put_before(i->second, result);
-    t.children.emplace_hint(i, result);
+    const extended_time result = all_extended_times.construct(parent->base_time, std::forward<Args>(args)...);
+    const auto i = parent->children.lower_bound(result);
+    assert(i != parent->children.end());
+    if (**i == *result) { return *i; }
+    all_extended_times.put_before(*i, result);
+    parent->children.emplace_hint(i, result);
     return result;
   }
-  static extended_time make_event_time(time_type t, siphash_id id) {
-    return make_extended_time_impl(get_base_time(t), id);
+  /*static*/ extended_time make_event_time(time_type t, siphash_id id)const {
+    return make_extended_time_impl(get_base_time_root(t), id);
   }
-  static extended_time make_event_time(extended_time t, siphash_id id) {
+  /*static*/ extended_time make_event_time(extended_time t, siphash_id id)const {
     return make_extended_time_impl(t->closest_non_trigger_ancestor ? t->closest_non_trigger_ancestor : t, id);
   }
-  static extended_time trigger_call_time(trigger_id tid, extended_time when_triggered) {
+  /*static*/ extended_time trigger_call_time(trigger_id tid, extended_time when_triggered)const {
     const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
-    const siphash_id id(t->id, tid, when_triggered->trigger_iteration);
+    const siphash_id id = siphash_id::combining(t->id, tid, when_triggered->trigger_iteration);
     const uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 :
       (when_triggered->trigger_iteration + (when_triggered->id >= id) ? 1 : 0);
     return make_extended_time_impl(t, id, trigger_iteration, t);
@@ -954,8 +949,8 @@ private:
     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
   };
   
-  // Hack, TODO fix: Non-static so that C++ doesn't make it a compile-time constant.
-  // (We need to return references into it.)
+  // statics must also be declared outside the class like other globals
+  //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
   /*static*/ const fields_list_impl::foreach_field<entity_fields, optional> field_absent;
   
   template<typename Field>
@@ -970,17 +965,6 @@ private:
   };
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
-  extended_time trigger_call_time(trigger_id id, extended_time const& when_triggered) {
-    extended_time result = when_triggered;
-    for (size_t i = result.non_trigger_detail_tiebreakers_size-1; ; ++i) {
-      trigger_id next_tiebreaker(id, result.tiebreakers[i]);
-      if (i+1 == result.tiebreakers.size() || next_tiebreaker > result.tiebreakers[i+1]) {
-        result.tiebreakers.resize(i+2);
-        result.tiebreakers[i+1] = next_tiebreaker;
-        return result;
-      }
-    }
-  }
   void update_trigger(bool undoing, trigger_id tid, extended_time const& field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
     trigger_throughout_time_info& trigger_info = triggers[tid];
     const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound: if we're IN a trigger call, we still want to trigger it again
@@ -1049,7 +1033,8 @@ private:
     }
   };
   
-  // Hack, TODO fix: Non-static so that C++ doesn't make it a compile-time constant.
+  // statics must also be declared outside the class like other globals
+  //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
   /*static*/ const fields_list_impl::function_array<entity_fields, copy_field_change_from_accessor> copy_field_change_from_accessor_funcs;
   /*static*/ const fields_list_impl::function_array<entity_fields, undo_field_change> undo_field_change_funcs;
   
@@ -1065,12 +1050,12 @@ public:
     // (persistent) extended_times are created.
     // Uniqueness justification:
     // TODO
-    const extended_time t(time, combine_hash_with_time_type_func_type()(siphash_id(distinguisher), time));
+    const extended_time t = make_event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
     insert_instigating_event(t, event_pile_info(e));
   }
   void erase_fiat_event(time_type time, uint64_t distinguisher) {
-    const extended_time t(time, siphash_id(distinguisher));
+    const extended_time t = make_event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     erase_instigating_event(t);
   }
   
@@ -1085,20 +1070,18 @@ public:
       get_actual_entity_data_before(id, extended_time(time, extended_time::last))));
   }*/
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
-    extended_time et(time, extended_time::last);
-    update_through_time(et);
-    return std::unique_ptr<accessor>(new accessor(this, et, false));
+    const extended_time end_time = get_base_time_end(time);
+    update_through_time(end_time);
+    return std::unique_ptr<accessor>(new accessor(this, end_time, false));
   }
   
   // Some functions for external client code to regulate how much processing the time_steward
   //   does in advance of when it's needed.
   void update_until_time(time_type const& time) {
-    // Note: For collision safety, these extended_times must not persist.
-    update_until_time(extended_time(time, extended_time::first));
+    update_until_time(get_base_time_root(time));
   }
   void update_through_time(time_type const& time) {
-    // Note: For collision safety, these extended_times must not persist.
-    update_through_time(extended_time(time, extended_time::last));
+    update_through_time(get_base_time_end(time));
   }
 private:
   entities_map entities;
