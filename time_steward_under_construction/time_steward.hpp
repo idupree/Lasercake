@@ -249,84 +249,113 @@ uint64_t siphash24(const void *src,
 
 // TODO: move all the data structures stuff before namespace time_steward_system to a better file
 template<typename ...T> using persistent_map = std::map<T...>;
-template<typename ...T> using persistent_set = std::set<T...>;template<>
+template<typename ...T> using persistent_set = std::set<T...>;
+
+template<typename ValueType>
 class ordered_stuff {
-  std::pair<uint64_t,uint64_t> make_room_for_split( prefix,  shift,  which) {
-    uint64_t offset = 0;
-    const uint64_t elem_size = 1 << shift;
-    const uint64_t this_level_mask = elem_size * 0x3;
-    if (data[prefix+3*elem_size]) {
+private:
+  typedef uint64_t idx_type;
+  typedef uint32_t num_bits_type;
+  struct entry {
+    entry(idx_type idx, ValueType const& contents):idx(idx),contents(contents){}
+    idx_type idx;
+    ValueType contents;
+  };
+public:
+  struct entry_ref {
+  public:
+    entry_ref():data(nullptr){}
+    bool operator<(entry_ref const& o)const { return data->idx < o.data->idx; }
+    ValueType& operator*()const { return data->contents; }
+    ValueType* operator->()const { return &data->contents; }
+  private:
+    entry_ref(entry* data):data(data){}
+    entry* data;
+    friend class ordered_stuff;
+  };
+  // TODO: emplace?
+  entry_ref insert_before(entry_ref ref, ValueType const& new_contents) {
+    std::pair<idx_type,idx_type> p = make_room_for_split(ref.data->idx & ~3, 0, ref.data->idx & 3);
+    move_entry(idx, p.second);
+    return place_at(p.first, new_contents);
+  }
+  entry_ref insert_after(entry_ref ref, ValueType const& new_contents) {
+    std::pair<idx_type,idx_type> p = make_room_for_split(ref.data->idx & ~3, 0, ref.data->idx & 3);
+    move_entry(idx, p.first);
+    return place_at(p.second, new_contents);
+  }
+private:
+  // TODO: a custom hashtable for this so we don't need the extra layer of pointers
+  std::unordered_map<idx_type, std::unique_ptr<entry>> data;
+  bool idx_exists(idx_type idx)const { return data.find(idx) != data.end(); }
+  
+  // The data forms - mathematically, but not in memory - a lenient B-tree with 2,3,or 4 children for each node.
+  // When it overflows to 5, it splits into a 3-node and a 2-node.
+  // An index's Nth bit-pair indicates which child it is at the Nth level of the tree (from the leaves).
+  // Since a node's first child always exists, parent nodes (which have no data)
+  // are represented by the ID of the first descendant leaf, plus their size/level.
+  std::pair<idx_type,idx_type> make_room_for_split(idx_type prefix, num_bits_type child_shift, idx_type which_child) {
+    idx_type offset = 0;
+    const idx_type child_size = 1 << child_shift;
+    const idx_type which_child_mask = child_size * 0x3;
+    if (idx_exists(prefix+3*child_size)) {
       // split this node to make room for splitting children
-      std::pair<uint64_t,uint64_t> p = make_room_for_split(prefix & ~this_level_mask, shift + 2, (prefix & this_level_mask) >> shift);
+      std::pair<idx_type,idx_type> p = make_room_for_split(prefix & ~which_child_mask, child_shift + 2, (prefix & which_child_mask) >> child_shift);
       
-      if (which <= 2) { move_subtree(prefix, shift, 3, p.second + 1*elem_size); }
-      if (which <= 1) { move_subtree(prefix, shift, 2, p.second              ); }
-      if (which <= 0) { move_subtree(prefix, shift, 1, p.first  + 2*elem_size); }
+      if (which_child <= 2) { move_subtree(prefix + 3*child_size, child_shift-2, p.second + 1*child_size); }
+      if (which_child <= 1) { move_subtree(prefix + 2*child_size, child_shift-2, p.second               ); }
+      if (which_child <= 0) { move_subtree(prefix + 1*child_size, child_shift-2, p.first  + 2*child_size); }
       
-      if (which == 0) {
-        return std::pair<uint64_t,uint64_t>(p.first, p.first+elem_size);
-      else if (which == 1) {
-        return std::pair<uint64_t,uint64_t>(p.first+1*elem_size, p.first+2*elem_size);
+      if (which_child == 0) {
+        return std::pair<idx_type,idx_type>(p.first, p.first+child_size);
       }
-      else if (which == 2) {
-        return std::pair<uint64_t,uint64_t>(p.first+2*elem_size, p.second);
+      else if (which_child == 1) {
+        return std::pair<idx_type,idx_type>(p.first+1*child_size, p.first+2*child_size);
       }
-      else if (which == 3) {
-        return std::pair<uint64_t,uint64_t>(p.second, p.second+1*elem_size);
+      else if (which_child == 2) {
+        return std::pair<idx_type,idx_type>(p.first+2*child_size, p.second);
+      }
+      else if (which_child == 3) {
+        return std::pair<idx_type,idx_type>(p.second, p.second+1*child_size);
       }
       else {
         assert(false);
       }
     }
 
-    assert (which <= 2);
-    return std::pair<uint64_t,uint64_t>(prefix+which*elem_size, prefix+(which+1)*elem_size);
+    assert (which_child <= 2);
+    return std::pair<idx_type,idx_type>(prefix+which_child*child_size, prefix+(which_child+1)*child_size);
   }
-  uint64_t /*offset*/ make_room( prefix,  elem_size,  which) {
-    uint64_t offset = 0;
-    const uint64_t this_level_mask = elem_size * 0x3
-    if (data[prefix+2*elem_size]) {
-      offset += make_room(prefix & ~this_level_mask, elem_size << 2, prefix & this_level_mask);
-      prefix += offset;
-    }
-    if (which == 2) {
-      data[prefix+(elem_size<<2)] = input;
-      return offset + 
-    }
-    else {
-      data[prefix+which*elem_size] = input;
-      return offset;
-    }
-  }
-  insert_before( idx, new_contents) {
-    int shift = 0;
-    // "Make room, then insert."
-    std::pair<uint64_t,uint64_t> p = make_room_for_split(idx & ~3, 1, idx & 3)
-    if (data[(idx & ~((4<<shift)-1)) + (3<<shift)]) {
-      shift += 2;
-    }
-    if (data[(idx & ~((4<<shift)-1)) + (2<<shift)]) {
-      // 2 becoming 3
-      for (int i = (idx | ((4<<shift)-1)); i > (idx & ~((1<<shift)-1)); --i) {
-        data[i + (1<<shift)] = data[i];
-        data[i] = none;
+  void move_subtree(idx_type prefix, num_bits_type child_shift, idx_type new_prefix) {
+    const idx_type child_size = 1 << child_shift;
+    for (int i = 3; i >= 0; --i) {
+      const idx_type child_prefix = prefix + child_size*i;
+      if (child_shift == 0) {
+        move_entry(child_prefix, new_prefix+i);
       }
-      shift -= 2;
-      // 3 becoming 2+2
-      for (int i = (idx | ((4<<shift)-1)); i > (idx & ~((1<<shift)-1)); --i) {
-        data[i + (1<<shift)] = data[i];
-        data[i] = none;
+      else {
+        if (idx_exists(child_prefix)) {
+          move_subtree(child_prefix, child_shift - 2, new_prefix + child_size*i);
+        }
       }
     }
-    else {
-      // root splitting
+  }
+  void move_entry(idx_type idx, idx_type new_idx) {
+    if (new_idx != idx) {
+      auto i = data.find(idx);
+      if (i != data.end()) {
+        auto p = data.insert(std::pair<idx_type, std::unique_ptr<entry>>(idx, nullptr));
+        assert(p.second);
+        p.first->second.swap(i->second);
+        p.first->second->idx = idx;
+        data.erase(i);
+      }
     }
-    while ((idx & 3) < 3) {
-      data[idx].contents, new_contents = new_contents, data[idx].contents
-      if (!new_contents) return;
-      ++idx;
-    }
-    
+  }
+  entry_ref place_at(idx_type idx, ValueType const& new_contents) {
+    auto p = data.insert(std::pair<idx_type, std::unique_ptr<entry>>(idx, new entry(idx, new_contents)));
+    assert(p.second);
+    return entry_ref(p.first->second.get());
   }
 };
 
@@ -793,7 +822,72 @@ public:
   typedef event trigger;
 private:
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
-  typedef impl::extended_time<TimeTypeInfo> extended_time;
+  
+  static const uint32_t not_a_trigger = std::numeric_limits<uint32_t>::max();
+  struct extended_time_metadata {
+    extended_time_metadata(){}
+    extended_time_metadata(siphash_id id):id(id),trigger_iteration(not_a_trigger){}
+    extended_time_metadata(siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
+      id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
+    
+    // TODO consolidate
+    std::set<extended_time_metadata, extended_time> children; // usually empty; optimize for size when empty
+    
+    siphash_id id;
+    uint32_t trigger_iteration;
+    extended_time closest_non_trigger_ancestor;
+    
+    // note: comparison only valid between siblings
+    bool operator==(extended_time_metadata const& o)const {
+      return trigger_iteration == o.trigger_iteration && id == o.id;
+    }
+    bool operator<(extended_time_metadata const& o)const {
+      if (trigger_iteration != o.trigger_iteration) return trigger_iteration < o.trigger_iteration;
+      return id < o.id;
+    }
+  };
+  
+  typedef ordered_stuff<extended_time_metadata>::entry_ref extended_time;
+  static ordered_stuff<extended_time_metadata> extended_times;
+  static std::map<time_type, extended_time> base_time_roots;
+  
+  static extended_time get_base_time_root(time_type t) {
+    if (base_time_roots.empty()) {
+      // create a sentinel with no children at the end
+      base_time_roots.emplace(max_time, extended_times.insert_only(extended_time_metadata()));
+    }
+    const auto i = base_time_roots.lower_bound(t);
+    if (i->first == t) { return i->second; }
+    assert(i != base_time_roots.end());
+    const auto j = base_times.emplace_hint(i, t, extended_times.insert_before(i->second, extended_time_metadata()));
+    return j->second;
+  }
+  static extended_time make_extended_time_impl(extended_time t, extended_time_metadata meta) {
+    if (t.children.empty()) {
+      // create a sentinel with no children at the end
+      t.children.emplace(siphash_id::last(), extended_times.insert_after(t, extended_time_metadata(siphash_id::last())));
+    }
+    const auto i = t.children.lower_bound(meta);
+    assert(i != t.children.end());
+    if (i->first == meta) { return i->second; }
+    extended_time result = extended_times.insert_before(i->second, meta);
+    const auto j = t.children.emplace_hint(i, meta, result);
+    j->second = result;
+    return result;
+  }
+  static extended_time make_extended_time(time_type t, siphash_id id) {
+    return make_extended_time_impl(get_base_time(t), id);
+  }
+  static extended_time make_extended_time(extended_time t, siphash_id id) {
+    return make_extended_time_impl(t->closest_non_trigger_ancestor ? t->closest_non_trigger_ancestor : t, id);
+  }
+  static extended_time trigger_call_time(trigger_id tid, extended_time when_triggered) {
+    const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
+    const siphash_id id(t->id, tid, when_triggered->trigger_iteration);
+    const uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 :
+      (when_triggered->trigger_iteration + (when_triggered->id >= id) ? 1 : 0);
+    return make_extended_time_impl(t, extended_time_metadata(id, trigger_iteration, t)));
+  }
   
   struct trigger_call_info {
     trigger_call_info():field_changes_andor_creations_triggering_this(0){}
