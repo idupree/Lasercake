@@ -286,6 +286,8 @@ private:
 };
 }
 
+#define AUDIT_ORDERED_STUFF
+
 template<typename ValueType>
 class ordered_stuff {
   typedef impl::entry<ValueType> entry;
@@ -300,23 +302,55 @@ public:
 
   // TODO: allow moving and deletion
   void put_only(entry_ref moving) {
-    return place_at(0, moving);
+    place_at(0, moving);
   }
   void put_before(entry_ref moving, entry_ref relative_to) {
+#ifdef AUDIT_ORDERED_STUFF
+    std::map<idx_type, entry_ref> old_data = data;
+#endif
     const idx_type idx = relative_to.data->idx;
     std::pair<idx_type,idx_type> p = make_room_for_split(idx & ~3, 0, idx & 3);
     move_entry(idx, p.second);
-    return place_at(p.first, moving);
+    place_at(p.first, moving);
+#ifdef AUDIT_ORDERED_STUFF
+    assert(relative_to > moving);
+    entry_ref prev;
+    for (auto& f : old_data) {
+      if (prev) assert(prev < f.second);
+      if (f.second < relative_to) assert(f.second < moving);
+      if (f.second > relative_to) assert(f.second > moving);
+      prev = f.second;
+      //std::cerr << f.second.data->idx << ", ";
+    }
+#endif
   }
   void put_after(entry_ref moving, entry_ref relative_to) {
+#ifdef AUDIT_ORDERED_STUFF
+    std::map<idx_type, entry_ref> old_data = data;
+#endif
     const idx_type idx = relative_to.data->idx;
     std::pair<idx_type,idx_type> p = make_room_for_split(idx & ~3, 0, idx & 3);
     move_entry(idx, p.first);
-    return place_at(p.second, moving);
+    place_at(p.second, moving);
+#ifdef AUDIT_ORDERED_STUFF
+    assert(relative_to < moving);
+    entry_ref prev;
+    for (auto& f : old_data) {
+      if (prev) assert(prev < f.second);
+      if (f.second < relative_to) assert(f.second < moving);
+      if (f.second > relative_to) assert(f.second > moving);
+      prev = f.second;
+      //std::cerr << f.second.data->idx << ", ";
+    }
+#endif
   }
 private:
   // TODO: a custom hashtable for this so we don't need the extra layer of pointers
+#ifdef AUDIT_ORDERED_STUFF
+  std::map<idx_type, entry_ref> data;
+#else
   std::unordered_map<idx_type, entry_ref> data;
+#endif
   bool idx_exists(idx_type idx)const { return data.find(idx) != data.end(); }
   
   // The data forms - mathematically, but not in memory - a lenient B-tree with 2,3,or 4 children for each node.
@@ -329,8 +363,12 @@ private:
     if (idx_exists(prefix+3*child_size)) {
       // split this node to make room for splitting children
       const num_bits_type parent_shift = child_shift + 2;
-      const idx_type next_which_child_mask = (1 << parent_shift) * 0x3;
+      const idx_type parent_size = 1 << parent_shift;
+      const idx_type next_which_child_mask = parent_size * 0x3;
       std::pair<idx_type,idx_type> p = make_room_for_split(prefix & ~next_which_child_mask, parent_shift, (prefix & next_which_child_mask) >> parent_shift);
+      assert(p.first >= prefix);
+      assert(p.second >= p.first + parent_size);
+      assert(!idx_exists(p.second));
       
       // Don't move which_child, because the caller will move it.
       // Don't put anything into result.first or result.second.
