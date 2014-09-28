@@ -586,6 +586,220 @@ namespace std {
   };
 }
 namespace time_steward_system {
+  
+#if 0
+template<typename MappedType, num_bits_type bits_per_level = 4>
+class persistent_siphash_id_trie {
+  typedef siphash_id key_type;
+  typedef MappedType mapped_type;
+  typedef std::pair<key_type, mapped_type> value_type;
+  struct leaf {
+    bool is_leaf:1 = true;
+    something ref_count;
+    value_type value;
+  };
+  struct node {
+    bool is_leaf:1 = false;
+    something ref_count;
+    uint 1<<bits_per_level _t children_exist;
+    array_of_<child_ptr> children;
+  };
+  class child_ptr {
+  public:
+    child_ptr(node_or_leaf* data):data(data){ ++data->ref_count; }
+    ~child_ptr(){ --data->ref_count; }
+    inline bool is_leaf()const { return ; }
+  private:
+    node_or_leaf* data;
+  };
+  child_ptr root;
+  
+  typedef std::pair<, bool> insert_result;
+  insert_result insert(value_type const& v) {
+    return insert_impl(root, v, 0);
+  }
+  static insert_result insert_impl(child_ptr& ptr, value_type const& v, num_bits_type which_bits) {
+    if (!ptr) {
+      ptr = allocate leaf(v.first);
+      return insert_result(ptr, true);
+    }
+    if (ptr.is_leaf()) {
+      siphash_id const& id = ptr.leaf().value.first;
+      if (id == v.first) {
+        return insert_result(ptr, false);
+      }
+      node* result = allocate node(2 children));
+      const num_bits_type child0_bit = 1 << which_child(id, which_bits);
+      const num_bits_type child1_bit = 1 << which_child(v.first, which_bits);
+      result->children_exist == child0 | child1;
+      result->child_by_bit(child0) = ptr;
+      result->child_by_bit(child1) = allocate leaf(v.first);
+      ptr = result;
+      return insert_result(, true);
+    }
+    else {
+      const num_bits_type child = which_child(v.first, which_bits);
+      const num_bits_type child_bit = 1 << child;
+      const num_bits_type old_num_children = ptr.node().num_children();
+      const bool child_is_new = !(ptr.node().children_exist & child_bit);
+      node* result = allocate node(old_num_children + child_is_new));
+      result->children_exist |= child_bit;
+      num_bits_type child_iter = 0;
+      for (num_bits_type i = 0; i < old_num_children; ++i) {
+        result->child_by_idx(i + (child_is_new&(child_iter>child))) = ptr.node().child_by_idx(i);
+        do { ++child_iter; } while (!(result->children_exist & (1<<child_iter)));
+      }
+      ptr = result;
+      if (child_is_new) {
+        result->child_by_bit(child_bit) = allocate leaf(v.first);
+        return insert_result(, true);
+      }
+      else {
+        return insert_impl(result->child_by_bit(child_bit), v, which_bits + bits_per_level);
+      }
+    }
+  }
+  bool erase(siphash_id k) {
+    return erase_impl(root, v, 0);
+  }
+  static bool erase_impl(child_ptr& ptr, siphash_id k, num_bits_type which_bits) {
+    if (ptr.is_leaf()) {
+      siphash_id const& id = ptr.leaf().value.first;
+      if (id == k) {
+        ptr = nullptr;
+        return true;
+      }
+      return false;
+    }
+    else {
+      const num_bits_type child = which_child(v.first, which_bits);
+      const num_bits_type child_bit = 1 << child;
+      const bool child_exists = ptr.node().children_exist & child_bit;
+      if (child_exists) {
+        child_ptr with_erase = ptr->child_by_bit(child_bit);
+        if (erase_impl(result->child_by_bit(child_bit), v, which_bits + bits_per_level)) {
+          if (with_erase) {
+            node* result = allocate node(ptr.node().num_children());
+            for (num_bits_type i = 0; i < new_num_children; ++i) {
+              result->child_by_idx(i) = ptr.node().child_by_idx(i);
+            }
+            result->child_by_bit(child_bit) = with_erase;
+          }
+          else {
+            const num_bits_type new_num_children = ptr.node().num_children() - 1;
+            node* result = allocate node(new_num_children);
+            result->children_exist &= ~child_bit;
+            num_bits_type child_iter = 0;
+            for (num_bits_type i = 0; i < new_num_children; ++i) {
+              result->child_by_idx(i) = ptr.node().child_by_idx(i + (i>child_iter));
+              do { ++child_iter; } while (!(result->children_exist & (1<<child_iter)));
+            }
+          }
+          return true;
+        }
+        return false;
+      }
+      return false;
+    }
+  }
+  static inline num_bits_type which_child(siphash_id id, num_bits_type which_bits) {
+    return (id.data_[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
+  }
+  
+  template<class Alteration>
+  static child_ptr with_alteration(child_ptr ptr, siphash_id k, num_bits_type which_bits, Alteration alteration) {
+    if (!ptr) {
+      mapped_type const* m = alteration(nullptr);
+      return m ? allocate leaf(k, *m) : nullptr;
+    }
+    else if (ptr.is_leaf()) {
+      siphash_id const& k1 = ptr.leaf().value.first;
+      if (k1 == k) {
+        mapped_type* m = alteration(ptr.leaf().value.second);
+        if ((!m) || (*m != ptr.leaf().value.second)) {
+          return m ? allocate leaf(k, *m) : nullptr;
+        }
+      }
+      else {
+        mapped_type const* m = alteration(nullptr);
+        if (m) {
+          num_bits_type child0 = which_child(k, which_bits);
+          num_bits_type child1 = which_child(k1, which_bits);
+          node* result;
+          node* split_at;
+          if (child0 == child1) {
+            split_at = result = allocate node(1);
+            while (child0 == child1)
+              which_bits = which_bits + bits_per_level;
+              child0 = which_child(k, which_bits);
+              child1 = which_child(k1, which_bits);
+              node* old_split_at = split_at;
+              split_at = allocate node(1+(child0 != child1));
+              old_split_at.children_exist = 1<<0;
+              old_split_at.child_by_idx(0) = split_at;
+            }
+          }
+          else {
+            split_at = result = allocate node(2);
+          }
+          split_at->children_exist == child0 | child1;
+          split_at->child_by_idx(child1_bit > child0_bit) = ptr;
+          split_at->child_by_idx(child0_bit > child1_bit) = allocate leaf(k, *m);
+          return result;
+        }
+      }
+    }
+    else {
+      const num_bits_type child = which_child(k, which_bits);
+      const num_bits_type child_bit = 1 << child;
+      const bool child_exists = ptr.node().children_exist & child_bit;
+      child_ptr old_child = child_exists ? ptr.node().child_by_bit(child_bit) : nullptr;
+      child_ptr changed = with_alteration(old_child, k, which_bits + bits_per_level, alteration);
+      if (changed != old_child) {
+        const num_bits_type new_num_children = ptr.node().num_children() + (changed && !old_child) - (old_child && !changed);
+        if (new_num_children ) {}
+        node* result = allocate node(new_num_children);
+        num_bits_type old_idx = 0;
+        num_bits_type new_idx = 0;
+        for (num_bits_type i = 0; i < (1<<bits_per_level); ++i) {
+          if (i == child) {
+            if (old_child) { ++old_idx; }
+            if (changed) { result->child_by_idx(new_idx++) = changed; }
+          }
+          else if (ptr.node().children_exist & (1<<i)) {
+            result->child_by_idx(new_idx++) = ptr.node().child_by_idx(old_idx++);
+          }
+        }
+        return result;
+      }
+    }
+    return ptr;
+  }
+  typedef std::pair<mapped_type const*, bool> insert_result;
+  insert_result insert(value_type const& v) {
+    struct insert_func {
+      mapped_type const& m;
+      mapped_type const*& old_record;
+      insert_func(mapped_type const& m,mapped_type const*& old_record):m(m),old_record(old_record){}
+      mapped_type const* operator()(mapped_type const* old)const {
+        old_record = old;
+        if (old) { return old; }
+        return &m;
+      }
+    };
+    mapped_type const* old;
+    child_ptr new_root = with_alteration(root, v.first, 0, insert_func(v.second));
+    if (new_root == root) {
+      return insert_result(old_record, false);
+    }
+    else {
+      root = new_root;
+      return insert_result(old_record, true);
+    }
+  }
+  
+};
+#endif
 
 template<typename IntType>
 struct combine_hash_with_integer {
