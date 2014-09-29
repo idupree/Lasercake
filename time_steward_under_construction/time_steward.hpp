@@ -261,8 +261,9 @@ namespace impl {
 template<typename ValueType>
 struct entry {
   template <class... Args>
-  entry(idx_type idx, Args&&... args):idx(idx),contents(std::forward<Args>(args)...){}
+  entry(idx_type idx, Args&&... args):idx(idx),ref_count(0),contents(std::forward<Args>(args)...){}
   idx_type idx;
+  size_t ref_count;
   ValueType contents;
 };
 template<typename ValueType>
@@ -278,15 +279,21 @@ public:
   operator bool()const { return bool(data); }
   ValueType& operator*()const { return data->contents; }
   ValueType* operator->()const { return &data->contents; }
+  entry_ref& operator=(entry_ref const& o){ dec_ref(); data = o.data; if (data) { ++data->ref_count; } }
 private:
-  entry_ref(entry<ValueType>* data):data(data){}
+  void dec_ref() {
+    if (--data->ref_count == 0) {
+      delete data;
+    }
+  }
+  entry_ref(entry<ValueType>* data):data(data){ ++data->ref_count; }
   entry<ValueType>* data;
   friend class ordered_stuff<ValueType>;
   friend class std::hash<entry_ref>;
 };
 }
 
-#define AUDIT_ORDERED_STUFF
+//#define AUDIT_ORDERED_STUFF
 
 template<typename ValueType>
 class ordered_stuff {
@@ -1029,6 +1036,7 @@ public:
     const extended_time ext_when = (when == time_->base_time) ?
       /*TimeSteward::*/ts_->make_event_time(time_, create_id()) :
       /*TimeSteward::*/ts_->make_event_time(when , create_id());
+    assert(ext_when > time_);
     new_upcoming_events.push_back(std::make_pair(ext_when, e));
   };
   void set_trigger(trigger_id id, std::shared_ptr<const trigger> t) {
@@ -1191,10 +1199,17 @@ private:
   }
   /*static*/ extended_time trigger_call_time(trigger_id tid, extended_time when_triggered)const {
     const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
-    const siphash_id id = siphash_id::combining(t->id, tid, when_triggered->trigger_iteration);
-    const uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 :
-      (when_triggered->trigger_iteration + (when_triggered->id >= id) ? 1 : 0);
-    return make_extended_time_impl(t, id, trigger_iteration, t);
+    uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 : when_triggered->trigger_iteration;
+    
+    siphash_id id = siphash_id::combining(t->id, tid, trigger_iteration);
+    if ((when_triggered->trigger_iteration == trigger_iteration) && (when_triggered->id >= id)) {
+      ++trigger_iteration;
+      id = siphash_id::combining(t->id, tid, trigger_iteration);
+    }
+    
+    const extended_time result = make_extended_time_impl(t, id, trigger_iteration, t);
+    assert (result > when_triggered);
+    return result;
   }
   
   struct trigger_call_info {
@@ -1222,6 +1237,11 @@ private:
   // statics must also be declared outside the class like other globals
   //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
   /*static*/ const fields_list_impl::foreach_field<entity_fields, optional> field_absent;
+  /*maybe we could use this hack:
+  static const fields_list_impl::foreach_field<entity_fields, optional>& field_absent() {
+    static const fields_list_impl::foreach_field<entity_fields, optional> f;
+    return f;
+  }*/
   
   template<typename Field>
   using field_throughout_time = std::map<extended_time, optional<Field>>;
