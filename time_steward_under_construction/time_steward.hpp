@@ -594,121 +594,81 @@ namespace std {
 }
 namespace time_steward_system {
   
-#if 0
+
 template<typename MappedType, num_bits_type bits_per_level = 4>
 class persistent_siphash_id_trie {
+public:
   typedef siphash_id key_type;
   typedef MappedType mapped_type;
   typedef std::pair<key_type, mapped_type> value_type;
+private:  
+  typedef typename boost::uint_t<bits_per_level>::fast one_bit_per_child_t;
+  typedef size_t ref_count_t;
+  static const ref_count_t is_leaf_bit = 1ULL<<63;
+  static const ref_count_t ref_count_mask = is_leaf_bit-1;
   struct leaf {
-    bool is_leaf:1 = true;
-    something ref_count;
+    template <class... Args>
+    leaf(Args&&... args):ref_count_and_is_leaf(is_leaf_bit),value(std::forward<Args>(args)...){}
+    ref_count_t ref_count_and_is_leaf;
     value_type value;
   };
   struct node {
-    bool is_leaf:1 = false;
-    something ref_count;
-    uint 1<<bits_per_level _t children_exist;
-    array_of_<child_ptr> children;
+    leaf():ref_count_and_is_leaf(0),children_exist(0){}
+    ref_count_t ref_count_and_is_leaf;
+    one_bit_per_child_t children_exist;
   };
   class child_ptr {
   public:
-    child_ptr(node_or_leaf* data):data(data){ ++data->ref_count; }
+    //child_ptr():data(nullptr){}
+    child_ptr(void* data):data(data){ inc_ref(); }
     ~child_ptr(){ --data->ref_count; }
-    inline bool is_leaf()const { return ; }
+    inline bool is_leaf()const { return (*(ref_count_t*)(data)) & is_leaf_bit; }
+    child_ptr& operator=(child_ptr const& o){ dec_ref(); data = o.data; inc_ref(); }
+    leaf& leaf() { return (*(leaf*)(data)); }
+    node& node() { return (*(node*)(data)); }
+    child_ptr& child_by_idx(num_bits_type i) { return (*(child_ptr*)(data + sizeof(node) + i*sizeof(child_ptr))); }
+    child_ptr& child_by_bit(num_bits_type b) { return child_by_idx(popcount(node().children_exist & (b-1))); }
+    operator bool()const { return bool(data); }
   private:
-    node_or_leaf* data;
+    void inc_ref() {
+      if (data) {
+        ++(*(ref_count_t*)(data));
+      }
+    }
+    void dec_ref() {
+      if (data && ((--(*(ref_count_t*)(data))) & ref_count_mask) == 0) {
+        if (is_leaf()) {
+          leaf().~leaf();
+        }
+        else {
+          const num_bits_type num_children = node().num_children();
+          for (num_bits_type i = 0; i < num_children; ++i) {
+            child_by_idx(i).~child_ptr();
+          }
+          node().~node();
+        }
+        delete[] data;
+      }
+    }
+  private:
+    void* data;
   };
+  template <class... Args>
+  child_ptr allocate_leaf(Args&&... args) {
+    char* ptr = new char[sizeof(leaf)];
+    new(ptr) leaf(std::forward<Args>(args)...);
+    return ptr;
+  }
+  child_ptr allocate_node(num_bits_type num_children) {
+    char* ptr = new char[sizeof(node) + num_children*sizeof(child_ptr)];
+    new(ptr) node();
+    for (num_bits_type i = 0; i < num_children; ++i) {
+      new(ptr + sizeof(node) + i*sizeof(child_ptr)) child_ptr();
+    }
+    return ptr;
+  }
   child_ptr root;
   
-  typedef std::pair<, bool> insert_result;
-  insert_result insert(value_type const& v) {
-    return insert_impl(root, v, 0);
-  }
-  static insert_result insert_impl(child_ptr& ptr, value_type const& v, num_bits_type which_bits) {
-    if (!ptr) {
-      ptr = allocate leaf(v.first);
-      return insert_result(ptr, true);
-    }
-    if (ptr.is_leaf()) {
-      siphash_id const& id = ptr.leaf().value.first;
-      if (id == v.first) {
-        return insert_result(ptr, false);
-      }
-      node* result = allocate node(2 children));
-      const num_bits_type child0_bit = 1 << which_child(id, which_bits);
-      const num_bits_type child1_bit = 1 << which_child(v.first, which_bits);
-      result->children_exist == child0 | child1;
-      result->child_by_bit(child0) = ptr;
-      result->child_by_bit(child1) = allocate leaf(v.first);
-      ptr = result;
-      return insert_result(, true);
-    }
-    else {
-      const num_bits_type child = which_child(v.first, which_bits);
-      const num_bits_type child_bit = 1 << child;
-      const num_bits_type old_num_children = ptr.node().num_children();
-      const bool child_is_new = !(ptr.node().children_exist & child_bit);
-      node* result = allocate node(old_num_children + child_is_new));
-      result->children_exist |= child_bit;
-      num_bits_type child_iter = 0;
-      for (num_bits_type i = 0; i < old_num_children; ++i) {
-        result->child_by_idx(i + (child_is_new&(child_iter>child))) = ptr.node().child_by_idx(i);
-        do { ++child_iter; } while (!(result->children_exist & (1<<child_iter)));
-      }
-      ptr = result;
-      if (child_is_new) {
-        result->child_by_bit(child_bit) = allocate leaf(v.first);
-        return insert_result(, true);
-      }
-      else {
-        return insert_impl(result->child_by_bit(child_bit), v, which_bits + bits_per_level);
-      }
-    }
-  }
-  bool erase(siphash_id k) {
-    return erase_impl(root, v, 0);
-  }
-  static bool erase_impl(child_ptr& ptr, siphash_id k, num_bits_type which_bits) {
-    if (ptr.is_leaf()) {
-      siphash_id const& id = ptr.leaf().value.first;
-      if (id == k) {
-        ptr = nullptr;
-        return true;
-      }
-      return false;
-    }
-    else {
-      const num_bits_type child = which_child(v.first, which_bits);
-      const num_bits_type child_bit = 1 << child;
-      const bool child_exists = ptr.node().children_exist & child_bit;
-      if (child_exists) {
-        child_ptr with_erase = ptr->child_by_bit(child_bit);
-        if (erase_impl(result->child_by_bit(child_bit), v, which_bits + bits_per_level)) {
-          if (with_erase) {
-            node* result = allocate node(ptr.node().num_children());
-            for (num_bits_type i = 0; i < new_num_children; ++i) {
-              result->child_by_idx(i) = ptr.node().child_by_idx(i);
-            }
-            result->child_by_bit(child_bit) = with_erase;
-          }
-          else {
-            const num_bits_type new_num_children = ptr.node().num_children() - 1;
-            node* result = allocate node(new_num_children);
-            result->children_exist &= ~child_bit;
-            num_bits_type child_iter = 0;
-            for (num_bits_type i = 0; i < new_num_children; ++i) {
-              result->child_by_idx(i) = ptr.node().child_by_idx(i + (i>child_iter));
-              do { ++child_iter; } while (!(result->children_exist & (1<<child_iter)));
-            }
-          }
-          return true;
-        }
-        return false;
-      }
-      return false;
-    }
-  }
   static inline num_bits_type which_child(siphash_id id, num_bits_type which_bits) {
     return (id.data_[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
   }
@@ -717,14 +677,14 @@ class persistent_siphash_id_trie {
   static child_ptr with_alteration(child_ptr ptr, siphash_id k, num_bits_type which_bits, Alteration alteration) {
     if (!ptr) {
       mapped_type const* m = alteration(nullptr);
-      return m ? allocate leaf(k, *m) : nullptr;
+      return m ? allocate_leaf(k, *m) : nullptr;
     }
     else if (ptr.is_leaf()) {
       siphash_id const& k1 = ptr.leaf().value.first;
       if (k1 == k) {
-        mapped_type* m = alteration(ptr.leaf().value.second);
+        mapped_type const* m = alteration(entry_ref(ptr));
         if ((!m) || (*m != ptr.leaf().value.second)) {
-          return m ? allocate leaf(k, *m) : nullptr;
+          return m ? allocate_leaf(k, *m) : nullptr;
         }
       }
       else {
@@ -732,26 +692,26 @@ class persistent_siphash_id_trie {
         if (m) {
           num_bits_type child0 = which_child(k, which_bits);
           num_bits_type child1 = which_child(k1, which_bits);
-          node* result;
-          node* split_at;
+          child_ptr result;
+          child_ptr split_at;
           if (child0 == child1) {
-            split_at = result = allocate node(1);
+            split_at = result = allocate_node(1);
             while (child0 == child1)
-              which_bits = which_bits + bits_per_level;
+              which_bits = which_bits - bits_per_level;
               child0 = which_child(k, which_bits);
               child1 = which_child(k1, which_bits);
-              node* old_split_at = split_at;
-              split_at = allocate node(1+(child0 != child1));
-              old_split_at.children_exist = 1<<0;
+              child_ptr old_split_at = split_at;
+              split_at = allocate_node(1+(child0 != child1));
+              old_split_at.node().children_exist = 1<<0;
               old_split_at.child_by_idx(0) = split_at;
             }
           }
           else {
-            split_at = result = allocate node(2);
+            split_at = result = allocate_node(2);
           }
-          split_at->children_exist == child0 | child1;
-          split_at->child_by_idx(child1_bit > child0_bit) = ptr;
-          split_at->child_by_idx(child0_bit > child1_bit) = allocate leaf(k, *m);
+          split_at.node().children_exist == child0 | child1;
+          split_at.child_by_idx(child1_bit > child0_bit) = ptr;
+          split_at.child_by_idx(child0_bit > child1_bit) = allocate_leaf(k, *m);
           return result;
         }
       }
@@ -761,41 +721,122 @@ class persistent_siphash_id_trie {
       const num_bits_type child_bit = 1 << child;
       const bool child_exists = ptr.node().children_exist & child_bit;
       child_ptr old_child = child_exists ? ptr.node().child_by_bit(child_bit) : nullptr;
-      child_ptr changed = with_alteration(old_child, k, which_bits + bits_per_level, alteration);
+      child_ptr changed = with_alteration(old_child, k, which_bits - bits_per_level, alteration);
       if (changed != old_child) {
         const num_bits_type new_num_children = ptr.node().num_children() + (changed && !old_child) - (old_child && !changed);
-        if (new_num_children ) {}
-        node* result = allocate node(new_num_children);
+        if (new_num_children == 1 && changed.is_leaf()) {
+          return changed;
+        }
+        child_ptr result = allocate_node(new_num_children);
         num_bits_type old_idx = 0;
         num_bits_type new_idx = 0;
         for (num_bits_type i = 0; i < (1<<bits_per_level); ++i) {
           if (i == child) {
             if (old_child) { ++old_idx; }
-            if (changed) { result->child_by_idx(new_idx++) = changed; }
+            if (changed) {
+              result.node().children_exist |= 1 << i;
+              result.child_by_idx(new_idx++) = changed;
+            }
           }
           else if (ptr.node().children_exist & (1<<i)) {
-            result->child_by_idx(new_idx++) = ptr.node().child_by_idx(old_idx++);
+            result.node().children_exist |= 1 << i;
+            result.child_by_idx(new_idx++) = ptr.node().child_by_idx(old_idx++);
           }
         }
+        assert(result.node().num_children() == new_num_children);
         return result;
       }
     }
     return ptr;
   }
-  typedef std::pair<mapped_type const*, bool> insert_result;
+  
+public:
+  class iterator : public boost::iterator_facade<iterator, const value_type, boost::bidirectional_traversal_tag> {
+    public:
+      //iterator() : path_len(0) {}
+    private:
+      explicit iterator(child_ptr root):id(),path_len(1) { path[0] = root; }
+      friend class boost::iterator_core_access;
+      
+      // State: We can be
+      // 1) an iterator to an element (path is the path ending in the leaf, id redundant (== this->first))
+      // 2) an iterator to an empty child (path is the path ending in nullptr, possibly with a leaf before it, id is needed to specify which child)
+      // 3) the end iterator (path is the singleton root, id null)
+      // --end is the last element, ++end is the first element
+      // TODO: what about the end iterator to an empty set?
+      void increment() {
+        if (id) {
+          --path_len;
+          num_bits_type child = which_child(id, back_bits());
+          
+          while (!(back().node().children_exist & ~((1<<(child+1))-1))) {
+            if (path_len == 1) {
+              id = siphash_id::null();
+              return;
+            }
+            --path_len;
+            child = which_child(id, back_bits());
+            assert(back().node().children_exist & (1<<child));
+          }
+          
+          path[++path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) + 1);
+        }
+        
+        while (!back().is_leaf()) {
+          path[++path_len] = back().child_by_idx(0);
+        }
+        id = back().leaf().value.first;
+      }
+      void decrement() {
+        if (id) {
+          --path_len;
+          num_bits_type child = which_child(id, back_bits());
+          
+          while (!(back().node().children_exist & ((1<<child)-1))) {
+            if (path_len == 1) {
+              id = siphash_id::null();
+              return;
+            }
+            --path_len;
+            child = which_child(id, back_bits());
+            assert(back().node().children_exist & (1<<child));
+          }
+          
+          path[++path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) - 1);
+        }
+        while (!back().is_leaf()) {
+          path[++path_len] = back().child_by_idx(back().num_children()-1);
+        }
+        id = back().leaf().value.first;
+      }
+      bool equal(iterator const& other)const { return back() == other.back(); }
+      value_type const& dereference()const { return back().leaf().value; }
+      
+      child_ptr& back() { return path[path_len-1]; }
+      num_bits_type bits(num_bits_type path_idx)const { return 128 - (path_idx+1)*bits_per_level; }
+      num_bits_type back_bits()const { return 128 - path_len*bits_per_level; }
+      
+      siphash_id id;
+      num_bits_type path_len;
+      std::array<child_ptr, 128/bits_per_level> path;
+  };
+  iterator begin() { return iterator(this, 0); }
+  iterator end() { return iterator(this, size_); }
+  
+  typedef std::pair<entry_ref, bool> insert_result;
   insert_result insert(value_type const& v) {
     struct insert_func {
       mapped_type const& m;
-      mapped_type const*& old_record;
+      entry_ref& old_record;
       insert_func(mapped_type const& m,mapped_type const*& old_record):m(m),old_record(old_record){}
-      mapped_type const* operator()(mapped_type const* old)const {
+      mapped_type const* operator()(entry_ref old)const {
         old_record = old;
         if (old) { return old; }
         return &m;
       }
     };
-    mapped_type const* old;
-    child_ptr new_root = with_alteration(root, v.first, 0, insert_func(v.second));
+    entry_ref old;
+    child_ptr new_root = with_alteration(root, v.first, 128-bits_per_level, insert_func(v.second, old));
     if (new_root == root) {
       return insert_result(old_record, false);
     }
@@ -805,8 +846,124 @@ class persistent_siphash_id_trie {
     }
   }
   
+  bool erase(key_type const& k) {
+    struct erase_func {
+      mapped_type const* operator()(mapped_type const* old)const {
+        return nullptr;
+      }
+    };
+    child_ptr new_root = with_alteration(root, k, 128-bits_per_level, erase_func());
+    if (new_root == root) {
+      return false;
+    }
+    else {
+      root = new_root;
+      return true;
+    }
+  }
+  
+  template<class... Args>
+  static persistent_siphash_id_trie emplace(iterator const& i, Args&&... args) {
+    return set_leaf(i, allocate_leaf(i.id, args));
+  }
+private:
+  static persistent_siphash_id_trie unset_leaf(iterator const& i) {
+    if (i.back()) {
+      assert(i.back().is_leaf());
+      return walk_change_upwards(i, i.path_idx - 1, nullptr);
+    }
+    else {
+      return i.path[0];
+    }
+  }
+  static persistent_siphash_id_trie set_leaf(iterator const& i, child_ptr new_leaf) {
+    child_ptr walker;
+    num_bits_type replacing_idx = i.path_idx - 1;
+    if (i.back()) {
+      assert(i.back().is_leaf());
+      walker = new_leaf;
+    }
+    else {
+      child_ptr parent = i.path[i.path_len - 2];
+      if (parent.is_leaf()) {
+        --replacing_idx;
+        num_bits_type which_bits = i.bits(replacing_idx);
+        const siphash_id k1 = parent.leaf().value.first;
+        num_bits_type child0 = which_child(i.id, which_bits);
+        num_bits_type child1 = which_child(k1, which_bits);
+        child_ptr split_at;
+        if (child0 == child1) {
+          split_at = walker = allocate_node(1);
+          while (true) {
+            which_bits = which_bits - bits_per_level;
+            child0 = which_child(i.id, which_bits);
+            child1 = which_child(k1, which_bits);
+            child_ptr old_split_at = split_at;
+            old_split_at.node().children_exist = 1<<0;
+            if (child0 == child1) {
+              old_split_at.child_by_idx(0) = split_at = allocate_node(1);
+            }
+            else {
+              old_split_at.child_by_idx(0) = split_at = allocate_node(2);
+              break;
+            }
+          }
+        }
+        else {
+          split_at = walker = allocate_node(2);
+        }
+        split_at.node().children_exist == child0 | child1;
+        split_at.child_by_idx(child1 > child0) = ptr;
+        split_at.child_by_idx(child0 > child1) = new_leaf;
+      }
+      else {
+        walker = new_leaf;
+      }
+    }
+    return walk_change_upwards(i, replacing_idx, walker);
+  }
+    
+  static persistent_siphash_id_trie walk_change_upwards(iterator const& i, num_bits_type replacing_idx, child_ptr walker) {
+    child_ptr old_child = i.path[replacing_idx];
+    --replacing_idx;
+    for (; replacing_idx != num_bits_type(-1); --replacing_idx) {
+      child_ptr old_parent = i.path[replacing_idx];
+      num_bits_type which_bits = i.bits(replacing_idx);
+      assert(!old_parent.is_leaf());
+      
+      const num_bits_type child_idx = which_child(i.id, which_bits);
+      const num_bits_type child_bit = 1 << child_idx;
+      assert (walker != old_child);
+      const num_bits_type new_num_children = ptr.node().num_children() + (walker && !old_child) - (old_child && !walker);
+      if (!((new_num_children == 1) && walker.is_leaf())) {
+        child_ptr walker_parent = allocate_node(new_num_children);
+        num_bits_type old_idx = 0;
+        num_bits_type new_idx = 0;
+        for (num_bits_type i = 0; i < (1<<bits_per_level); ++i) {
+          if (i == child) {
+            if (old_child) { ++old_idx; }
+            if (walker) {
+              result.node().children_exist |= 1 << i;
+              result.child_by_idx(new_idx++) = walker;
+            }
+          }
+          else if (old_parent.node().children_exist & (1<<i)) {
+            result.node().children_exist |= 1 << i;
+            result.child_by_idx(new_idx++) = old_parent.node().child_by_idx(old_idx++);
+          }
+        }
+        assert(result.node().num_children() == new_num_children);
+        walker = walker_parent;
+      }
+      
+      old_child = old_parent;
+    }
+    
+    return walker;
+  }
+  
+  template<bool GetOldValue, bool InsertIfEmpty, bool ReplaceIfPresent, >
 };
-#endif
 
 template<typename IntType>
 struct combine_hash_with_integer {
