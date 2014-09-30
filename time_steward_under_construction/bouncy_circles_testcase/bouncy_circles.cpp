@@ -72,7 +72,7 @@ struct circle_shape {
 };
 
 struct circle_overlaps {
-  persistent_set<entity_id> overlaps;
+  time_steward_system::persistent_id_set overlaps;
 };
 
 poly distish(circle_shape const& c1, circle_shape const& c2) {
@@ -136,8 +136,8 @@ public:
     const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
     assert ((d < 0) == (magsq - (radsum*radsum) < 0));
     
-    persistent_set<entity_id>& c0_overlaps = accessor->get_mut<circle_overlaps>(e0)->overlaps;
-    persistent_set<entity_id>& c1_overlaps = accessor->get_mut<circle_overlaps>(e1)->overlaps;
+    time_steward_system::persistent_id_set& c0_overlaps = accessor->get_mut<circle_overlaps>(e0)->overlaps;
+    time_steward_system::persistent_id_set& c1_overlaps = accessor->get_mut<circle_overlaps>(e1)->overlaps;
     if (d < 0) {
       c0_overlaps.insert(id1);
       c1_overlaps.insert(id0);

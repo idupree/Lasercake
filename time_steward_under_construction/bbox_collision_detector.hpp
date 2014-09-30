@@ -413,16 +413,16 @@ struct ztree_node {
   zbox here;
   entity_id parent;
   std::array<entity_id, 2> children;
-  persistent_set<entity_id> objects_here;
+  time_steward_system::persistent_id_set objects_here;
 
   ztree_node(zbox box, entity_id parent):here(box),parent(parent){}
 };
 struct bbcd_entry_metadata {
-  persistent_set<entity_id> nodes;
+  time_steward_system::persistent_id_set nodes;
   bounding_box zboxes_union;
 };
 struct spatial_entity_metadata {
-  persistent_map<entity_id, bbcd_entry_metadata> data;
+  time_steward_system::persistent_id_map<bbcd_entry_metadata> data;
 };
 struct bbox_collision_detector_root_node {
   bbox_collision_detector_root_node(entity_id root_node_id_):root_node_id_(root_node_id_){}
@@ -517,7 +517,7 @@ public:
 private:
   
   static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
-                                    bbcd_entry_metadata& metadata, persistent_set<entity_id> nodes) {
+                                    bbcd_entry_metadata& metadata, time_steward_system::persistent_id_set nodes) {
     for (entity_id node_id : nodes) {
       entity_ref node_ref = accessor->get(node_id);
       auto& node = accessor->template get_mut<ztree_node>(node_ref);
@@ -587,7 +587,7 @@ private:
     entity_ref e;
     bbcd_entry_metadata& metadata;
   public:
-    update_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, persistent_set<entity_id> hint_nodes)
+    update_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, time_steward_system::persistent_id_set hint_nodes)
       :
       accessor_(accessor),
       bbcd_id(bbcd_id),
@@ -681,7 +681,7 @@ private:
       }
       metadata.zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
       
-      persistent_set<entity_id> old_nodes_to_remove = metadata.nodes;
+      time_steward_system::persistent_id_set old_nodes_to_remove = metadata.nodes;
       for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
         coordinate_array coords = bbox.min();
         for (num_coordinates_type j = num_dims_using_one_zbox_of_twice_base_box_size; j < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++j) {

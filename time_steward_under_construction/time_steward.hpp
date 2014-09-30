@@ -595,40 +595,53 @@ namespace std {
 namespace time_steward_system {
   
 
-template<typename MappedType, num_bits_type bits_per_level = 4>
+namespace persistent_siphash_id_trie_system {
+typedef uint32_t num_bits_type;
+template<typename KeyType, typename MappedType, bool IsMap> struct value_typer;
+template<typename KeyType, typename MappedType> struct value_typer<KeyType, MappedType, false> {
+  typedef KeyType type;
+};
+template<typename KeyType, typename MappedType> struct value_typer<KeyType, MappedType, true> {
+  typedef std::pair<KeyType, MappedType> type;
+};
+template<typename MappedType = void, num_bits_type bits_per_level = 4>
 class persistent_siphash_id_trie {
 public:
   typedef siphash_id key_type;
   typedef MappedType mapped_type;
-  typedef std::pair<key_type, mapped_type> value_type;
+  typedef typename value_typer<key_type, mapped_type, !std::is_void<mapped_type>::value>::type value_type;
 private:  
   typedef typename boost::uint_t<bits_per_level>::fast one_bit_per_child_t;
   typedef size_t ref_count_t;
   static const ref_count_t is_leaf_bit = 1ULL<<63;
   static const ref_count_t ref_count_mask = is_leaf_bit-1;
-  struct leaf {
+  struct leaf_t {
     template <class... Args>
-    leaf(Args&&... args):ref_count_and_is_leaf(is_leaf_bit),value(std::forward<Args>(args)...){}
+    leaf_t(Args&&... args):ref_count_and_is_leaf(is_leaf_bit),value(std::forward<Args>(args)...){}
     ref_count_t ref_count_and_is_leaf;
     value_type value;
+    template<typename Hack = void> std::enable_if_t< std::is_same<key_type, value_type>::value, key_type> id() { return value      ; }
+    template<typename Hack = void> std::enable_if_t<!std::is_same<key_type, value_type>::value, key_type> id() { return value.first; }
   };
-  struct node {
-    leaf():ref_count_and_is_leaf(0),children_exist(0){}
+  struct node_header {
+    node_header():ref_count_and_is_leaf(0),children_exist(0){}
     ref_count_t ref_count_and_is_leaf;
     one_bit_per_child_t children_exist;
   };
   class child_ptr {
   public:
-    //child_ptr():data(nullptr){}
-    child_ptr(void* data):data(data){ inc_ref(); }
-    ~child_ptr(){ --data->ref_count; }
+    child_ptr(){}
+    child_ptr(char* data):data(data){ inc_ref(); }
+    ~child_ptr(){ dec_ref(); }
     inline bool is_leaf()const { return (*(ref_count_t*)(data)) & is_leaf_bit; }
     child_ptr& operator=(child_ptr const& o){ dec_ref(); data = o.data; inc_ref(); }
-    leaf& leaf() { return (*(leaf*)(data)); }
-    node& node() { return (*(node*)(data)); }
-    child_ptr& child_by_idx(num_bits_type i) { return (*(child_ptr*)(data + sizeof(node) + i*sizeof(child_ptr))); }
+    leaf_t& leaf() { return (*(leaf_t*)(data)); }
+    node_header& node() { return (*(node_header*)(data)); }
+    child_ptr& child_by_idx(num_bits_type i) { return (*(child_ptr*)(data + sizeof(node_header) + i*sizeof(child_ptr))); }
     child_ptr& child_by_bit(num_bits_type b) { return child_by_idx(popcount(node().children_exist & (b-1))); }
     operator bool()const { return bool(data); }
+    bool operator==(child_ptr o)const { return data==o.data; }
+    bool operator!=(child_ptr o)const { return data!=o.data; }
   private:
     void inc_ref() {
       if (data) {
@@ -638,32 +651,32 @@ private:
     void dec_ref() {
       if (data && ((--(*(ref_count_t*)(data))) & ref_count_mask) == 0) {
         if (is_leaf()) {
-          leaf().~leaf();
+          leaf().~leaf_t();
         }
         else {
           const num_bits_type num_children = node().num_children();
           for (num_bits_type i = 0; i < num_children; ++i) {
             child_by_idx(i).~child_ptr();
           }
-          node().~node();
+          node().~node_header();
         }
         delete[] data;
       }
     }
   private:
-    void* data;
+    char* data;
   };
   template <class... Args>
   child_ptr allocate_leaf(Args&&... args) {
-    char* ptr = new char[sizeof(leaf)];
-    new(ptr) leaf(std::forward<Args>(args)...);
+    char* ptr = new char[sizeof(leaf_t)];
+    new(ptr) leaf_t(std::forward<Args>(args)...);
     return ptr;
   }
   child_ptr allocate_node(num_bits_type num_children) {
-    char* ptr = new char[sizeof(node) + num_children*sizeof(child_ptr)];
-    new(ptr) node();
+    char* ptr = new char[sizeof(node_header) + num_children*sizeof(child_ptr)];
+    new(ptr) node_header();
     for (num_bits_type i = 0; i < num_children; ++i) {
-      new(ptr + sizeof(node) + i*sizeof(child_ptr)) child_ptr();
+      new(ptr + sizeof(node_header) + i*sizeof(child_ptr)) child_ptr();
     }
     return ptr;
   }
@@ -673,98 +686,30 @@ private:
     return (id.data_[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
   }
   
-  template<class Alteration>
-  static child_ptr with_alteration(child_ptr ptr, siphash_id k, num_bits_type which_bits, Alteration alteration) {
-    if (!ptr) {
-      mapped_type const* m = alteration(nullptr);
-      return m ? allocate_leaf(k, *m) : nullptr;
-    }
-    else if (ptr.is_leaf()) {
-      siphash_id const& k1 = ptr.leaf().value.first;
-      if (k1 == k) {
-        mapped_type const* m = alteration(entry_ref(ptr));
-        if ((!m) || (*m != ptr.leaf().value.second)) {
-          return m ? allocate_leaf(k, *m) : nullptr;
-        }
-      }
-      else {
-        mapped_type const* m = alteration(nullptr);
-        if (m) {
-          num_bits_type child0 = which_child(k, which_bits);
-          num_bits_type child1 = which_child(k1, which_bits);
-          child_ptr result;
-          child_ptr split_at;
-          if (child0 == child1) {
-            split_at = result = allocate_node(1);
-            while (child0 == child1)
-              which_bits = which_bits - bits_per_level;
-              child0 = which_child(k, which_bits);
-              child1 = which_child(k1, which_bits);
-              child_ptr old_split_at = split_at;
-              split_at = allocate_node(1+(child0 != child1));
-              old_split_at.node().children_exist = 1<<0;
-              old_split_at.child_by_idx(0) = split_at;
-            }
-          }
-          else {
-            split_at = result = allocate_node(2);
-          }
-          split_at.node().children_exist == child0 | child1;
-          split_at.child_by_idx(child1_bit > child0_bit) = ptr;
-          split_at.child_by_idx(child0_bit > child1_bit) = allocate_leaf(k, *m);
-          return result;
-        }
-      }
-    }
-    else {
-      const num_bits_type child = which_child(k, which_bits);
-      const num_bits_type child_bit = 1 << child;
-      const bool child_exists = ptr.node().children_exist & child_bit;
-      child_ptr old_child = child_exists ? ptr.node().child_by_bit(child_bit) : nullptr;
-      child_ptr changed = with_alteration(old_child, k, which_bits - bits_per_level, alteration);
-      if (changed != old_child) {
-        const num_bits_type new_num_children = ptr.node().num_children() + (changed && !old_child) - (old_child && !changed);
-        if (new_num_children == 1 && changed.is_leaf()) {
-          return changed;
-        }
-        child_ptr result = allocate_node(new_num_children);
-        num_bits_type old_idx = 0;
-        num_bits_type new_idx = 0;
-        for (num_bits_type i = 0; i < (1<<bits_per_level); ++i) {
-          if (i == child) {
-            if (old_child) { ++old_idx; }
-            if (changed) {
-              result.node().children_exist |= 1 << i;
-              result.child_by_idx(new_idx++) = changed;
-            }
-          }
-          else if (ptr.node().children_exist & (1<<i)) {
-            result.node().children_exist |= 1 << i;
-            result.child_by_idx(new_idx++) = ptr.node().child_by_idx(old_idx++);
-          }
-        }
-        assert(result.node().num_children() == new_num_children);
-        return result;
-      }
-    }
-    return ptr;
-  }
-  
 public:
+  persistent_siphash_id_trie():root(nullptr){}
+  // Not set equality. Notably, though, trie.erase (something not in the trie) == trie.
+  bool operator==(persistent_siphash_id_trie o)const { return root==o.root; }
+  bool operator!=(persistent_siphash_id_trie o)const { return root!=o.root; }
+  bool empty()const { return bool(root); }
+  
   class iterator : public boost::iterator_facade<iterator, const value_type, boost::bidirectional_traversal_tag> {
     public:
       //iterator() : path_len(0) {}
+      operator bool()const { return id && back(); }
     private:
-      explicit iterator(child_ptr root):id(),path_len(1) { path[0] = root; }
+      explicit iterator(child_ptr root):path_len(1) { path[0] = root; }
       friend class boost::iterator_core_access;
+      friend class persistent_siphash_id_trie;
       
       // State: We can be
-      // 1) an iterator to an element (path is the path ending in the leaf, id redundant (== this->first))
+      // 1) an iterator to an element (path is the path ending in the leaf, id redundant (== this->first or *this))
       // 2) an iterator to an empty child (path is the path ending in nullptr, possibly with a leaf before it, id is needed to specify which child)
       // 3) the end iterator (path is the singleton root, id null)
       // --end is the last element, ++end is the first element
-      // TODO: what about the end iterator to an empty set?
+      // The empty set has one iterator which is its own next and prior.
       void increment() {
+        if (!path[0]) return;
         if (id) {
           --path_len;
           num_bits_type child = which_child(id, back_bits());
@@ -779,15 +724,16 @@ public:
             assert(back().node().children_exist & (1<<child));
           }
           
-          path[++path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) + 1);
+          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) + 1);
         }
         
         while (!back().is_leaf()) {
-          path[++path_len] = back().child_by_idx(0);
+          path[path_len++] = back().child_by_idx(0);
         }
-        id = back().leaf().value.first;
+        id = back().leaf().id();
       }
       void decrement() {
+        if (!path[0]) return;
         if (id) {
           --path_len;
           num_bits_type child = which_child(id, back_bits());
@@ -802,12 +748,12 @@ public:
             assert(back().node().children_exist & (1<<child));
           }
           
-          path[++path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) - 1);
+          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) - 1);
         }
         while (!back().is_leaf()) {
-          path[++path_len] = back().child_by_idx(back().num_children()-1);
+          path[path_len++] = back().child_by_idx(back().num_children()-1);
         }
-        id = back().leaf().value.first;
+        id = back().leaf().id();
       }
       bool equal(iterator const& other)const { return back() == other.back(); }
       value_type const& dereference()const { return back().leaf().value; }
@@ -820,51 +766,63 @@ public:
       num_bits_type path_len;
       std::array<child_ptr, 128/bits_per_level> path;
   };
-  iterator begin() { return iterator(this, 0); }
-  iterator end() { return iterator(this, size_); }
+  iterator begin()const { return ++iterator(root); }
+  iterator end()const { return iterator(root); }
   
-  typedef std::pair<entry_ref, bool> insert_result;
-  insert_result insert(value_type const& v) {
-    struct insert_func {
-      mapped_type const& m;
-      entry_ref& old_record;
-      insert_func(mapped_type const& m,mapped_type const*& old_record):m(m),old_record(old_record){}
-      mapped_type const* operator()(entry_ref old)const {
-        old_record = old;
-        if (old) { return old; }
-        return &m;
-      }
-    };
-    entry_ref old;
-    child_ptr new_root = with_alteration(root, v.first, 128-bits_per_level, insert_func(v.second, old));
-    if (new_root == root) {
-      return insert_result(old_record, false);
-    }
-    else {
-      root = new_root;
-      return insert_result(old_record, true);
-    }
+  template<typename Hack = void>
+  std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie> insert(key_type k)const {
+    return insert(find(k));
   }
-  
-  bool erase(key_type const& k) {
-    struct erase_func {
-      mapped_type const* operator()(mapped_type const* old)const {
-        return nullptr;
-      }
-    };
-    child_ptr new_root = with_alteration(root, k, 128-bits_per_level, erase_func());
-    if (new_root == root) {
-      return false;
-    }
-    else {
-      root = new_root;
-      return true;
-    }
+  template<typename Hack = void>
+  static std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie> insert(iterator const& i) {
+    return set_leaf(i, allocate_leaf(i.id));
   }
-  
+  template<class... Args>
+  persistent_siphash_id_trie emplace(key_type k, Args&&... args)const {
+    return emplace(find(k), std::forward<Args>(args)...);
+  }
   template<class... Args>
   static persistent_siphash_id_trie emplace(iterator const& i, Args&&... args) {
-    return set_leaf(i, allocate_leaf(i.id, args));
+    return set_leaf(i, allocate_leaf(i.id, std::forward<Args>(args)...));
+  }
+  persistent_siphash_id_trie erase(key_type k)const {
+    return erase(find(k));
+  }
+  static persistent_siphash_id_trie erase(iterator const& i) {
+    return unset_leaf(i);
+  }
+  iterator find(key_type k)const {
+    caller_correct_if(k, "You can't find() for the null ID");
+    iterator i(root);
+    i.id = k;
+    while (i.back()) {
+      if (i.back().is_leaf()) {
+        if (i.back().leaf().id() == k) {
+          return i;
+        }
+        else {
+          i.path[i.path_len++] = nullptr;
+        }
+      }
+      else {
+        const num_bits_type child_bit = 1<<which_child(i.id, i.back_bits());
+        if (i.back().node().children_exist & child_bit) {
+          i.path[i.path_len++] = i.back().child_by_bit(child_bit);
+        }
+        else {
+          i.path[i.path_len++] = nullptr;
+        }
+      }
+    }
+    return i;
+  }
+  iterator lower_bound(key_type k)const {
+    iterator i = find(k);
+    if (i) return i;
+    return ++i;
+  }
+  iterator upper_bound(key_type k)const {
+    return ++find(k);
   }
 private:
   static persistent_siphash_id_trie unset_leaf(iterator const& i) {
@@ -888,7 +846,7 @@ private:
       if (parent.is_leaf()) {
         --replacing_idx;
         num_bits_type which_bits = i.bits(replacing_idx);
-        const siphash_id k1 = parent.leaf().value.first;
+        const siphash_id k1 = parent.leaf().id();
         num_bits_type child0 = which_child(i.id, which_bits);
         num_bits_type child1 = which_child(k1, which_bits);
         child_ptr split_at;
@@ -913,7 +871,7 @@ private:
           split_at = walker = allocate_node(2);
         }
         split_at.node().children_exist == child0 | child1;
-        split_at.child_by_idx(child1 > child0) = ptr;
+        split_at.child_by_idx(child1 > child0) = parent;
         split_at.child_by_idx(child0 > child1) = new_leaf;
       }
       else {
@@ -934,25 +892,25 @@ private:
       const num_bits_type child_idx = which_child(i.id, which_bits);
       const num_bits_type child_bit = 1 << child_idx;
       assert (walker != old_child);
-      const num_bits_type new_num_children = ptr.node().num_children() + (walker && !old_child) - (old_child && !walker);
+      const num_bits_type new_num_children = old_parent.node().num_children() + (walker && !old_child) - (old_child && !walker);
       if (!((new_num_children == 1) && walker.is_leaf())) {
         child_ptr walker_parent = allocate_node(new_num_children);
         num_bits_type old_idx = 0;
         num_bits_type new_idx = 0;
         for (num_bits_type i = 0; i < (1<<bits_per_level); ++i) {
-          if (i == child) {
+          if (i == child_idx) {
             if (old_child) { ++old_idx; }
             if (walker) {
-              result.node().children_exist |= 1 << i;
-              result.child_by_idx(new_idx++) = walker;
+              walker_parent.node().children_exist |= 1 << i;
+              walker_parent.child_by_idx(new_idx++) = walker;
             }
           }
           else if (old_parent.node().children_exist & (1<<i)) {
-            result.node().children_exist |= 1 << i;
-            result.child_by_idx(new_idx++) = old_parent.node().child_by_idx(old_idx++);
+            walker_parent.node().children_exist |= 1 << i;
+            walker_parent.child_by_idx(new_idx++) = old_parent.node().child_by_idx(old_idx++);
           }
         }
-        assert(result.node().num_children() == new_num_children);
+        assert(walker_parent.node().num_children() == new_num_children);
         walker = walker_parent;
       }
       
@@ -961,9 +919,12 @@ private:
     
     return walker;
   }
-  
-  template<bool GetOldValue, bool InsertIfEmpty, bool ReplaceIfPresent, >
 };
+} // namespace persistent_siphash_id_trie_system
+
+typedef persistent_siphash_id_trie_system::persistent_siphash_id_trie<> persistent_id_set;
+template<typename T>
+using persistent_id_map = persistent_siphash_id_trie_system::persistent_siphash_id_trie<T>;
 
 template<typename IntType>
 struct combine_hash_with_integer {
@@ -1403,7 +1364,7 @@ private:
   template<typename Field>
   using field_throughout_time = std::map<extended_time, optional<Field>>;
   struct field_metadata_throughout_time {
-    std::map<extended_time, persistent_set<trigger_id>> triggers_pointing_at_this_changes;
+    std::map<extended_time, persistent_id_set> triggers_pointing_at_this_changes;
     std::set<extended_time> event_piles_which_accessed_this;
   };
   struct entity_throughout_time_info {
@@ -1610,14 +1571,13 @@ private:
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
-          persistent_set<trigger_id> new_triggers;
+          persistent_id_set new_triggers;
           const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower/upper bound shouldn't matter because there shouldn't be an entry now.
           if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
             new_triggers = boost::prior(next_triggers_iter)->second;
           }
-          new_triggers.insert(pile_info.tid);
           // Hack sZInnn3FkZy0yg: insert even if there's no change, so that the below code can catch it.
-          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
+          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers.insert(pile_info.tid)));
         }
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
@@ -1644,10 +1604,10 @@ private:
             }
             else {
               assert (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin());
-              persistent_set<trigger_id> new_triggers = boost::prior(next_triggers_iter)->second;
+              persistent_id_set new_triggers = boost::prior(next_triggers_iter)->second;
               const auto p2 = new_triggers.erase(pile_info.tid);
-              assert (p2);
-              metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
+              assert (p2 != new_triggers);
+              metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, p2));
             }
           }
         }
