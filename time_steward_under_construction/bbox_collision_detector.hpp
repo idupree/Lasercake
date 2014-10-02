@@ -421,15 +421,8 @@ struct bbcd_entry_metadata {
   time_steward_system::persistent_id_set nodes;
   bounding_box zboxes_union;
 };
-struct spatial_entity_metadata {
-  time_steward_system::persistent_id_map<bbcd_entry_metadata> data;
-};
-struct bbox_collision_detector_root_node {
-  bbox_collision_detector_root_node(entity_id root_node_id_):root_node_id_(root_node_id_){}
-  entity_id root_node_id_;
-};
-
-typedef time_steward_system::fields_list<ztree_node, spatial_entity_metadata, bbox_collision_detector_root_node> fields;
+struct bbox_collision_detector_root_node {};
+typedef time_steward_system::fields_list<ztree_node, time_steward_system::field_per_id<bbcd_entry_metadata>, time_steward_system::field<bbox_collision_detector_root_node, entity_id>> fields;
   
 // For the FuncsType to implement:
 //
@@ -474,7 +467,7 @@ private:
     void operator()(accessor* accessor)const override {
       entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
-      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
+      bbcd_entry_metadata const& metadata = *accessor->template get<bbcd_entry_metadata>(e, bbcd_id);
       const bounding_box bbox = funcs.bbox(accessor, e);
       if (!metadata.zboxes_union.subsumes(bbox)) {
         update_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
@@ -488,19 +481,14 @@ private:
 public:
   static entity_ref create_bbox_collision_detector(accessor* accessor) {
     entity_ref result = accessor->create_entity();
-    accessor->template set<bbox_collision_detector_root_node>(result, bbox_collision_detector_root_node(entity_id()));
+    accessor->template set<bbox_collision_detector_root_node>(result, entity_id());
     return result;
   }
   static void insert(accessor* accessor, entity_id bbcd_id, entity_ref e, entity_ref hint_object = entity_ref()) {
-    // TODO maybe time_steward can treat the different members of the outer_metadata map as different fields,
-    // (WRT access/back-in-time-change semantics) since we usually only want to access/modify one of them?
-    // Or is that too unlikely to be useful? Some sort of profiling may help later.
-    auto& outer_metadata = accessor->template get_mut<spatial_entity_metadata>(e);
-    if (!outer_metadata) { outer_metadata = spatial_entity_metadata(); }
-    bbcd_entry_metadata& metadata = outer_metadata->data[bbcd_id]; // default-construct
+    bbcd_entry_metadata& metadata = *accessor->template set<bbcd_entry_metadata>(e, bbcd_id, bbcd_entry_metadata()); // default-construct
     if (hint_object) {
       // hack: copy over the object's nodes as a hint for where to insert
-      metadata.nodes = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second.nodes;
+      metadata.nodes = accessor->template get<bbcd_entry_metadata>(e, bbcd_id)->nodes;
     }
     
     accessor->set_trigger(trigger_id::combining(bbcd_id, e.id()), std::shared_ptr<trigger>(new spatial_entity_changes_trigger(bbcd_id, e.id())));
@@ -509,9 +497,9 @@ public:
     accessor->set_trigger(trigger_id::combining(bbcd_id, e.id()));
     // TODO: what about the outstanding events?
     
-    bbcd_entry_metadata& metadata = accessor->template get_mut<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
+    bbcd_entry_metadata& metadata = *accessor->template get_mut<bbcd_entry_metadata>(e, bbcd_id);
     erase_from_nodes(accessor, bbcd_id, e, metadata, metadata->nodes);
-    accessor->template get_mut<spatial_entity_metadata>(e)->erase(bbcd_id);
+    accessor->template set<bbcd_entry_metadata>(e, bbcd_id, none);
   }
   
 private:
@@ -556,7 +544,7 @@ private:
         }
       }
       for (entity_id stolen_object_id : node->objects_here) {
-        auto& nodes = accessor->template get_mut<spatial_entity_metadata>(accessor->get(stolen_object_id))->data.find(bbcd_id)->second.nodes;
+        auto& nodes = accessor->template get_mut<bbcd_entry_metadata>(accessor->get(stolen_object_id), bbcd_id)->nodes;
         nodes.erase(stolen_node_id);
         nodes.insert(node_ref.id());
       }
@@ -574,7 +562,7 @@ private:
         maybe_squish_node(accessor, bbcd_id, parent_ref);
       }
       else {
-        accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), bbox_collision_detector_root_node(entity_id()));
+        accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), entity_id());
       }
       node = none;
     }
@@ -592,9 +580,9 @@ private:
       accessor_(accessor),
       bbcd_id(bbcd_id),
       e(e),
-      metadata(accessor->template get_mut<spatial_entity_metadata>(e)->data[bbcd_id])
+      metadata(*accessor->template get_mut<bbcd_entry_metadata>(e, bbcd_id))
     {
-      optional<bbox_collision_detector_root_node> const* root = nullptr;
+      optional<entity_id> const* root = nullptr;
       if (hint_nodes.empty()) {
         root = &accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id));
       }
@@ -698,13 +686,13 @@ private:
         //if (zb.overlaps(bbox)) {
           entity_ref best_hint_ref;
           if (hint_nodes.empty()) {
-            if ((*root) && (*root)->root_node_id_) {
-              best_hint_ref = accessor->get((*root)->root_node_id_);
+            if ((*root) && (**root)) {
+              best_hint_ref = accessor->get(**root);
             }
             else {
               best_hint_ref = accessor->create_entity();
               accessor->template set<ztree_node>(best_hint_ref, ztree_node(zb, entity_id()));
-              accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), bbox_collision_detector_root_node(best_hint_ref.id()));
+              accessor->template set<bbox_collision_detector_root_node>(accessor->get(bbcd_id), best_hint_ref.id());
             }
           }
           else {
@@ -788,7 +776,7 @@ private:
         }
       }
       else {
-        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), bbox_collision_detector_root_node(new_node_ref.id()));
+        accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), new_node_ref.id());
       }
       
       assert_if_ASSERT_EVERYTHING(new_node->here.num_low_bits() > node->here.num_low_bits());
@@ -822,7 +810,7 @@ private:
       // Never find interactions with yourself:
       interaction_possibilities_already_found.insert(e.id());
       
-      bbcd_entry_metadata const& metadata = accessor->template get<spatial_entity_metadata>(e)->data.find(bbcd_id)->second;
+      bbcd_entry_metadata const& metadata = *accessor->template get<bbcd_entry_metadata>(e, bbcd_id);
       accessor->anticipate_event(funcs.escape_time(accessor, e, metadata.zboxes_union), std::shared_ptr<event>(new spatial_entity_escapes_its_zboxes(bbcd_id, e.id())));
       for (entity_id node_id : metadata.nodes) {
         entity_ref node_ref = accessor->get(node_id);
@@ -1041,7 +1029,7 @@ public:
   template<typename GetCost>
   static inline boost::iterator_range<iterator<GetCost>> iterate(accessor const* accessor, entity_id bbcd_id, GetCost const& getcost) {
     typedef iterator<GetCost> iter;
-    boost::iterator_range<iter> result(iter(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, getcost), iter());
+    boost::iterator_range<iter> result(iter(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost), iter());
     return result;
   }
   
@@ -1049,14 +1037,14 @@ public:
   static inline boost::optional<typename iterator<GetCost>::value_type> find_least(accessor const* accessor, entity_id bbcd_id, GetCost const& getcost) {
     typedef iterator<GetCost> iter;
     typedef boost::optional<typename iterator<GetCost>::value_type> result_type;
-    iter i(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, getcost);
+    iter i(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost);
     return i ? result_type(*i) : result_type();
   }
 
   template<typename GetCostBool>
   static inline std::unordered_set<entity_id> filter(accessor const* accessor, entity_id bbcd_id, GetCostBool getcost) {
     std::unordered_set<entity_id> results;
-    filter_impl(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, results, getcost);
+    filter_impl(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), results, getcost);
     return results;
   }
 }; // struct operations

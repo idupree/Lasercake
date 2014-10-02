@@ -947,7 +947,7 @@ typedef siphash_id entity_id;
 typedef siphash_id trigger_id;
 const entity_id global_object_id = siphash_id::least();
 
-typedef size_t field_id;
+typedef size_t field_base_id;
 template<typename T>
 using optional = boost::optional<T>;
 using boost::none;
@@ -957,6 +957,7 @@ namespace fields_list_impl {
   class empty_fields_list_nature : public fields_list_nature_base {};
   class nonempty_fields_list_nature : public fields_list_nature_base {};
   class generic_input_nature : public fields_list_nature_base {};
+  class fields_list_entry_nature : public fields_list_nature_base {};
   
   struct two { char c[2]; };
   template<class T> std::enable_if_t<std::is_base_of<fields_list_nature_base, typename T::fields_list_nature>::value, char> test(int);
@@ -966,32 +967,63 @@ namespace fields_list_impl {
   template<class T> struct get_fields_list_nature { typedef typename get_fields_list_nature_impl<T, sizeof(test<T>(0))==1>::type type; };
   
   
+  
+  template<typename IdentifyingType, typename InnerDataType = IdentifyingType, bool PerID = false> class fields_list_entry;
+  template<typename IdentifyingType, typename InnerDataType>
+  class fields_list_entry<IdentifyingType, InnerDataType, false> {
+  public:
+    typedef fields_list_entry_nature fields_list_nature;
+    typedef IdentifyingType identifying_type;
+    typedef InnerDataType inner_data_type;
+    static const bool per_id = false;
+    template<template<typename> class Data> struct data {
+      typedef Data<inner_data_type> type;
+      Data<inner_data_type>& get(type& t){ return t; }
+    };
+  };
+  template<typename IdentifyingType, typename InnerDataType>
+  class fields_list_entry<IdentifyingType, InnerDataType, true> {
+  public:
+    typedef fields_list_entry_nature fields_list_nature;
+    typedef IdentifyingType identifying_type;
+    typedef InnerDataType inner_data_type;
+    static const bool per_id = true;
+    template<template<typename> class Data> struct data {
+      typedef persistent_id_map<Data<inner_data_type>> type;
+      Data<inner_data_type>& get(type& t, siphash_id id){ return t[id]; }
+    };
+  };
+  
+  template<typename Input, typename InputNature> struct make_fields_list_entry;
+  template<typename Input> struct make_fields_list_entry<Input, generic_input_nature> { typedef fields_list_entry<Input, optional<Input>> type; };
+  template<typename Input> struct make_fields_list_entry<Input, fields_list_entry_nature> { typedef Input type; };
+  
   template<typename ...Input> class make_fields_list;
-  template<typename HeadNature, typename ...Input> class make_fields_list_contents;
+  template<typename HeadNature, typename Head, typename ...Tail> class make_fields_list_contents;
   
   class empty_fields_list {
   public:
     typedef empty_fields_list_nature fields_list_nature;
     static const size_t size = 0;
-    //template<typename T> static constexpr field_id idx_of() { static_assert(false, "No field of that type exists"); }
+    //template<typename T> static constexpr field_base_id idx_of() { static_assert(false, "No field of that type exists"); }
     // TODO find a way to make invalid-field errors more readable
   };
   template<typename Head, typename ...Tail>
   class nonempty_fields_list {
   public:
     typedef nonempty_fields_list_nature fields_list_nature;
-    typedef Head head;
+    typedef typename make_fields_list_entry<Head, typename get_fields_list_nature<Head>::type>::type head;
     typedef typename make_fields_list<Tail...>::type tail;
-    static const field_id idx = tail::size;
+    static const field_base_id idx = tail::size;
     static const size_t size = tail::size + 1;
-    template<typename T> static constexpr std::enable_if_t< std::is_same<T, head>::value, field_id> idx_of() { return idx; }
-    template<typename T> static constexpr std::enable_if_t<!std::is_same<T, head>::value, field_id> idx_of() { return tail::template idx_of<T>(); }
+    template<typename T> static constexpr std::enable_if_t< std::is_same<T, typename head::identifying_type>::value, field_base_id> idx_of() { return idx; }
+    template<typename T> static constexpr std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value, field_base_id> idx_of() { return tail::template idx_of<T>(); }
   };
   
-  template<typename ...Input>
-  struct make_fields_list_contents<   empty_fields_list_nature,      Input...> { typedef    empty_fields_list                type; };
+  template<typename HeadNature, typename Head, typename ...Tail>
+  struct make_fields_list_contents                                             { typedef nonempty_fields_list<Head, Tail...> type; };
   template<typename Head, typename ...Tail>
-  struct make_fields_list_contents<       generic_input_nature, Head, Tail...> { typedef nonempty_fields_list<Head, Tail...> type; };
+  struct make_fields_list_contents<   empty_fields_list_nature, Head, Tail...> { typedef    empty_fields_list                type; };
   template<typename Head, typename ...Tail>
   struct make_fields_list_contents<nonempty_fields_list_nature, Head, Tail...> {
     typedef typename make_fields_list<typename Head::head, typename Head::tail, Tail...>::type type;
@@ -1002,44 +1034,93 @@ namespace fields_list_impl {
   template<typename Head, typename ...Tail>
   struct make_fields_list<Head, Tail...> { typedef typename make_fields_list_contents<typename get_fields_list_nature<Head>::type, Head, Tail...>::type type; };
   
+  template<typename FieldsList, typename FieldID> struct get_field_entry;
+  template<typename FieldsList, typename FieldID, bool Same> struct get_field_entry_impl;
+  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, true> { typedef typename FieldsList::head type; };
+  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, false> { typedef typename get_field_entry<typename FieldsList::tail, FieldID>::type type; };
+  template<typename FieldsList, typename FieldID> struct get_field_entry {
+    typedef typename get_field_entry_impl<FieldsList, FieldID, std::is_same<FieldID, typename FieldsList::head::identifying_type>::value>::type type;
+  };
+  template<typename FieldsList, typename FieldID>
+  using field_entry = typename get_field_entry<FieldsList, FieldID>::type;
+  template<typename FieldsList, typename FieldID>
+  using field_data = typename field_entry<FieldsList, FieldID>::inner_data_type;
 
-  template<class FieldsList, template<typename> class repeated>
+  template<typename T> using identity = T;
+  template<class FieldsList, template<typename> class repeated = identity>
   class foreach_field {
     typedef typename FieldsList::head head;
-    repeated<head> head_;
+    typename head::template data<repeated>::type head_;
     foreach_field<typename FieldsList::tail, repeated> tail_;
   public:
-    template<typename T> inline std::enable_if_t< std::is_same<T, head>::value, repeated<T>&> get() { return head_; }
-    template<typename T> inline std::enable_if_t<!std::is_same<T, head>::value, repeated<T>&> get() { return tail_.get<T>(); }
-    template<typename T> inline std::enable_if_t< std::is_same<T, head>::value, repeated<T> const&> get()const { return head_; }
-    template<typename T> inline std::enable_if_t<!std::is_same<T, head>::value, repeated<T> const&> get()const { return tail_.get<T>(); }
+    template<typename T, typename... Ext> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
+    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return head::template data<repeated>::get(head_, ext...); }
+    template<typename T, typename... Ext> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
+    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return tail_.get<T>(ext...); }
+    template<typename T, typename... Ext> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
+    repeated<field_data<FieldsList, T>> const&> get(Ext... ext)const { return head::template data<repeated>::get(head_, ext...); }
+    template<typename T, typename... Ext> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
+    repeated<field_data<FieldsList, T>> const&> get(Ext... ext)const { return tail_.get<T>(ext...); }
   };
   template<template<typename> class repeated>
-  class foreach_field<empty_fields_list, repeated> {
-    //template<typename T> inline repeated<T>& get() { static_assert(false, "No field of that type exists"); }
-    //template<typename T> inline repeated<T> const& get()const { static_assert(false, "No field of that type exists"); }
+  class foreach_field<empty_fields_list, repeated> {};
+  
+  template<class FieldsList, template<typename> class repeated = identity>
+  class foreach_field_base {
+    typedef typename FieldsList::head head;
+    repeated<typename head::inner_data_type> head_;
+    foreach_field_base<typename FieldsList::tail, repeated> tail_;
+  public:
+    template<typename T> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
+    field_data<FieldsList, T>      &> get()      { return head_; }
+    template<typename T> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
+    field_data<FieldsList, T>      &> get()      { return tail_.get<T>(); }
+    template<typename T> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
+    field_data<FieldsList, T> const&> get()const { return head_; }
+    template<typename T> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
+    field_data<FieldsList, T> const&> get()const { return tail_.get<T>(); }
   };
+  template<template<typename> class repeated>
+  class foreach_field_base<empty_fields_list, repeated> {};
   
   template<class FieldsList, typename repeated>
-  class foreach_field_array : public std::array<repeated, FieldsList::size> {
+  class foreach_field_base_array : public std::array<repeated, FieldsList::size> {
   public:
     template<typename T> inline repeated& get() { return (*this)[FieldsList::template idx_of<T>()]; }
     template<typename T> inline repeated const& get()const { return (*this)[FieldsList::template idx_of<T>()]; }
   };
   
   template<class FieldsList, class FuncClass>
-  class function_array : public foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)> {
+  using func_type = decltype(FuncClass::template func<typename FieldsList::head::identifying_type>)*;
+  template<class FieldsList, class FuncClass>
+  class function_array : public foreach_field_base_array<FieldsList, func_type<FieldsList, FuncClass>> {
   public:
     function_array() { add_fptr<FieldsList>(); }
   private:
     template<class SubList> inline std::enable_if_t<!std::is_same<SubList, empty_fields_list>::value> add_fptr() {
-      foreach_field_array<FieldsList, decltype(&FuncClass::template func<typename FieldsList::head>)>::template get<typename SubList::head>() = &FuncClass::template func<typename SubList::head>;
+      typedef typename SubList::head::identifying_type T;
+      foreach_field_base_array<FieldsList, func_type<FieldsList, FuncClass>>::template get<T>() = &FuncClass::template func<T>;
       add_fptr<typename SubList::tail>();
     }
     template<class SubList> inline std::enable_if_t< std::is_same<SubList, empty_fields_list>::value> add_fptr() {}
   };
 }
 template<typename ...Input> using fields_list = typename fields_list_impl::make_fields_list<Input...>::type;
+template<typename IdentifyingType, typename InnerDataType = IdentifyingType>
+using field        = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, false>;
+template<typename IdentifyingType, typename InnerDataType = IdentifyingType>
+using field_per_id = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, true>;
+template<typename FieldsList, typename FieldID>
+using field_data = fields_list_impl::field_data<FieldsList, FieldID>;
+
+struct field_id {
+  field_id(field_base_id base):base(base),which(){}
+  field_id(field_base_id base, siphash_id which):base(base),which(which){}
+  field_base_id base;
+  siphash_id which;
+  bool operator==(field_id const& o)const { return (base == o.base) && (which == o.which); }
+};
+
 struct entity_field_id {
   entity_field_id(entity_id e, field_id f):e(e),f(f){}
   entity_id e;
@@ -1053,7 +1134,7 @@ namespace std {
   class hash<time_steward_system::entity_field_id> {
     public:
     size_t operator()(time_steward_system::entity_field_id const& i)const {
-      return std::hash<time_steward_system::siphash_id>()(i.e) + i.f;
+      return std::hash<time_steward_system::siphash_id>()(i.e) ^ std::hash<time_steward_system::siphash_id>()(i.f.which) ^ i.f.base;
     }
   };
 }
@@ -1089,16 +1170,15 @@ private:
     }
   };
   
-  template<typename Field>
-  using field_info = optional<Field>;
-  /*struct field_info {
-    Field data;
-  };*/
+  template<typename FieldData>
+  struct field_info {
+    FieldData value;
+    field_metadata metadata;
+  };
     
   struct entity_info {
     entity_id id;
     fields_list_impl::foreach_field<entity_fields, field_info> fields;
-    fields_list_impl::foreach_field_array<entity_fields, field_metadata> metadata;
   };
   
 public:
@@ -1114,14 +1194,26 @@ public:
   };
   
 private:
-  template<typename Field>
-  inline optional<Field>& get_impl(entity_ref e)const {
-    const field_id idx = entity_fields::template idx_of<Field>();
-    optional<Field>& result = e.data->fields.get<Field>();
+  template<typename FieldID, typename... Ext>
+  inline field_data<entity_fields, FieldID>& get_impl(entity_ref e, bool modified, Ext... ext)const {
+    const field_id idx(entity_fields::template idx_of<FieldID>(), ext...);
+    auto& f = e.data->fields.get<FieldID>(ext...);
+    auto& result = f.value;
     const entity_field_id id(e.id(), idx);
-    if (e.data->metadata[idx].accessed(*this, id)) {
-      result = ts_->template get_provisional_entity_field_before<Field>(e.id(), time_);
+    if (f.metadata.accessed(*this, id)) {
+      result = ts_->template get_provisional_entity_field_before<FieldID>(e.id(), time_, ext...);
     }
+    if (modified) { f.metadata.modified(*this, id); }
+    return result;
+  }
+  template<typename FieldID, typename... Ext>
+  inline field_data<entity_fields, FieldID>& set_impl(entity_ref e, field_data<entity_fields, FieldID> new_contents, Ext... ext) {
+    const field_id idx(entity_fields::template idx_of<FieldID>(), ext...);
+    auto& f = e.data->fields.get<FieldID>(ext...);
+    auto& result = f.value;
+    const entity_field_id id(e.id(), idx);
+    f.metadata.modified(*this, id);
+    result = new_contents;
     return result;
   }
   
@@ -1132,21 +1224,14 @@ public:
     return entity_ref(&e);
   }
   
-  template<typename Field> inline optional<Field> const& get    (entity_ref e)const { return get_impl<Field>(e); }
-  template<typename Field> inline optional<Field>      & get_mut(entity_ref e) {
-    optional<Field>& result = get_impl<Field>(e);
-    const field_id idx = entity_fields::template idx_of<Field>();
-    e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
-    return result;
-  }
-  template<typename Field>
-  inline optional<Field>& set(entity_ref e, optional<Field> new_contents) {
-    const field_id idx = entity_fields::template idx_of<Field>();
-    e.data->metadata[idx].modified(*this, entity_field_id(e.id(), idx));
-    optional<Field>& result = e.data->fields.get<Field>();
-    result = new_contents;
-    return result;
-  }
+  template<typename FieldID, typename... Ext>
+  inline field_data<entity_fields, FieldID> const& get    (entity_ref e, Ext... ext)const { return get_impl<FieldID>(e, false, ext...); }
+  template<typename FieldID, typename... Ext>
+  inline field_data<entity_fields, FieldID>      & get_mut(entity_ref e, Ext... ext)      { return get_impl<FieldID>(e,  true, ext...); }
+  template<typename FieldID>
+  inline field_data<entity_fields, FieldID>& set(entity_ref e,                   field_data<entity_fields, FieldID> new_contents) { return set_impl<FieldID>(e, new_contents       ); }
+  template<typename FieldID>
+  inline field_data<entity_fields, FieldID>& set(entity_ref e, siphash_id which, field_data<entity_fields, FieldID> new_contents) { return set_impl<FieldID>(e, new_contents, which); }
   
   void anticipate_event(time_type when, std::shared_ptr<const event> e) {
     assert(is_trigger_); // TODO an exception
@@ -1336,7 +1421,7 @@ private:
     std::set<extended_time> anticipated_events;
   };
   struct event_pile_info {
-    event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id()) :
+    event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id::null()) :
       instigating_event (instigating_event),
       tid(tid),
       creation_cut_off (0),
@@ -1354,22 +1439,21 @@ private:
   
   // statics must also be declared outside the class like other globals
   //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
-  /*static*/ const fields_list_impl::foreach_field<entity_fields, optional> field_absent;
+  /*static*/ const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity> field_absent;
   /*maybe we could use this hack:
-  static const fields_list_impl::foreach_field<entity_fields, optional>& field_absent() {
-    static const fields_list_impl::foreach_field<entity_fields, optional> f;
+  static const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity>& field_absent() {
+    static const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity> f;
     return f;
   }*/
   
-  template<typename Field>
-  using field_throughout_time = std::map<extended_time, optional<Field>>;
   struct field_metadata_throughout_time {
     std::map<extended_time, persistent_id_set> triggers_pointing_at_this_changes;
     std::set<extended_time> event_piles_which_accessed_this;
   };
+  template<typename Field>
+  using field_throughout_time = std::map<extended_time, optional<Field>>;
   struct entity_throughout_time_info {
     fields_list_impl::foreach_field<entity_fields, field_throughout_time> fields;
-    fields_list_impl::foreach_field_array<entity_fields, field_metadata_throughout_time> metadata;
   };
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
@@ -1414,9 +1498,10 @@ private:
       ++p.first->second.field_changes_andor_creations_triggering_this;
     }
   }
-  void update_triggers(bool undoing, entity_throughout_time_info& dst, field_id id, extended_time field_change_time) {
-    const auto next_triggers_iter = dst.metadata[id].triggers_pointing_at_this_changes.lower_bound(field_change_time);
-    if (next_triggers_iter == dst.metadata[id].triggers_pointing_at_this_changes.begin()) return;
+  void update_triggers(bool undoing, entity_field_id id, extended_time field_change_time) {
+    auto& metadata = get_field_metadata_throughout_time(id);
+    const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(field_change_time);
+    if (next_triggers_iter == metadata.triggers_pointing_at_this_changes.begin()) return;
     const auto triggers_iter = boost::prior(next_triggers_iter);
     for (auto tid : triggers_iter->second) {
       update_trigger(undoing, tid, field_change_time);
@@ -1424,20 +1509,39 @@ private:
   }
   
   struct copy_field_change_from_accessor {
-    template<typename Field>
-    static void func(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_throughout_time_info& dst) {
-      const auto p = dst.fields.template get<Field>().insert(std::make_pair(time, src.template get<Field>()));
+    template<typename FieldID>
+    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id).insert(std::make_pair(time, src.template get<FieldID>()));
       assert(p.second);
-      ts->update_triggers(false, dst, entity_fields::template idx_of<Field>(), time);
+    }
+    template<typename FieldID>
+    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id, which).insert(std::make_pair(time, src.template get<FieldID>(which)));
+      assert(p.second);
+    }
+    template<typename FieldID>
+    static void func(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
+      impl<FieldID>(ts, time, src, id, which);
     }
   };
   struct undo_field_change {
-    template<typename Field>
-    static void func(time_steward* ts, extended_time time, entity_throughout_time_info& dst) {
-      const auto change_iter = dst.fields.template get<Field>().find(time);
-      assert (change_iter != dst.fields.template get<Field>().end());
-      ts->update_triggers(true, dst, entity_fields::template idx_of<Field>(), time);
-      dst.fields.template get<Field>().erase(change_iter);
+    template<typename FieldID>
+    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id).erase(time);
+      assert(p);
+    }
+    template<typename FieldID>
+    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id, which).erase(time);
+      assert(p);
+    }
+    template<typename FieldID>
+    static void func(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
+      impl<FieldID>(ts, time, id, which);
     }
   };
   
@@ -1450,6 +1554,16 @@ private:
   // because it's just for looking up events whose times we know.
   typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
   typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
+  typedef std::unordered_map<entity_field_id, entity_throughout_time_info> field_metadata_map;
+  entities_map entities;
+  field_metadata_map field_metadata;
+  template<typename Field, typename... Ext>
+  field_throughout_time<Field>& get_field_throughout_time(entity_id const& id, Ext... ext) {
+    return entities[id].fields.template get<Field>(ext...);
+  }
+  field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
+    return field_metadata[id];
+  }
 public:
   time_steward() {}
   
@@ -1492,7 +1606,6 @@ public:
     update_through_time(get_base_time_end(time));
   }
 private:
-  entities_map entities;
   event_piles_map event_piles;
   std::set<extended_time> event_piles_not_correctly_executed;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
@@ -1513,14 +1626,16 @@ private:
     update_until_time(time);
     return get_provisional_entity_data_before(id, time);
   }*/
-  template<typename Field>
-  optional<Field> const& get_provisional_entity_field_before(entity_id id, extended_time time)const {
+  template<typename FieldID, typename... Ext>
+  field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time time, Ext... ext)const {
     const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) { return field_absent.template get<Field>(); }
+    if (entity_stream_iter == entities.end()) { return field_absent.template get<FieldID>(); }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto next_change_iter = e.fields.template get<Field>().upper_bound(time);
-    if (next_change_iter == e.fields.template get<Field>().begin()) { return field_absent.template get<Field>(); }
+    const auto f = e.fields.template get<FieldID>(ext...);
+    
+    const auto next_change_iter = f.changes.upper_bound(time);
+    if (next_change_iter == f.changes.begin()) { return field_absent.template get<FieldID>(); }
     return boost::prior(next_change_iter)->second;
   }
   
@@ -1567,7 +1682,7 @@ private:
       
       for (entity_field_id const& id : a.entity_fields_preexisting_state_accessed) {
         pile_info.entity_fields_pile_accessed.insert(id);
-        auto& metadata = entities[id.e].metadata[id.f];
+        auto& metadata = get_field_metadata_throughout_time(id);
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
@@ -1582,7 +1697,8 @@ private:
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
         pile_info.entity_fields_pile_modified.insert(id);
-        (*copy_field_change_from_accessor_funcs[id.f])(this, time, a.entities.find(id.e)->second.fields, entities[id.e]);
+        (*copy_field_change_from_accessor_funcs[id.f.base])(this, time, a.entities.find(id.e)->second.fields, id.e, id.f.which);
+        update_triggers(false, id, time);
       }
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
         pile_info.triggers_changed.insert(t.first);
@@ -1597,7 +1713,7 @@ private:
         }
         if (call_iter != trigger_info.begin()) {
           for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
-            auto& metadata = entities[former_trigger_access.e].metadata[former_trigger_access.f];
+            auto& metadata = get_field_metadata_throughout_time(former_trigger_access);
             const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower_bound: we want to find the entry at this time
             if ((next_triggers_iter != metadata.triggers_pointing_at_this_changes.end()) && (next_triggers_iter->first == time)) {
               // Hack sZInnn3FkZy0yg: we inserted above, so don't remove now.
@@ -1633,7 +1749,7 @@ private:
     if (!pile_info.has_been_executed) return false;
     
     for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
-      auto& metadata = entities.find(id.e)->second.metadata[id.f];
+      auto& metadata = get_field_metadata_throughout_time(id);
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
       assert(j);
       if (pile_info.tid) {
@@ -1641,7 +1757,8 @@ private:
       }
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-      (*undo_field_change_funcs[id.f])(this, time, entities.find(id.e)->second);
+      (*undo_field_change_funcs[id.f.base])(this, time, id.e, id.f.which);
+      update_triggers(true, id, time);
     }
     for (trigger_id const& tid : pile_info.triggers_changed) {
       update_trigger(true, tid, time);
@@ -1655,7 +1772,7 @@ private:
       call_iter->second.anticipated_events.clear();
       if (call_iter != trigger_info.begin()) {
         for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
-          auto& metadata = entities.find(former_trigger_access.e)->second.metadata[former_trigger_access.f];
+          auto& metadata = get_field_metadata_throughout_time(former_trigger_access);
           metadata.triggers_pointing_at_this_changes.erase(time);
         }
       }

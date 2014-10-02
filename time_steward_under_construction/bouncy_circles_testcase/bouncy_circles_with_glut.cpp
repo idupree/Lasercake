@@ -92,7 +92,7 @@ void draw_time(gl_triangles& triangles, time_steward& w, time_type time, gl_data
         (cube_size*time/view_duration)-cube_size/2,
         x + std::cos(theta)*rad,
         y + std::sin(theta)*rad,
-        accessor->get<circle_overlaps>(e)->overlaps.empty() ? color : gl_data_format::color(0x00ffffb0)));
+        accessor->get<circle_overlaps>(e)->empty() ? color : gl_data_format::color(0x00ffffb0)));
     }
     push_wireframe_polygon(triangles, rad/5, polygon);
   }

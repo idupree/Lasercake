@@ -71,9 +71,7 @@ struct circle_shape {
   poly radius;
 };
 
-struct circle_overlaps {
-  time_steward_system::persistent_id_set overlaps;
-};
+struct circle_overlaps {};
 
 poly distish(circle_shape const& c1, circle_shape const& c2) {
   const auto d = c1.center - c2.center;
@@ -89,7 +87,7 @@ struct global_data {
 };
 
 typedef bbox_collision_detector_system<64, num_dimensions> bbcd_system;
-typedef time_steward_system::fields_list<global_data, circle_shape, circle_overlaps, bbcd_system::fields> fields;
+typedef time_steward_system::fields_list<global_data, circle_shape, time_steward_system::field<circle_overlaps, time_steward_system::persistent_id_set>, bbcd_system::fields> fields;
 typedef time_steward_system::time_steward<fields> time_steward;
 typedef time_steward::accessor accessor;
 typedef time_steward::event event;
@@ -99,7 +97,7 @@ typedef accessor::entity_ref entity_ref;
 void update_acceleration(accessor* accessor, entity_ref e) {
   fd_vector new_acceleration(0,0);
   circle_shape& c0 = *accessor->get_mut<circle_shape>(e);
-  for (entity_id other_id : accessor->get<circle_overlaps>(e)->overlaps) {
+  for (entity_id other_id : *accessor->get<circle_overlaps>(e)) {
     auto other = accessor->get(other_id);
     circle_shape const& c1 = *accessor->get<circle_shape>(other);
     const fd_vector diff = (c0.center - c1.center).get_term<space_coordinate>(accessor->now(), 0);
@@ -136,8 +134,8 @@ public:
     const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
     assert ((d < 0) == (magsq - (radsum*radsum) < 0));
     
-    time_steward_system::persistent_id_set& c0_overlaps = accessor->get_mut<circle_overlaps>(e0)->overlaps;
-    time_steward_system::persistent_id_set& c1_overlaps = accessor->get_mut<circle_overlaps>(e1)->overlaps;
+    time_steward_system::persistent_id_set& c0_overlaps = *accessor->get_mut<circle_overlaps>(e0);
+    time_steward_system::persistent_id_set& c1_overlaps = *accessor->get_mut<circle_overlaps>(e1);
     if (d < 0) {
       c0_overlaps.insert(id1);
       c1_overlaps.insert(id0);
@@ -258,7 +256,7 @@ public:
         poly_fd_vector(poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(xv)), poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(yv))),
         poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>((50+(rand()%100))*arena_width/5000)) // 1-3% the width of the arena
       ));
-      accessor->set<circle_overlaps>(e, circle_overlaps());
+      accessor->set<circle_overlaps>(e, time_steward_system::persistent_id_set());
       bbcd_operations::insert(accessor, bbcd.id(), e);
     }
   }
