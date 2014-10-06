@@ -538,6 +538,7 @@ inline int32_t popcount(uint64_t argument)  {
   n = (n & mask5) + ((n >> (1<<5)) & mask5);
   return int32_t(n);
 }
+
 inline int32_t popcount(uint32_t argument)  {
   static const uint32_t mask0 = 0x55555555;
   static const uint32_t mask1 = 0x33333333;
@@ -573,6 +574,49 @@ inline int32_t popcount(uint8_t argument)  {
   n = (n & mask1) + ((n >> (1<<1)) & mask1);
   n = (n & mask2) + ((n >> (1<<2)) & mask2);
   return int32_t(n);
+}
+
+// assumes that int, long and long long are all either 32 or 64 bits
+// and that the uint{32,64} typedefs use these types
+static_assert(sizeof(int) == 4, "fixme");
+static_assert(sizeof(long long) == 8, "fixme");
+static_assert(sizeof(long) == 4 || sizeof(long) == 8, "fixme");
+static_assert(sizeof(int) == sizeof(unsigned int), "fixme");
+static_assert(sizeof(long long) == sizeof(unsigned long long), "fixme");
+static_assert(sizeof(long) == sizeof(unsigned long), "fixme");
+static_assert(
+  std::is_same<uint64_t, unsigned long>::value ||
+  std::is_same<uint64_t, unsigned long long>::value, "fixme");
+static_assert(
+  std::is_same<uint32_t, unsigned long>::value ||
+  std::is_same<uint32_t, unsigned int>::value, "fixme");
+
+typedef typename std::conditional<
+  std::is_same<uint64_t, unsigned long>::value,
+  unsigned long long,
+  typename std::conditional<
+    std::is_same<uint32_t, unsigned long>::value,
+    unsigned int,
+    unsigned long
+  >::type>::type
+  other_uint_type;
+typedef typename std::conditional<
+  std::is_same<uint64_t, unsigned long>::value,
+  unsigned long,
+  typename std::conditional<
+    std::is_same<uint32_t, unsigned long>::value,
+    unsigned long,
+    std::conditional<
+      (sizeof(unsigned long) == 4),
+      unsigned int, unsigned long
+  >::type>::type>::type
+  main_uint_type_of_other_uint_type;
+
+static_assert(sizeof(other_uint_type) == sizeof(main_uint_type_of_other_uint_type), "bug");
+static_assert(!std::is_same<other_uint_type, main_uint_type_of_other_uint_type>::value, "bug");
+
+inline int32_t popcount(other_uint_type argument) {
+  return popcount(main_uint_type_of_other_uint_type(argument));
 }
 
 
