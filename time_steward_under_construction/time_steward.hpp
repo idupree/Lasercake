@@ -289,7 +289,7 @@ private:
   entry_ref(entry<ValueType>* data):data(data){ ++data->ref_count; }
   entry<ValueType>* data;
   friend class ordered_stuff<ValueType>;
-  friend class std::hash<entry_ref>;
+  friend struct std::hash<entry_ref>;
 };
 }
 
@@ -451,7 +451,7 @@ private:
 using ordered_stuff_system::ordered_stuff;
 namespace std {
   template<typename ValueType>
-  class hash<typename ordered_stuff_system::impl::entry_ref<ValueType>> {
+  struct hash<typename ordered_stuff_system::impl::entry_ref<ValueType>> {
     public:
     size_t operator()(ordered_stuff_system::impl::entry_ref<ValueType> const& i)const {
       // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
@@ -475,8 +475,15 @@ const char siphash_key[16] = { 0xb7, 0xac, 0x3d, 0xf8, 0xc3, 0xa2, 0x8c, 0xd9, 0
 namespace impl {
   template<typename... Args> struct combining_helper;
 }
+namespace persistent_siphash_id_trie_system {
+typedef uint32_t num_bits_type;
+template<typename MappedType = void, num_bits_type bits_per_level = 4>
+class persistent_siphash_id_trie;
+}
 class siphash_id {
   template<typename... Args> friend struct impl::combining_helper;
+  template<typename MappedType, persistent_siphash_id_trie_system::num_bits_type bits_per_level>
+  friend class persistent_siphash_id_trie_system::persistent_siphash_id_trie;
   typedef std::array<uint64_t,2> data_type;
 public:
   // Implementation note:
@@ -545,7 +552,7 @@ public:
 private:
   constexpr siphash_id(data_type data):data_(data){}
   data_type data_;
-  friend class std::hash<siphash_id>;
+  friend struct std::hash<siphash_id>;
 };
 namespace impl {
   template<typename... Args> struct combining_helper;
@@ -584,7 +591,7 @@ siphash_id siphash_id::combining(Args... args) {
 } //end namespace time_steward_system
 namespace std {
   template<>
-  class hash<time_steward_system::siphash_id> {
+  struct hash<time_steward_system::siphash_id> {
     public:
     size_t operator()(time_steward_system::siphash_id const& i)const {
       // Since the siphash is already a hash, just return some of it.
@@ -596,22 +603,24 @@ namespace time_steward_system {
   
 
 namespace persistent_siphash_id_trie_system {
-typedef uint32_t num_bits_type;
 template<typename KeyType, typename MappedType, bool IsMap> struct value_typer;
 template<typename KeyType, typename MappedType> struct value_typer<KeyType, MappedType, false> {
   typedef KeyType type;
+  static KeyType get_key(type const& t) { return t; }
 };
 template<typename KeyType, typename MappedType> struct value_typer<KeyType, MappedType, true> {
   typedef std::pair<KeyType, MappedType> type;
+  static KeyType get_key(type const& t) { return t.first; }
 };
-template<typename MappedType = void, num_bits_type bits_per_level = 4>
+template<typename MappedType, num_bits_type bits_per_level>
 class persistent_siphash_id_trie {
 public:
   typedef siphash_id key_type;
   typedef MappedType mapped_type;
-  typedef typename value_typer<key_type, mapped_type, !std::is_void<mapped_type>::value>::type value_type;
+  typedef value_typer<key_type, mapped_type, !std::is_void<mapped_type>::value> value_typer_t;
+  typedef typename value_typer_t::type value_type;
 private:  
-  typedef typename boost::uint_t<bits_per_level>::fast one_bit_per_child_t;
+  typedef typename boost::uint_t<1<<bits_per_level>::fast one_bit_per_child_t;
   typedef size_t ref_count_t;
   static const ref_count_t is_leaf_bit = 1ULL<<63;
   static const ref_count_t ref_count_mask = is_leaf_bit-1;
@@ -620,8 +629,7 @@ private:
     leaf_t(Args&&... args):ref_count_and_is_leaf(is_leaf_bit),value(std::forward<Args>(args)...){}
     ref_count_t ref_count_and_is_leaf;
     value_type value;
-    template<typename Hack = void> std::enable_if_t< std::is_same<key_type, value_type>::value, key_type> id() { return value      ; }
-    template<typename Hack = void> std::enable_if_t<!std::is_same<key_type, value_type>::value, key_type> id() { return value.first; }
+    key_type id() { return value_typer_t::get_key(value); }
   };
   struct node_header {
     node_header():ref_count_and_is_leaf(0),children_exist(0){}
@@ -634,11 +642,14 @@ private:
     child_ptr(char* data):data(data){ inc_ref(); }
     ~child_ptr(){ dec_ref(); }
     inline bool is_leaf()const { return (*(ref_count_t*)(data)) & is_leaf_bit; }
-    child_ptr& operator=(child_ptr const& o){ dec_ref(); data = o.data; inc_ref(); }
+    child_ptr& operator=(child_ptr const& o){ dec_ref(); data = o.data; inc_ref(); return *this; }
     leaf_t& leaf() { return (*(leaf_t*)(data)); }
+    leaf_t const& leaf()const { return (*(leaf_t const*)(data)); }
     node_header& node() { return (*(node_header*)(data)); }
+    node_header const& node()const { return (*(node_header const*)(data)); }
     child_ptr& child_by_idx(num_bits_type i) { return (*(child_ptr*)(data + sizeof(node_header) + i*sizeof(child_ptr))); }
     child_ptr& child_by_bit(num_bits_type b) { return child_by_idx(popcount(node().children_exist & (b-1))); }
+    num_bits_type num_children() { return popcount(node().children_exist); }
     operator bool()const { return bool(data); }
     bool operator==(child_ptr o)const { return data==o.data; }
     bool operator!=(child_ptr o)const { return data!=o.data; }
@@ -654,8 +665,8 @@ private:
           leaf().~leaf_t();
         }
         else {
-          const num_bits_type num_children = node().num_children();
-          for (num_bits_type i = 0; i < num_children; ++i) {
+          const num_bits_type num_children_ = num_children();
+          for (num_bits_type i = 0; i < num_children_; ++i) {
             child_by_idx(i).~child_ptr();
           }
           node().~node_header();
@@ -667,12 +678,12 @@ private:
     char* data;
   };
   template <class... Args>
-  child_ptr allocate_leaf(Args&&... args) {
+  static child_ptr allocate_leaf(Args&&... args) {
     char* ptr = new char[sizeof(leaf_t)];
     new(ptr) leaf_t(std::forward<Args>(args)...);
     return ptr;
   }
-  child_ptr allocate_node(num_bits_type num_children) {
+  static child_ptr allocate_node(num_bits_type num_children) {
     char* ptr = new char[sizeof(node_header) + num_children*sizeof(child_ptr)];
     new(ptr) node_header();
     for (num_bits_type i = 0; i < num_children; ++i) {
@@ -686,6 +697,7 @@ private:
     return (id.data_[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
   }
   
+  persistent_siphash_id_trie(child_ptr root):root(root){}
 public:
   persistent_siphash_id_trie():root(nullptr){}
   // Not set equality. Notably, though, trie.erase (something not in the trie) == trie.
@@ -724,7 +736,7 @@ public:
             assert(back().node().children_exist & (1<<child));
           }
           
-          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) + 1);
+          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1U<<child)-1U)) + 1);
         }
         
         while (!back().is_leaf()) {
@@ -748,7 +760,7 @@ public:
             assert(back().node().children_exist & (1<<child));
           }
           
-          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1<<child)-1)) - 1);
+          path[path_len++] = back().child_by_idx(popcount(back().node().children_exist & ((1U<<child)-1U)) - 1);
         }
         while (!back().is_leaf()) {
           path[path_len++] = back().child_by_idx(back().num_children()-1);
@@ -759,6 +771,7 @@ public:
       value_type const& dereference()const { return back().leaf().value; }
       
       child_ptr& back() { return path[path_len-1]; }
+      child_ptr const& back()const { return path[path_len-1]; }
       num_bits_type bits(num_bits_type path_idx)const { return 128 - (path_idx+1)*bits_per_level; }
       num_bits_type back_bits()const { return 128 - path_len*bits_per_level; }
       
@@ -770,11 +783,11 @@ public:
   iterator end()const { return iterator(root); }
   
   template<typename Hack = void>
-  std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie> insert(key_type k)const {
+  /*std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie>*/ persistent_siphash_id_trie insert(key_type k)const {
     return insert(find(k));
   }
   template<typename Hack = void>
-  static std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie> insert(iterator const& i) {
+  static /*std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie>*/ persistent_siphash_id_trie insert(iterator const& i) {
     return set_leaf(i, allocate_leaf(i.id));
   }
   template<class... Args>
@@ -828,7 +841,7 @@ private:
   static persistent_siphash_id_trie unset_leaf(iterator const& i) {
     if (i.back()) {
       assert(i.back().is_leaf());
-      return walk_change_upwards(i, i.path_idx - 1, nullptr);
+      return walk_change_upwards(i, i.path_len - 1, nullptr);
     }
     else {
       return i.path[0];
@@ -836,7 +849,7 @@ private:
   }
   static persistent_siphash_id_trie set_leaf(iterator const& i, child_ptr new_leaf) {
     child_ptr walker;
-    num_bits_type replacing_idx = i.path_idx - 1;
+    num_bits_type replacing_idx = i.path_len - 1;
     if (i.back()) {
       assert(i.back().is_leaf());
       walker = new_leaf;
@@ -870,7 +883,7 @@ private:
         else {
           split_at = walker = allocate_node(2);
         }
-        split_at.node().children_exist == child0 | child1;
+        split_at.node().children_exist = child0 | child1;
         split_at.child_by_idx(child1 > child0) = parent;
         split_at.child_by_idx(child0 > child1) = new_leaf;
       }
@@ -890,9 +903,8 @@ private:
       assert(!old_parent.is_leaf());
       
       const num_bits_type child_idx = which_child(i.id, which_bits);
-      const num_bits_type child_bit = 1 << child_idx;
       assert (walker != old_child);
-      const num_bits_type new_num_children = old_parent.node().num_children() + (walker && !old_child) - (old_child && !walker);
+      const num_bits_type new_num_children = old_parent.num_children() + (walker && !old_child) - (old_child && !walker);
       if (!((new_num_children == 1) && walker.is_leaf())) {
         child_ptr walker_parent = allocate_node(new_num_children);
         num_bits_type old_idx = 0;
@@ -907,10 +919,10 @@ private:
           }
           else if (old_parent.node().children_exist & (1<<i)) {
             walker_parent.node().children_exist |= 1 << i;
-            walker_parent.child_by_idx(new_idx++) = old_parent.node().child_by_idx(old_idx++);
+            walker_parent.child_by_idx(new_idx++) = old_parent.child_by_idx(old_idx++);
           }
         }
-        assert(walker_parent.node().num_children() == new_num_children);
+        assert(walker_parent.num_children() == new_num_children);
         walker = walker_parent;
       }
       
@@ -966,40 +978,102 @@ namespace fields_list_impl {
   template<class T> struct get_fields_list_nature_impl<T, false> { typedef generic_input_nature type; };
   template<class T> struct get_fields_list_nature { typedef typename get_fields_list_nature_impl<T, sizeof(test<T>(0))==1>::type type; };
   
-  
-  
-  template<typename IdentifyingType, typename InnerDataType = IdentifyingType, bool PerID = false> class fields_list_entry;
-  template<typename IdentifyingType, typename InnerDataType>
-  class fields_list_entry<IdentifyingType, InnerDataType, false> {
-  public:
-    typedef fields_list_entry_nature fields_list_nature;
-    typedef IdentifyingType identifying_type;
-    typedef InnerDataType inner_data_type;
-    static const bool per_id = false;
-    template<template<typename> class Data> struct data {
-      typedef Data<inner_data_type> type;
-      Data<inner_data_type>& get(type& t){ return t; }
-    };
+  template<typename T>
+  struct default_field_traits {
+    static inline T null() { return T(); }
+    static inline bool is_null(T const& t) { return bool(t); }
   };
-  template<typename IdentifyingType, typename InnerDataType>
-  class fields_list_entry<IdentifyingType, InnerDataType, true> {
+  template<typename T, typename Traits>
+  struct null_const_ref {
+    static inline T const& get() {
+      static const T value = Traits::null();
+      return value;
+    }
+  };
+  
+  template<typename IdentifyingType, typename InnerDataType = IdentifyingType, typename InnerDataTraits = default_field_traits<InnerDataType>, bool PerID = false> class fields_list_entry;
+  template<typename IdentifyingType, typename InnerDataType, typename InnerDataTraits>
+  class fields_list_entry<IdentifyingType, InnerDataType, InnerDataTraits, false> {
   public:
     typedef fields_list_entry_nature fields_list_nature;
     typedef IdentifyingType identifying_type;
     typedef InnerDataType inner_data_type;
+    typedef InnerDataTraits traits;
+    static const bool per_id = false;
+  };
+  template<typename IdentifyingType, typename InnerDataType, typename InnerDataTraits>
+  class fields_list_entry<IdentifyingType, InnerDataType, InnerDataTraits, true> {
+  public:
+    typedef fields_list_entry_nature fields_list_nature;
+    typedef IdentifyingType identifying_type;
+    typedef InnerDataType inner_data_type;
+    typedef InnerDataTraits traits;
     static const bool per_id = true;
-    template<template<typename> class Data> struct data {
-      typedef persistent_id_map<Data<inner_data_type>> type;
-      Data<inner_data_type>& get(type& t, siphash_id id){ return t[id]; }
-    };
+  };
+  template<typename FieldsListEntry, template<typename> class Data, bool Persistent, bool PerID = FieldsListEntry::per_id> struct fields_list_entry_data; 
+  template<typename FieldsListEntry, template<typename> class Data, bool Persistent>
+  struct fields_list_entry_data<FieldsListEntry, Data, Persistent, false> {
+    typedef Data<typename FieldsListEntry::inner_data_type> type;
+    type      & get()      { return t; }
+    type const& get()const { return t; }
+    type const* find()const { return &t; }
+    template<class... Args>
+    type& set(type& t, Args&&... args){ return t = type(std::forward<Args>(args)...); }
+  private:
+    type t;
+  };
+  template<typename FieldsListEntry, template<typename> class Data>
+  struct fields_list_entry_data<FieldsListEntry, Data, true, true> {
+    typedef Data<typename FieldsListEntry::inner_data_type> inner_type;
+    typedef persistent_id_map<inner_type> type;
+    inner_type const& get(siphash_id id)const {
+      auto i = t.find(id);
+      if (i) { return i->second; }
+      return null_const_ref<typename FieldsListEntry::inner_data_type, typename FieldsListEntry::traits>::get();
+    }
+    template<class... Args>
+    inner_type const& set(siphash_id id, Args&&... args) {
+      auto i = t.find(id);
+      t = t.emplace(id, std::forward<Args>(args)...);
+      return i->second;
+    }
+  private:
+    type t;
+  };
+  template<typename FieldsListEntry, template<typename> class Data>
+  struct fields_list_entry_data<FieldsListEntry, Data, false, true> {
+    typedef Data<typename FieldsListEntry::inner_data_type> inner_type;
+    typedef std::map<siphash_id, inner_type> type;
+    inner_type& get(siphash_id id) {
+      return t[id];
+    }
+    inner_type const* find(siphash_id id)const {
+      auto i = t.find(id);
+      if (i != t.end()) { return &i->second; }
+      return nullptr;
+    }
+  private:
+    type t;
   };
   
   template<typename Input, typename InputNature> struct make_fields_list_entry;
   template<typename Input> struct make_fields_list_entry<Input, generic_input_nature> { typedef fields_list_entry<Input, optional<Input>> type; };
   template<typename Input> struct make_fields_list_entry<Input, fields_list_entry_nature> { typedef Input type; };
   
-  template<typename ...Input> class make_fields_list;
-  template<typename HeadNature, typename Head, typename ...Tail> class make_fields_list_contents;
+  template<typename FieldsList, typename FieldID> struct get_field_entry;
+  template<typename FieldsList, typename FieldID, bool Same> struct get_field_entry_impl;
+  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, true> { typedef typename FieldsList::head type; };
+  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, false> { typedef typename get_field_entry<typename FieldsList::tail, FieldID>::type type; };
+  template<typename FieldsList, typename FieldID> struct get_field_entry {
+    typedef typename get_field_entry_impl<FieldsList, FieldID, std::is_same<FieldID, typename FieldsList::head::identifying_type>::value>::type type;
+  };
+  template<typename FieldsList, typename FieldID>
+  using field_entry = typename get_field_entry<FieldsList, FieldID>::type;
+  template<typename FieldsList, typename FieldID>
+  using field_data = typename field_entry<FieldsList, FieldID>::inner_data_type;
+  
+  template<typename ...Input> struct make_fields_list;
+  template<typename HeadNature, typename Head, typename ...Tail> struct make_fields_list_contents;
   
   class empty_fields_list {
   public:
@@ -1018,6 +1092,10 @@ namespace fields_list_impl {
     static const size_t size = tail::size + 1;
     template<typename T> static constexpr std::enable_if_t< std::is_same<T, typename head::identifying_type>::value, field_base_id> idx_of() { return idx; }
     template<typename T> static constexpr std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value, field_base_id> idx_of() { return tail::template idx_of<T>(); }
+    template<typename T> static inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value, field_data<nonempty_fields_list, T> const&>
+    get_null_const_ref() { return null_const_ref<typename head::inner_data_type, typename head::traits>::get(); }
+    template<typename T> static inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value, field_data<nonempty_fields_list, T> const&>
+    get_null_const_ref() { return tail::template get_null_const_ref<T>(); }
   };
   
   template<typename HeadNature, typename Head, typename ...Tail>
@@ -1033,37 +1111,33 @@ namespace fields_list_impl {
   struct make_fields_list<> { typedef empty_fields_list type; };
   template<typename Head, typename ...Tail>
   struct make_fields_list<Head, Tail...> { typedef typename make_fields_list_contents<typename get_fields_list_nature<Head>::type, Head, Tail...>::type type; };
-  
-  template<typename FieldsList, typename FieldID> struct get_field_entry;
-  template<typename FieldsList, typename FieldID, bool Same> struct get_field_entry_impl;
-  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, true> { typedef typename FieldsList::head type; };
-  template<typename FieldsList, typename FieldID> struct get_field_entry_impl<FieldsList, FieldID, false> { typedef typename get_field_entry<typename FieldsList::tail, FieldID>::type type; };
-  template<typename FieldsList, typename FieldID> struct get_field_entry {
-    typedef typename get_field_entry_impl<FieldsList, FieldID, std::is_same<FieldID, typename FieldsList::head::identifying_type>::value>::type type;
-  };
-  template<typename FieldsList, typename FieldID>
-  using field_entry = typename get_field_entry<FieldsList, FieldID>::type;
-  template<typename FieldsList, typename FieldID>
-  using field_data = typename field_entry<FieldsList, FieldID>::inner_data_type;
 
   template<typename T> using identity = T;
-  template<class FieldsList, template<typename> class repeated = identity>
+  template<class FieldsList, bool Persistent, template<typename> class repeated = identity>
   class foreach_field {
     typedef typename FieldsList::head head;
-    typename head::template data<repeated>::type head_;
-    foreach_field<typename FieldsList::tail, repeated> tail_;
+    fields_list_entry_data<head, repeated, Persistent> head_;
+    foreach_field<typename FieldsList::tail, Persistent, repeated> tail_;
   public:
     template<typename T, typename... Ext> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
-    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return head::template data<repeated>::get(head_, ext...); }
+    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return head_.get(ext...); }
     template<typename T, typename... Ext> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
-    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return tail_.get<T>(ext...); }
+    repeated<field_data<FieldsList, T>>      &> get(Ext... ext)      { return tail_.template get<T>(ext...); }
     template<typename T, typename... Ext> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
-    repeated<field_data<FieldsList, T>> const&> get(Ext... ext)const { return head::template data<repeated>::get(head_, ext...); }
+    repeated<field_data<FieldsList, T>> const*> find(Ext... ext)const { return head_.find(ext...); }
     template<typename T, typename... Ext> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
-    repeated<field_data<FieldsList, T>> const&> get(Ext... ext)const { return tail_.get<T>(ext...); }
+    repeated<field_data<FieldsList, T>> const*> find(Ext... ext)const { return tail_.template find<T>(ext...); }
+    template<typename T, typename... Args> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value && !field_entry<FieldsList, T>::per_id,
+    repeated<field_data<FieldsList, T>> const&> set(                  Args&&... args) { return head_.set(head_,       std::forward<Args>(args)...); }
+    template<typename T, typename... Args> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value && !field_entry<FieldsList, T>::per_id,
+    repeated<field_data<FieldsList, T>> const&> set(                  Args&&... args) { return tail_.template set<T, Args...>(       std::forward<Args>(args)...); }
+    template<typename T, typename... Args> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value &&  field_entry<FieldsList, T>::per_id,
+    repeated<field_data<FieldsList, T>> const&> set(siphash_id which, Args&&... args) { return head_.set(head_, which, std::forward<Args>(args)...); }
+    template<typename T, typename... Args> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value &&  field_entry<FieldsList, T>::per_id,
+    repeated<field_data<FieldsList, T>> const&> set(siphash_id which, Args&&... args) { return tail_.template set<T, Args...>(which, std::forward<Args>(args)...); }
   };
-  template<template<typename> class repeated>
-  class foreach_field<empty_fields_list, repeated> {};
+  template<bool Persistent, template<typename> class repeated>
+  class foreach_field<empty_fields_list, Persistent, repeated> {};
   
   template<class FieldsList, template<typename> class repeated = identity>
   class foreach_field_base {
@@ -1074,11 +1148,11 @@ namespace fields_list_impl {
     template<typename T> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
     field_data<FieldsList, T>      &> get()      { return head_; }
     template<typename T> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
-    field_data<FieldsList, T>      &> get()      { return tail_.get<T>(); }
+    field_data<FieldsList, T>      &> get()      { return tail_.template get<T>(); }
     template<typename T> inline std::enable_if_t< std::is_same<T, typename head::identifying_type>::value,
     field_data<FieldsList, T> const&> get()const { return head_; }
     template<typename T> inline std::enable_if_t<!std::is_same<T, typename head::identifying_type>::value,
-    field_data<FieldsList, T> const&> get()const { return tail_.get<T>(); }
+    field_data<FieldsList, T> const&> get()const { return tail_.template get<T>(); }
   };
   template<template<typename> class repeated>
   class foreach_field_base<empty_fields_list, repeated> {};
@@ -1091,7 +1165,7 @@ namespace fields_list_impl {
   };
   
   template<class FieldsList, class FuncClass>
-  using func_type = decltype(FuncClass::template func<typename FieldsList::head::identifying_type>)*;
+  using func_type = decltype(&FuncClass::template func<typename FieldsList::head::identifying_type>);
   template<class FieldsList, class FuncClass>
   class function_array : public foreach_field_base_array<FieldsList, func_type<FieldsList, FuncClass>> {
   public:
@@ -1106,10 +1180,10 @@ namespace fields_list_impl {
   };
 }
 template<typename ...Input> using fields_list = typename fields_list_impl::make_fields_list<Input...>::type;
-template<typename IdentifyingType, typename InnerDataType = IdentifyingType>
-using field        = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, false>;
-template<typename IdentifyingType, typename InnerDataType = IdentifyingType>
-using field_per_id = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, true>;
+template<typename IdentifyingType, typename InnerDataType = IdentifyingType, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
+using field        = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, InnerDataTraits, false>;
+template<typename IdentifyingType, typename InnerDataType = IdentifyingType, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
+using field_per_id = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, InnerDataTraits, true>;
 template<typename FieldsList, typename FieldID>
 using field_data = fields_list_impl::field_data<FieldsList, FieldID>;
 
@@ -1131,7 +1205,7 @@ struct entity_field_id {
 } //end namespace time_steward_system
 namespace std {
   template<>
-  class hash<time_steward_system::entity_field_id> {
+  struct hash<time_steward_system::entity_field_id> {
     public:
     size_t operator()(time_steward_system::entity_field_id const& i)const {
       return std::hash<time_steward_system::siphash_id>()(i.e) ^ std::hash<time_steward_system::siphash_id>()(i.f.which) ^ i.f.base;
@@ -1162,7 +1236,7 @@ private:
       }
       return false;
     }
-    void modified(time_steward_accessor& acc, entity_field_id const& id) {
+    void modified(time_steward_accessor const& acc, entity_field_id const& id) {
       if (!ever_modified) {
         ever_modified = true;
         acc.entity_fields_modified.push_back(id);
@@ -1178,7 +1252,7 @@ private:
     
   struct entity_info {
     entity_id id;
-    fields_list_impl::foreach_field<entity_fields, field_info> fields;
+    fields_list_impl::foreach_field<entity_fields, false, field_info> fields;
   };
   
 public:
@@ -1197,7 +1271,7 @@ private:
   template<typename FieldID, typename... Ext>
   inline field_data<entity_fields, FieldID>& get_impl(entity_ref e, bool modified, Ext... ext)const {
     const field_id idx(entity_fields::template idx_of<FieldID>(), ext...);
-    auto& f = e.data->fields.get<FieldID>(ext...);
+    auto& f = e.data->fields.template get<FieldID>(ext...);
     auto& result = f.value;
     const entity_field_id id(e.id(), idx);
     if (f.metadata.accessed(*this, id)) {
@@ -1209,7 +1283,7 @@ private:
   template<typename FieldID, typename... Ext>
   inline field_data<entity_fields, FieldID>& set_impl(entity_ref e, field_data<entity_fields, FieldID> new_contents, Ext... ext) {
     const field_id idx(entity_fields::template idx_of<FieldID>(), ext...);
-    auto& f = e.data->fields.get<FieldID>(ext...);
+    auto& f = e.data->fields.template get<FieldID>(ext...);
     auto& result = f.value;
     const entity_field_id id(e.id(), idx);
     f.metadata.modified(*this, id);
@@ -1276,7 +1350,7 @@ private:
   
   std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
-  std::vector<entity_field_id> entity_fields_modified;
+  mutable std::vector<entity_field_id> entity_fields_modified; // hack - we COULD make this non-mutable, but get_impl is easier this way
   mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
@@ -1437,23 +1511,14 @@ private:
     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
   };
   
-  // statics must also be declared outside the class like other globals
-  //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
-  /*static*/ const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity> field_absent;
-  /*maybe we could use this hack:
-  static const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity>& field_absent() {
-    static const fields_list_impl::foreach_field_base<entity_fields, fields_list_impl::identity> f;
-    return f;
-  }*/
-  
   struct field_metadata_throughout_time {
     std::map<extended_time, persistent_id_set> triggers_pointing_at_this_changes;
     std::set<extended_time> event_piles_which_accessed_this;
   };
-  template<typename Field>
-  using field_throughout_time = std::map<extended_time, optional<Field>>;
+  template<typename FieldData>
+  using field_throughout_time = std::map<extended_time, FieldData>;
   struct entity_throughout_time_info {
-    fields_list_impl::foreach_field<entity_fields, field_throughout_time> fields;
+    fields_list_impl::foreach_field<entity_fields, false, field_throughout_time> fields;
   };
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
@@ -1511,14 +1576,14 @@ private:
   struct copy_field_change_from_accessor {
     template<typename FieldID>
     static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id).insert(std::make_pair(time, src.template get<FieldID>()));
+    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id       ).insert(std::make_pair(time, src.template get<FieldID>(     ).value));
       assert(p.second);
     }
     template<typename FieldID>
     static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id, which).insert(std::make_pair(time, src.template get<FieldID>(which)));
+    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which) {
+      const auto p = ts->get_field_throughout_time<FieldID>(id, which).insert(std::make_pair(time, src.template get<FieldID>(which).value));
       assert(p.second);
     }
     template<typename FieldID>
@@ -1528,14 +1593,14 @@ private:
   };
   struct undo_field_change {
     template<typename FieldID>
-    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
+    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, entity_id id, siphash_id) {
       const auto p = ts->get_field_throughout_time<FieldID>(id).erase(time);
       assert(p);
     }
     template<typename FieldID>
-    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
+    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
+    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which) {
       const auto p = ts->get_field_throughout_time<FieldID>(id, which).erase(time);
       assert(p);
     }
@@ -1554,12 +1619,12 @@ private:
   // because it's just for looking up events whose times we know.
   typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
   typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
-  typedef std::unordered_map<entity_field_id, entity_throughout_time_info> field_metadata_map;
+  typedef std::unordered_map<entity_field_id, field_metadata_throughout_time> field_metadata_map;
   entities_map entities;
   field_metadata_map field_metadata;
-  template<typename Field, typename... Ext>
-  field_throughout_time<Field>& get_field_throughout_time(entity_id const& id, Ext... ext) {
-    return entities[id].fields.template get<Field>(ext...);
+  template<typename FieldID, typename... Ext>
+  field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
+    return entities[id].fields.template get<FieldID>(ext...);
   }
   field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
     return field_metadata[id];
@@ -1629,13 +1694,14 @@ private:
   template<typename FieldID, typename... Ext>
   field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time time, Ext... ext)const {
     const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) { return field_absent.template get<FieldID>(); }
+    if (entity_stream_iter == entities.end()) { return entity_fields::template get_null_const_ref<FieldID>(); }
     
     entity_throughout_time_info const& e = entity_stream_iter->second;
-    const auto f = e.fields.template get<FieldID>(ext...);
+    field_throughout_time<field_data<entity_fields, FieldID>> const* f = e.fields.template find<FieldID>(ext...);
+    if (!f) { return entity_fields::template get_null_const_ref<FieldID>(); }
     
-    const auto next_change_iter = f.changes.upper_bound(time);
-    if (next_change_iter == f.changes.begin()) { return field_absent.template get<FieldID>(); }
+    const auto next_change_iter = f->upper_bound(time);
+    if (next_change_iter == f->begin()) { return entity_fields::template get_null_const_ref<FieldID>(); }
     return boost::prior(next_change_iter)->second;
   }
   

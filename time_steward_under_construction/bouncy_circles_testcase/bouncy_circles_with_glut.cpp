@@ -96,7 +96,7 @@ void draw_time(gl_triangles& triangles, time_steward& w, time_type time, gl_data
     }
     push_wireframe_polygon(triangles, rad/5, polygon);
   }
-  draw_ztree_node(triangles, accessor.get(), accessor->get<bbcd_system::bbox_collision_detector_root_node>(accessor->get(bbcd_id))->root_node_id_, color);
+  draw_ztree_node(triangles, accessor.get(), *accessor->get<bbcd_system::bbox_collision_detector_root_node>(accessor->get(bbcd_id)), color);
 }
 
 gl_triangles display(vector3<double> const& where, time_steward& w, time_type focus_time) {

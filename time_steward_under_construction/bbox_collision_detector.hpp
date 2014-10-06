@@ -35,9 +35,11 @@
 
 typedef ptrdiff_t num_bits_type;
 typedef ptrdiff_t num_coordinates_type;
+namespace {
 template<typename T>
 using optional = time_steward_system::optional<T>;
 using time_steward_system::none;
+}
 
 template<typename value_type, typename reference = value_type&, typename pointer = value_type*>
 class value_as_ptr {
