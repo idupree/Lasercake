@@ -806,7 +806,9 @@ public:
   }
   template<typename Hack = void>
   static /*std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie>*/ persistent_siphash_id_trie insert(iterator const& i) {
-    return set_leaf(i, allocate_leaf(i.id));
+    persistent_siphash_id_trie result = set_leaf(i, allocate_leaf(i.id));
+    assert(result.find(i.id).back().leaf().id() == i.id);
+    return result;
   }
   template<class... Args>
   persistent_siphash_id_trie emplace(key_type k, Args&&... args)const {
@@ -814,13 +816,17 @@ public:
   }
   template<class... Args>
   static persistent_siphash_id_trie emplace(iterator const& i, Args&&... args) {
-    return set_leaf(i, allocate_leaf(i.id, std::forward<Args>(args)...));
+    persistent_siphash_id_trie result = set_leaf(i, allocate_leaf(i.id, std::forward<Args>(args)...));
+    assert(result.find(i.id).back().leaf().id() == i.id);
+    return result;
   }
   persistent_siphash_id_trie erase(key_type k)const {
     return erase(find(k));
   }
   static persistent_siphash_id_trie erase(iterator const& i) {
-    return unset_leaf(i);
+    persistent_siphash_id_trie result = unset_leaf(i);
+    assert(!result.find(i.id));
+    return result;
   }
   iterator find(key_type k)const {
     caller_correct_if(bool(k), "You can't find() for the null ID");
@@ -1435,7 +1441,7 @@ private:
     
     struct sort_sibling_extended_times_by_id {
       bool operator()(extended_time a, extended_time b)const {
-        if (a->trigger_iteration != b->trigger_iteration) {}return a->trigger_iteration < b->trigger_iteration;
+        if (a->trigger_iteration != b->trigger_iteration) { return a->trigger_iteration < b->trigger_iteration; }
         return a->id < b->id;
       }
     };
@@ -1790,13 +1796,13 @@ private:
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
-          persistent_id_set new_triggers;
+          persistent_id_set old_triggers;
           const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower/upper bound shouldn't matter because there shouldn't be an entry now.
           if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
-            new_triggers = boost::prior(next_triggers_iter)->second;
+            old_triggers = boost::prior(next_triggers_iter)->second;
           }
           // Hack sZInnn3FkZy0yg: insert even if there's no change, so that the below code can catch it.
-          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers.insert(pile_info.tid)));
+          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, old_triggers.insert(pile_info.tid)));
         }
       }
       for (entity_field_id const& id : a.entity_fields_modified) {
@@ -1810,25 +1816,24 @@ private:
       }
       if (pile_info.tid) {
         auto& trigger_info = triggers.find(pile_info.tid)->second;
-        auto call_iter = trigger_info.find(time);
+        const auto call_iter = trigger_info.find(time);
         for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
           insert_instigating_event(ev.first, event_pile_info(ev.second));
           call_iter->second.anticipated_events.insert(ev.first);
         }
         if (call_iter != trigger_info.begin()) {
-          for (entity_field_id former_trigger_access : event_piles.find(boost::prior(call_iter)->first)->second.entity_fields_pile_accessed) {
-            auto& metadata = get_field_metadata_throughout_time(former_trigger_access);
-            const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower_bound: we want to find the entry at this time
-            if ((next_triggers_iter != metadata.triggers_pointing_at_this_changes.end()) && (next_triggers_iter->first == time)) {
-              // Hack sZInnn3FkZy0yg: we inserted above, so don't remove now.
-            }
-            else {
-              assert (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin());
-              persistent_id_set new_triggers = boost::prior(next_triggers_iter)->second;
-              const auto p2 = new_triggers.erase(pile_info.tid);
-              assert (p2 != new_triggers);
-              metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, p2));
-            }
+          const auto last_call_iter = boost::prior(call_iter);
+          const extended_time last_call_time = last_call_iter->first;
+          event_pile_info const& last_call_pile_info = event_piles.find(last_call_time)->second;
+          for (entity_field_id accessed_by_last_call : last_call_pile_info.entity_fields_pile_accessed) {
+            auto& metadata = get_field_metadata_throughout_time(accessed_by_last_call);
+            const auto triggers_iter = metadata.triggers_pointing_at_this_changes.find(last_call_time);
+            assert (triggers_iter != metadata.triggers_pointing_at_this_changes.end());
+            const persistent_id_set old_triggers = triggers_iter->second;
+            const auto new_triggers = old_triggers.erase(pile_info.tid);
+            assert (new_triggers != old_triggers);
+            // Hack sZInnn3FkZy0yg: we inserted above, so this insert fails.
+            metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
           }
         }
       }
