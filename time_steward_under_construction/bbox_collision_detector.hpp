@@ -189,7 +189,7 @@ public:
 
   friend inline std::ostream& operator<<(std::ostream& os, bounding_box const& bb) {
     os << '[';
-    for (num_coordinates_type i = 0; i < bounding_box::num_dimensions; ++i) {
+    for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
       if(i != 0) os << ", ";
       os << bb.min(i) << '+' << bb.size_minus_one(i);
     }
@@ -470,11 +470,14 @@ private:
       entity_ref e = accessor->get(spatial_entity_id);
       FuncsType funcs = get_funcs(accessor, bbcd_id);
       bbcd_entry_metadata const& metadata = *accessor->template get<bbcd_entry_metadata>(e, bbcd_id);
+//       check_metadata(accessor, metadata, e.id());
       const bounding_box bbox = funcs.bbox(accessor, e);
       if (!metadata.zboxes_union.subsumes(bbox)) {
         update_zboxes(accessor, bbcd_id, e, bbox, metadata.nodes);
       }
+//       check_metadata(accessor, metadata, e.id());
       gather_events(accessor, bbcd_id, funcs, e);
+//       check_metadata(accessor, metadata, e.id());
     }
     entity_id bbcd_id;
     entity_id spatial_entity_id;
@@ -489,6 +492,7 @@ public:
   static void insert(accessor* accessor, entity_id bbcd_id, entity_ref e, entity_ref hint_object = entity_ref()) {
     bbcd_entry_metadata& metadata = *accessor->template set<bbcd_entry_metadata>(e, bbcd_id, bbcd_entry_metadata()); // default-construct
     if (hint_object) {
+      assert(false); // TODO remove
       // hack: copy over the object's nodes as a hint for where to insert
       metadata.nodes = accessor->template get<bbcd_entry_metadata>(e, bbcd_id)->nodes;
     }
@@ -500,27 +504,46 @@ public:
     // TODO: what about the outstanding events?
     
     bbcd_entry_metadata& metadata = *accessor->template get_mut<bbcd_entry_metadata>(e, bbcd_id);
-    erase_from_nodes(accessor, bbcd_id, e, metadata, metadata->nodes);
+    erase_from_nodes(accessor, bbcd_id, e, metadata, metadata.nodes);
     accessor->template set<bbcd_entry_metadata>(e, bbcd_id, none);
   }
   
 private:
+  static void check_metadata(accessor* accessor, bbcd_entry_metadata const& metadata, entity_id id) {
+    for (entity_id node_id : metadata.nodes) {
+      auto const& node = accessor->template get<ztree_node>(accessor->get(node_id));
+      assert(node);
+      assert(node->objects_here.find(id));
+    }
+  }
+  static void check_node(accessor* accessor, entity_id node_id, entity_id bbcd_id) {
+    auto const& node = accessor->template get<ztree_node>(accessor->get(node_id));
+    for (entity_id id : node->objects_here) {
+      check_metadata(accessor, *accessor->template get<bbcd_entry_metadata>(accessor->get(id), bbcd_id), id);
+    }
+  }
   
   static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
                                     bbcd_entry_metadata& metadata, time_steward_system::persistent_id_set nodes) {
+//     for (entity_id node_id : nodes) {
+//       check_node(accessor, node_id, bbcd_id);
+//     }
     for (entity_id node_id : nodes) {
-      entity_ref node_ref = accessor->get(node_id);
-      auto& node = accessor->template get_mut<ztree_node>(node_ref);
-      if (node) {
-        node->objects_here.erase(e.id());
-        maybe_squish_node(accessor, bbcd_id, node_ref);
-      }
-      metadata.nodes.erase(node_id);
+      auto& node = accessor->template get_mut<ztree_node>(accessor->get(node_id));
+      node->objects_here = node->objects_here.erase(e.id());
+      metadata.nodes = metadata.nodes.erase(node_id);
     }
+    for (entity_id node_id : nodes) {
+      maybe_squish_node(accessor, bbcd_id, accessor->get(node_id));
+    }
+//     for (entity_id node_id : nodes) {
+//       if (accessor->template get<ztree_node>(accessor->get(node_id))) check_node(accessor, node_id, bbcd_id);
+//     }
+//     check_metadata(accessor, metadata, e.id());
   }
   static void maybe_squish_node(accessor* accessor, entity_id bbcd_id, entity_ref node_ref) {
     auto& node = accessor->template get_mut<ztree_node>(node_ref);
-    if (node->objects_here.empty()) {
+    if (node && node->objects_here.empty()) {
       if (!node->children[0]) {
         squish_node(accessor, bbcd_id, node_ref, 1);
       }
@@ -546,9 +569,11 @@ private:
         }
       }
       for (entity_id stolen_object_id : node->objects_here) {
-        auto& nodes = accessor->template get_mut<bbcd_entry_metadata>(accessor->get(stolen_object_id), bbcd_id)->nodes;
-        nodes.erase(stolen_node_id);
-        nodes.insert(node_ref.id());
+        auto se = accessor->get(stolen_object_id);
+        auto& metadata = *accessor->template get_mut<bbcd_entry_metadata>(se, bbcd_id);
+        metadata.nodes = metadata.nodes.erase(stolen_node_id);
+        metadata.nodes = metadata.nodes.insert(node_ref.id());
+//         check_metadata(accessor, metadata, se.id());
       }
     }
     else {
@@ -712,7 +737,7 @@ private:
             }
           }
           entity_ref inserted_at_ref = insert_zbox_with_hint(best_hint_ref, zb);
-          old_nodes_to_remove.erase(inserted_at_ref.id());
+          old_nodes_to_remove = old_nodes_to_remove.erase(inserted_at_ref.id());
         //}
       }
       erase_from_nodes(accessor, bbcd_id, e, metadata, old_nodes_to_remove);
@@ -736,8 +761,10 @@ private:
       return insert_zbox_downwards(hint_node_ref, box);
     }
     void insert_zbox_at(optional<ztree_node>& node, entity_id node_id) {
-      node->objects_here.insert(e.id());
-      metadata.nodes.insert(node_id);
+//       check_node(accessor_, node_id, bbcd_id);
+      node->objects_here = node->objects_here.insert(e.id());
+      metadata.nodes = metadata.nodes.insert(node_id);
+//       check_node(accessor_, node_id, bbcd_id);
     }
     entity_ref insert_zbox_downwards(entity_ref node_ref, zbox const& box) {
       auto& node = accessor_->template get_mut<ztree_node>(node_ref);

@@ -137,12 +137,12 @@ public:
     time_steward_system::persistent_id_set& c0_overlaps = *accessor->get_mut<circle_overlaps>(e0);
     time_steward_system::persistent_id_set& c1_overlaps = *accessor->get_mut<circle_overlaps>(e1);
     if (d < 0) {
-      c0_overlaps.insert(id1);
-      c1_overlaps.insert(id0);
+      c0_overlaps = c0_overlaps.insert(id1);
+      c1_overlaps = c1_overlaps.insert(id0);
     }
     else {
-      c0_overlaps.erase(id1);
-      c1_overlaps.erase(id0);
+      c0_overlaps = c0_overlaps.erase(id1);
+      c1_overlaps = c1_overlaps.erase(id0);
     }
     update_acceleration(accessor, e0);
     update_acceleration(accessor, e1);
@@ -224,11 +224,13 @@ struct circles_overlapping_bbox_filter {
   time_steward::accessor const* accessor;
   bbcd_system::bounding_box bbox;
   
-  bool min_cost(bbcd_system::bounding_box bbox2) { return bbox.overlaps(bbox2); }
+  bool min_cost(bbcd_system::bounding_box bbox2) {
+    return bbox.overlaps(bbox2);
+  }
   bool cost(entity_id id) {
-    auto e = accessor->get<circle_shape>(accessor->get(id));
-    auto c = e->center.get_term<space_coordinate>(accessor->now(), 0);
-    auto r = e->radius(accessor->now());
+    auto ci = accessor->get<circle_shape>(accessor->get(id));
+    auto c = ci->center.get_term<space_coordinate>(accessor->now(), 0);
+    auto r = ci->radius(accessor->now());
     space_coordinate square_sum = 0;
     for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
       space_coordinate min = bbox_to_space(bbox.min()[i]);

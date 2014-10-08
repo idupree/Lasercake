@@ -740,6 +740,7 @@ public:
           num_bits_type child = which_child(id, back_bits());
           
           while (!back() || back().is_leaf() || !(back().node().children_exist & ~((1<<(child+1))-1))) {
+            if (back() && !back().is_leaf()) { assert(popcount(back().node().children_exist & ((1U<<child)-1)) + 1 == back().num_children()); }
             bool check = bool(back());
             if (path_len == 1) {
               id = siphash_id::null();
@@ -750,7 +751,10 @@ public:
             if (check) { assert(back().node().children_exist & (1<<child)); }
           }
           
-          path[path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1U<<child)-1U)) + 1);
+          num_bits_type idx = popcount(back().node().children_exist & ((1U<<child)-1)) + 1;
+          assert (idx < back().num_children());
+          assert (idx >= 0);
+          path[path_len] = back().child_by_idx(idx);
           ++path_len;
         }
         
@@ -766,6 +770,7 @@ public:
           num_bits_type child = which_child(id, back_bits());
           
           while (!back() || back().is_leaf() || !(back().node().children_exist & ((1<<child)-1))) {
+            if (back() && !back().is_leaf()) { assert(popcount(back().node().children_exist & ((1U<<child)-1)) == 0); }
             bool check = bool(back());
             if (path_len == 1) {
               id = siphash_id::null();
@@ -776,7 +781,10 @@ public:
             if (check) { assert(back().node().children_exist & (1<<child)); }
           }
           
-          path[path_len] = back().child_by_idx(popcount(back().node().children_exist & ((1U<<child)-1U)) - 1);
+          num_bits_type idx = popcount(back().node().children_exist & ((1U<<child)-1)) + 1;
+          assert (idx < back().num_children());
+          assert (idx >= 0);
+          path[path_len] = back().child_by_idx();
           ++path_len;
         }
         while (!back().is_leaf()) {
@@ -785,7 +793,7 @@ public:
         }
         id = back().leaf().id();
       }
-      bool equal(iterator const& other)const { return back() == other.back(); }
+      bool equal(iterator const& other)const { return id == other.id; }
       value_type const& dereference()const { return back().leaf().value; }
       
       child_ptr& back() { return path[path_len-1]; }
@@ -824,8 +832,16 @@ public:
     return erase(find(k));
   }
   static persistent_siphash_id_trie erase(iterator const& i) {
+//     std::vector<child_ptr> old_leaves;
+//     for (iterator j = persistent_siphash_id_trie(i.path[0]).begin(); j != persistent_siphash_id_trie(i.path[0]).end(); ++j) {
+//       if (j.id != i.id) old_leaves.push_back(j.back());
+//     }
     persistent_siphash_id_trie result = unset_leaf(i);
     assert(!result.find(i.id));
+//     size_t idx = 0;
+//     for (iterator j = result.begin(); j != result.end(); ++j) {
+//       assert(old_leaves[idx++] == j.back());
+//     }
     return result;
   }
   iterator find(key_type k)const {
@@ -968,6 +984,20 @@ private:
         assert(new_idx == new_num_children);
         assert(walker_parent.num_children() == new_num_children);
         walker = walker_parent;
+      }
+      else if ((new_num_children == 1) && (!walker)) {
+        assert(old_parent.num_children() == 2);
+        num_bits_type other_child_bit = old_parent.node().children_exist & ~(1<<child_idx);
+        child_ptr other_child = old_parent.child_by_bit(other_child_bit); // TODO optimize
+        if (other_child.is_leaf()) {
+          walker = other_child;
+        }
+        else {
+          walker = allocate_node(1);
+          walker.node().children_exist = other_child_bit;
+          walker.child_by_idx(0) = other_child;
+          other_child.inc_ref();
+        }
       }
       
       old_child = old_parent;
