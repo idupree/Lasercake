@@ -160,10 +160,13 @@ public:
     coordinate_array min;
     coordinate_array max;
     for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
+      // Hack(?) YfL0RsxXt2nkCw: Include t-1, so that we can reliably catch "cease overlapping" events.
       space_coordinate c = ci.center(i)(t);
       space_coordinate r = ci.radius(t);
-      min[i] = space_to_bbox(c-r);
-      max[i] = space_to_bbox(c+r);
+      space_coordinate cl = ci.center(i)(t-1);
+      space_coordinate rl = ci.radius(t-1);
+      min[i] = std::min(space_to_bbox(c-r), space_to_bbox(cl-rl));
+      max[i] = std::max(space_to_bbox(c+r), space_to_bbox(cl+rl));
     }
     return bounding_box::min_and_max(min, max);
   }
@@ -211,7 +214,8 @@ public:
       }
     }
     if (overlapping) {
-      when = std::min(when, last_update + (time_units_per_gloppp>>6));
+      const time_type next_update = last_update + (time_units_per_gloppp>>6);
+      when = (when == never) ? next_update : std::min(when, next_update);
     }
     if (when != never) {
       accessor->anticipate_event(when, std::shared_ptr<event>(new circles_interact(e0.id(), e1.id())));

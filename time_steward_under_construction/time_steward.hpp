@@ -270,6 +270,7 @@ template<typename ValueType>
 struct entry_ref {
 public:
   entry_ref():data(nullptr){}
+  entry_ref(entry_ref const& o):data(o.data) { if (data) { ++data->ref_count; } }
   bool operator< (entry_ref const& o)const { return data->idx <  o.data->idx; }
   bool operator> (entry_ref const& o)const { return data->idx >  o.data->idx; }
   bool operator<=(entry_ref const& o)const { return data->idx <= o.data->idx; }
@@ -280,10 +281,12 @@ public:
   ValueType& operator*()const { return data->contents; }
   ValueType* operator->()const { return &data->contents; }
   entry_ref& operator=(entry_ref const& o){ dec_ref(); data = o.data; if (data) { ++data->ref_count; } }
+  ~entry_ref() { dec_ref(); }
 private:
   void dec_ref() {
-    if (--data->ref_count == 0) {
-      delete data;
+    if (data && (--data->ref_count == 0)) {
+      // Hack, TODO fix: no way to delete things once they are placed
+      if (data->idx == no_idx) delete data;
     }
   }
   entry_ref(entry<ValueType>* data):data(data){ ++data->ref_count; }
@@ -302,7 +305,6 @@ public:
   typedef impl::entry_ref<ValueType> entry_ref;
   template <class... Args>
   entry_ref construct(Args&&... args) {
-    // TODO: don't leak memory (reference count?)
     // TODO: better allocator
     return entry_ref(new entry(no_idx, std::forward<Args>(args)...));
   }
