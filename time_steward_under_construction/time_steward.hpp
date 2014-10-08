@@ -1572,7 +1572,7 @@ private:
   struct trigger_call_info {
     trigger_call_info():field_changes_andor_creations_triggering_this(0){}
     uint32_t field_changes_andor_creations_triggering_this;
-    std::set<extended_time> anticipated_events;
+    std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
   };
   struct event_pile_info {
     event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id::null()) :

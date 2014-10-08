@@ -45,9 +45,11 @@ using time_steward_system::none;
 typedef time_steward_system::time_steward<time_steward_system::fields_list<int>> hack_time_steward;
 typedef hack_time_steward::time_type time_type;
 const time_type never = hack_time_steward::never;
-typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate> poly;
+typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate, 1> poly1;
+typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate, 3> poly3;
+typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate, 5> poly5;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, space_coordinate> fd_vector;
-typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, poly> poly_fd_vector;
+typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, poly3> poly3_fd_vector;
 typedef time_steward_system::entity_id entity_id;
 
 uint64_t space_to_bbox(space_coordinate const& input) {
@@ -65,20 +67,20 @@ const int64_t arena_width = position_units_per_zolttt << 10;
 const int64_t view_width = arena_width >> 3;
 
 struct circle_shape {
-  circle_shape(poly_fd_vector center, poly radius):center(center),radius(radius){}
+  circle_shape(poly3_fd_vector center, poly1 radius):center(center),radius(radius){}
   
-  poly_fd_vector center;
-  poly radius;
+  poly3_fd_vector center;
+  poly1 radius;
 };
 
 struct circle_overlaps {};
 struct circle_last_update {};
 
-poly distish(circle_shape const& c1, circle_shape const& c2) {
+poly5 distish(circle_shape const& c1, circle_shape const& c2) {
   const auto d = c1.center - c2.center;
-  const auto d_mag_sq = d.dot(d);
-  const auto radsum = c1.radius + c2.radius;
-  const auto r_sq = (radsum*radsum);
+  const poly5 d_mag_sq = d.dot(d);
+  const poly1 radsum = c1.radius + c2.radius;
+  const poly1 r_sq = (radsum*radsum);
   return d_mag_sq - r_sq;
 }
 
@@ -179,13 +181,13 @@ public:
     auto c = accessor->get<circle_shape>(e);
     time_type result = never;
     for (num_coordinates_type i = 0; i < num_dimensions; ++i) {
-      const poly min_poly = c->center(i) - c->radius - bbox_to_space(bbox.min(i));
+      const poly3 min_poly = c->center(i) - c->radius - bbox_to_space(bbox.min(i));
       for (auto j = min_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != min_poly.sign_interval_boundaries_end(); ++j) {
         if ((min_poly(*j) < 0) && ((result == never) || (*j < result))) {
           result = *j;
         }
       }
-      const poly max_poly = c->center(i) + c->radius - bbox_to_space(bbox.max(i));
+      const poly3 max_poly = c->center(i) + c->radius - bbox_to_space(bbox.max(i));
       for (auto j = max_poly.sign_interval_boundaries_upper_bound(accessor->now()); j != max_poly.sign_interval_boundaries_end(); ++j) {
         if ((max_poly(*j) > 0) && ((result == never) || (*j < result))) {
           result = *j;
@@ -204,7 +206,7 @@ public:
     auto c1 = accessor->get<circle_shape>(e1);
     const time_type last_update = std::max(accessor->get<circle_last_update>(e0), accessor->get<circle_last_update>(e1));
     
-    const poly d = distish(*c0, *c1);
+    const poly5 d = distish(*c0, *c1);
     time_type when = never;
     const bool overlapping = d(last_update) < 0;
     for (auto i = d.sign_interval_boundaries_upper_bound(last_update); i != d.sign_interval_boundaries_end(); ++i) {
@@ -257,13 +259,16 @@ public:
     srand(0);
     for (int i = 0; i < 150; ++i) {
       auto e = accessor->create_entity();
-      std::vector<space_coordinate> xv; xv.push_back(-(arena_width/2)+(rand()%1024)*(arena_width/1024));
-      xv.push_back((-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp)); // "Might cross the whole arena in only ten gloppps"
-      std::vector<space_coordinate> yv; yv.push_back(-(arena_width/2)+(rand()%1024)*(arena_width/1024));
-      yv.push_back((-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp)); // "Might cross the whole arena in only ten gloppps"
+      space_coordinate a = -(arena_width/2)+(rand()%1024)*(arena_width/1024);
+      space_coordinate b = (-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
+      space_coordinate c = -(arena_width/2)+(rand()%1024)*(arena_width/1024);
+      space_coordinate d = (-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
+      
       accessor->set<circle_shape>(e, circle_shape(
-        poly_fd_vector(poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(xv)), poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(yv))),
-        poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>((50+(rand()%100))*arena_width/5000)) // 1-3% the width of the arena
+        poly3_fd_vector(
+          poly3(0, poly3::without_origin_t(a,b)),
+          poly3(0, poly3::without_origin_t(c,d))),
+        poly1(0, poly1::without_origin_t((50+(rand()%100))*arena_width/5000)) // radius: 1-3% the width of the arena
       ));
       accessor->set<circle_last_update>(e, 0);
       bbcd_operations::insert(accessor, bbcd.id(), e);

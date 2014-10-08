@@ -114,11 +114,36 @@ public:
   iterator end() { return iterator(this, size_); }
 };
 
-template<typename DomainType, typename ValueType = DomainType>
+typedef uint32_t num_terms_t;
+
+template<typename Poly, num_terms_t idx_so_far, typename...Args>
+struct polynomial_construct_helper;
+template<typename Poly, num_terms_t idx_so_far, typename Head, typename...Tail>
+struct polynomial_construct_helper<Poly, idx_so_far, Head, Tail...> {
+  static inline void func(Poly& poly, Head head, Tail... tail) {
+    poly.terms[idx_so_far] = head;
+    polynomial_construct_helper<Poly, idx_so_far+1, Tail...>::func(poly, std::forward<Tail>(tail)...);
+  }
+};
+template<typename Poly, num_terms_t idx_so_far>
+struct polynomial_construct_helper<Poly, idx_so_far> {
+  static inline void func(Poly& poly) {
+    static_assert(idx_so_far <= Poly::max_terms, "Constructing a polynomial with more terms than its max");
+    poly.num_terms = idx_so_far;
+    poly.prune_leading_zeroes();
+    poly.check_coefficients();
+  }
+};
+
+template<typename DomainType, typename ValueType, num_terms_t MaxTerms>
 class polynomial {
 public:
+  template<typename OtherDomainType, typename OtherValueType, num_terms_t OtherMaxTerms>
+  friend class polynomial;
+  static_assert(MaxTerms > 0, "We don't support 0-term polynomials");
   typedef ValueType value_type;
   typedef DomainType domain_type;
+  static const num_terms_t max_terms = MaxTerms;
   static const value_type lots = std::numeric_limits<value_type>::max();
   static const value_type neglots = std::numeric_limits<value_type>::min();
   static const value_type max_coefficient = lots-1;
@@ -153,15 +178,15 @@ private:
       if ((accumulated <= 0) && !pos_summands.empty()) { accumulated += pos_summands.back(); pos_summands.pop_back(); }
       else if ((accumulated >= 0) && !neg_summands.empty()) { accumulated += neg_summands.back(); neg_summands.pop_back(); }
       else {
-        for (size_t i = 0; i < pos_summands.size(); ++i) {
+        for (num_terms_t i = 0; i < pos_summands.size(); ++i) {
           sum_type const& summand = pos_summands[i];
           caller_error_if(summand > max_coefficient, "overflow in polynomial operation");
           accumulated += summand;
           caller_error_if(accumulated > max_coefficient, "overflow in polynomial operation");
         }
-        for (size_t i = 0; i < neg_summands.size(); ++i) {
+        for (num_terms_t i = 0; i < neg_summands.size(); ++i) {
           sum_type const& summand = neg_summands[i];
-          caller_error_if(summand < min_coefficient, "overflow in polynomial operation");
+          caller_error_if(summand < min_coefficient, "underflow in polynomial operation");
           accumulated += summand;
           caller_error_if(accumulated < min_coefficient, "underflow in polynomial operation");
         }
@@ -172,106 +197,144 @@ private:
     }
   }
   
-  void push_term(value_type c) {
-    if (c != 0) {
-      terms.push_back(c);
-      check_coefficient(c);
-    }
-  }
-  void force_term(value_type c) {
-    terms.push_back(c);
-    check_coefficient(c);
-  }
-  
 public:
-  polynomial():terms(){}
-  void operator=(value_type c) { terms.clear(); push_term(c); }
+  polynomial():num_terms(0){}
+  void operator=(value_type c) { terms[0] = c; num_terms = (c != 0); }
   // Note: we start with the constant term, not the "leading" term
-  polynomial(value_type c){ push_term(c); }
-  polynomial(value_type c, value_type x1){ force_term(c); push_term(x1); prune_leading_zeroes(); }
-  polynomial(value_type c, value_type x1, value_type x2){ force_term(c); force_term(x1); push_term(x2); prune_leading_zeroes(); }
-  polynomial(value_type c, value_type x1, value_type x2, value_type x3){ force_term(c); force_term(x1); force_term(x2); push_term(x3); prune_leading_zeroes(); }
-  polynomial(value_type c, value_type x1, value_type x2, value_type x3, value_type x4){ force_term(c); force_term(x1); force_term(x2); force_term(x3); push_term(x4); prune_leading_zeroes(); }
-  polynomial(std::vector<value_type> const& terms) : terms(terms) {
-    prune_leading_zeroes();
-    check_coefficients();
-  }
+  polynomial(value_type c):num_terms(c != 0){ terms[0] = c; }
+  
+  template<typename Poly, num_terms_t idx_so_far, typename...Args>
+  friend struct polynomial_construct_helper;
+  template<typename T1, typename T2, typename...T>
+  polynomial(T1 data1, T2 data2, T... data){ polynomial_construct_helper<polynomial, 0, T1, T2, T...>::func(*this, std::forward<T1>(data1), std::forward<T2>(data2), std::forward<T>(data)...); }
   
   value_type get_term(uint32_t which)const {
-    if (which < terms.size()) return terms[which];
+    if (which < num_terms) return terms[which];
     return 0;
   }
   void set_term(uint32_t which, value_type new_value) {
     check_coefficient(new_value);
     if (new_value == 0) {
-      if (which+1 == terms.size()) terms.pop_back();
-      if (which+1 < terms.size()) terms[which] = 0;
+      if (which+1 < num_terms) {
+        terms[which] = 0;
+      }
+      if (which+1 == num_terms) {
+        --num_terms;
+        prune_leading_zeroes();
+      }
     }
     else {
-      if (which < terms.size()) terms[which] = new_value;
+      if (which < num_terms){
+        terms[which] = new_value;
+      }
       else {
-        terms.resize(which, 0);
-        terms.push_back(new_value);
+        resize(which);
+        push_back(new_value);
       }
     }
   }
   
   polynomial derivative()const {
     polynomial result;
-    if (terms.size() > 1) {
-      result.terms.reserve(terms.size() - 1);
-      for (size_t i = 1; i < terms.size(); ++i) {
-        result.terms.push_back(terms[i]*i);
+    if (num_terms > 1) {
+      for (num_terms_t i = 1; i < num_terms; ++i) {
+        result.push_back(terms[i]*i);
       }
     }
     return result;
   }
   
-  void operator+=(polynomial const& other) {
-    if (terms.size() < other.terms.size()) { terms.resize(other.terms.size(), 0); }
-    terms.reserve(other.terms.size());
-    for (size_t i = 0; i < other.terms.size(); ++i) {
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<OtherMaxTerms <= max_terms> operator+=(polynomial<domain_type, value_type, OtherMaxTerms> const& other) {
+    if (num_terms < other.num_terms) { resize(other.num_terms); }
+    for (num_terms_t i = 0; i < other.num_terms; ++i) {
       terms[i] = checked_add(terms[i], other.terms[i]);
     }
     prune_leading_zeroes();
   }
-  polynomial operator+(polynomial const& other)const {
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<OtherMaxTerms <= max_terms, polynomial> operator+(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
     polynomial result(*this); result += other; return std::move(result);
   }
-  void operator-=(polynomial const& other) {
-    if (terms.size() < other.terms.size()) { terms.resize(other.terms.size(), 0); }
-    for (size_t i = 0; i < other.terms.size(); ++i) {
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<(OtherMaxTerms > max_terms), polynomial<domain_type, value_type, OtherMaxTerms>> operator+(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
+    polynomial<domain_type, value_type, OtherMaxTerms> result(other); result += *this; return std::move(result);
+  }
+  void operator+=(value_type const& other) {
+    if (num_terms == 0) { check_coefficient(other); num_terms = 1; terms[0] = other; }
+    else {
+      terms[0] = checked_add(terms[0], other);
+      if (num_terms == 1 && terms[0] == 0) num_terms = 0;
+    }
+  }
+  polynomial operator+(value_type const& other)const {
+    polynomial result(*this); result += other; return std::move(result);
+  }
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<OtherMaxTerms <= max_terms> operator-=(polynomial<domain_type, value_type, OtherMaxTerms> const& other) {
+    if (num_terms < other.num_terms) { resize(other.num_terms); }
+    for (num_terms_t i = 0; i < other.num_terms; ++i) {
       terms[i] = checked_add(terms[i], -other.terms[i]);
     }
     prune_leading_zeroes();
   }
-  polynomial operator-(polynomial const& other)const {
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<OtherMaxTerms <= max_terms, polynomial> operator-(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
     polynomial result(*this); result -= other; return std::move(result);
   }
-  polynomial operator*(polynomial const& other)const {
-    polynomial result;
-    if (terms.empty() || other.terms.empty()) return std::move(result);
-    const int result_terms = terms.size()+other.terms.size()-1;
-    result.terms.resize(result_terms, 0);
-    for (int i = 0; i < result_terms; ++i) {
-      // to determine result.terms[i]
-      const int first = std::max(0, int(i-(other.terms.size()-1)));
-      const int  last = std::min(i, int(terms.size()-1));
-      // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
-      arrayvector<std::vector<bigger_int_t>, 8> pos_summands;
-      arrayvector<std::vector<bigger_int_t>, 8> neg_summands;
-      for (int j = first; j <= last; ++j) {
-        const int k = i-j;
-        const bigger_int_t summand = lossless_multiply(terms[j], other.terms[k]);
-        ((summand<0) ? neg_summands : pos_summands).push_back(summand);
-      }
-      result.terms[i] = lenient_sum(pos_summands, neg_summands);
+  template<num_terms_t OtherMaxTerms>
+  std::enable_if_t<(OtherMaxTerms > max_terms), polynomial<domain_type, value_type, OtherMaxTerms>> operator-(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
+    polynomial<domain_type, value_type, OtherMaxTerms> result(other); result -= *this; return std::move(result);
+  }
+  void operator-=(value_type const& other) {
+    if (num_terms == 0) { check_coefficient(-other); num_terms = 1; terms[0] = -other; }
+    else {
+      terms[0] = checked_add(terms[0], -other);
+      if (num_terms == 1 && terms[0] == 0) num_terms = 0;
     }
-    
+  }
+  polynomial operator-(value_type const& other)const {
+    polynomial result(*this); result -= other; return std::move(result);
+  }
+  template<num_terms_t OtherMaxTerms>
+  polynomial<domain_type, value_type, max_terms + OtherMaxTerms - 1> operator*(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
+    polynomial<domain_type, value_type, max_terms + OtherMaxTerms - 1> result;
+    if (num_terms > 0 && other.num_terms > 0) {
+      const int result_terms = num_terms+other.num_terms-1;
+      result.num_terms = result_terms;
+      for (int i = 0; i < result_terms; ++i) {
+        // to determine result.terms[i]
+        const int first = std::max(0, int(i-(other.num_terms-1)));
+        const int  last = std::min(i, int(num_terms-1));
+        // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
+        arrayvector<std::vector<bigger_int_t>, 8> pos_summands;
+        arrayvector<std::vector<bigger_int_t>, 8> neg_summands;
+        for (int j = first; j <= last; ++j) {
+          const int k = i-j;
+          const bigger_int_t summand = lossless_multiply(terms[j], other.terms[k]);
+          ((summand<0) ? neg_summands : pos_summands).push_back(summand);
+        }
+        result.terms[i] = lenient_sum(pos_summands, neg_summands);
+      }
+    }
     return std::move(result);
   }
-  void operator*=(polynomial const& other) {
-    *this = *this * other;
+//   void operator*=(polynomial const& other) {
+//     *this = *this * other;
+//   }
+  void operator*=(value_type const& other) {
+    if (other == 0) { num_terms = 0; }
+    else {
+      for (num_terms_t i = 0; i < other.num_terms; ++i) {
+        const auto product = lossless_multiply(terms[i], other);
+        caller_error_if(product > max_coefficient, "overflow in polynomial operation");
+        caller_error_if(product < min_coefficient, "underflow in polynomial operation");
+        terms[i] = value_type(product);
+      }
+    }
+  }
+  polynomial operator*(value_type const& other)const {
+    polynomial result(*this); result *= other; return std::move(result);
   }
   
   polynomial operator-()const {
@@ -282,28 +345,30 @@ public:
     }
     return std::move(result);
   }
-  bool operator==(polynomial const& other)const {
-    if (terms.size() != other.terms.size()) return false;
-    for (size_t i = 0; i < terms.size(); ++i) {
+  template<num_terms_t OtherMaxTerms>
+  bool operator==(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
+    if (num_terms != other.num_terms) return false;
+    for (num_terms_t i = 0; i < num_terms; ++i) {
       if (terms[i] != other.terms[i]) return false;
     }
     return true;
   }
-  bool operator!=(polynomial const& other)const {
+  template<num_terms_t OtherMaxTerms>
+  bool operator!=(polynomial<domain_type, value_type, OtherMaxTerms> const& other)const {
     return !((*this) == other);
   }
   
   value_type taylor_coefficient(domain_type const& origin, uint32_t which_term)const {
     // Taylor series entries are (nth derivative at a)/(n!) (x-a)^n
-    // (nth derivative at a) = \sum_i=n^{terms.size()-1} terms[i]*(i!/(i-n)!) a^(i-n)
-    // so, taylor series coefficient n = \sum_i=n^{terms.size()-1} terms[i]*(i choose n) a^(i-n)
-    if (which_term >= terms.size()) return 0;
+    // (nth derivative at a) = \sum_i=n^{num_terms-1} terms[i]*(i!/(i-n)!) a^(i-n)
+    // so, taylor series coefficient n = \sum_i=n^{num_terms-1} terms[i]*(i choose n) a^(i-n)
+    if (which_term >= num_terms) return 0;
     domain_type factor = 1;
     // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
     arrayvector<std::vector<bigger_int_t>, 8> pos_summands;
     arrayvector<std::vector<bigger_int_t>, 8> neg_summands;
     ((terms[which_term]<0) ? neg_summands : pos_summands).push_back(terms[which_term]);
-    for (uint32_t i = which_term+1; i < terms.size(); ++i) {
+    for (uint32_t i = which_term+1; i < num_terms; ++i) {
       factor *= origin;
       const bigger_int_t summand = lossless_multiply(terms[i], binomial_coefficient(i, which_term) * factor);
       ((summand<0) ? neg_summands : pos_summands).push_back(summand);
@@ -312,8 +377,8 @@ public:
   }
   
   void move_origin(domain_type const& new_origin) {
-    if (terms.size() > 1) {
-      for (uint32_t i = 0; i+1 < terms.size(); ++i) {
+    if (num_terms > 1) {
+      for (uint32_t i = 0; i+1 < num_terms; ++i) {
         terms[i] = taylor_coefficient(new_origin, i);
       }
     }
@@ -334,7 +399,7 @@ public:
       // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
       arrayvector<std::vector<value_type>, 8> pos_summands;
       arrayvector<std::vector<value_type>, 8> neg_summands;
-      for (size_t i = 0; i < terms.size(); ++i) {
+      for (num_terms_t i = 0; i < num_terms; ++i) {
         const value_type summand = ((input<0) && (i&1)) ? -terms[i] : terms[i];
         ((summand<0) ? neg_summands : pos_summands).push_back(summand);
       }
@@ -356,7 +421,7 @@ public:
       }
     }
     value_type result = 0;
-    for (int i = terms.size()-1; i >= 0; --i) {
+    for (int i = num_terms-1; i >= 0; --i) {
       auto i_and_above_part = lossless_multiply(result, input) + terms[i];
       // Suppose i_and_above_part is out of bounds. WLOG assume, i_and_above_part > 0, input > 0 (so input > 1).
       // Then, in the next cycle, 
@@ -375,8 +440,8 @@ public:
     return result;
   }
   
-  sign neginf_sign()const { if (terms.empty()) return 0; else return terms.back() * ((terms.size() & 1) ? 1 : -1); }
-  sign posinf_sign()const { if (terms.empty()) return 0; else return terms.back(); }
+  sign neginf_sign()const { if (num_terms == 0) return 0; else return back() * ((num_terms & 1) ? 1 : -1); }
+  sign posinf_sign()const { if (num_terms == 0) return 0; else return back(); }
   
   class sign_interval_boundary_iterator {
   private:
@@ -418,8 +483,8 @@ public:
       assert(p_);
       advance_to(start);
       
-      if (p_->terms.size() <= 1) {}
-      else if (p_->terms.size() == 2) {
+      if (p_->num_terms <= 1) {}
+      else if (p_->num_terms == 2) {
         const domain_type at_or_below_the_zero = divide(-p_->terms[0], p_->terms[1], rounding_strategy<round_down, negative_continuous_with_positive>());
         future[0] = at_or_below_the_zero+1;
         future[1] = at_or_below_the_zero;
@@ -430,7 +495,7 @@ public:
           future_size = 3;
         }
       }
-      else if (p_->terms.size() == 3) {
+      else if (p_->num_terms == 3) {
         // Quadratics are getting more complicated, but we've got the quadratic formula.
         value_type const& a = p_->terms[2];
         value_type const& b = p_->terms[1];
@@ -473,7 +538,7 @@ public:
         }
       }
       else {
-        assert(p_->terms.size() > 3);
+        assert(p_->num_terms > 3);
         derivative_ = p_->derivative();
         derivative_iterator_ = std::unique_ptr<sign_interval_boundary_iterator>(new sign_interval_boundary_iterator(&derivative_, start));
       }
@@ -558,26 +623,43 @@ public:
   }
   
   friend inline std::ostream& operator<<(std::ostream& os, polynomial const& p) {
-    for (size_t i = 0; i < p.terms.size(); ++i) {
+    for (num_terms_t i = 0; i < p.num_terms; ++i) {
       os << p.terms[i] << "x^" << i;
-      if ((i+1) != p.terms.size()) os << " + ";
+      if ((i+1) != p.num_terms) os << " + ";
     }
     return os;
   }
 private:
-  std::vector<value_type> terms;
+  num_terms_t num_terms;
+  std::array<value_type, max_terms> terms;
   void prune_leading_zeroes() {
-    while((!terms.empty()) && (terms.back() == 0)) { terms.pop_back(); }
+    while((num_terms > 0) && (back() == 0)) { --num_terms; }
+  }
+  void resize(num_terms_t new_size) {
+    // TODO: can memset instead?
+    for (num_terms_t i = num_terms; i < new_size; ++i) {
+      terms[i] = 0;
+    }
+    num_terms = new_size;
+  }
+  void push_back(value_type v) {
+    terms[num_terms++] = v;
+  }
+  value_type back()const {
+    return terms[num_terms-1];
   }
 };
 
-template<typename DomainType, typename ValueType = DomainType>
+template<typename DomainType, typename ValueType, num_terms_t MaxTerms>
 class polynomial_with_origin {
 public:
+  template<typename OtherDomainType, typename OtherValueType, num_terms_t OtherMaxTerms>
+  friend class polynomial_with_origin;
   typedef DomainType domain_type;
   typedef ValueType value_type;
-  typedef polynomial<domain_type, value_type> poly;
-  polynomial_with_origin(domain_type const& origin, poly const& p)
+  static const num_terms_t max_terms = MaxTerms;
+  typedef polynomial<domain_type, value_type, max_terms> without_origin_t;
+  polynomial_with_origin(domain_type const& origin, without_origin_t const& p)
     :origin(origin),p(p){}
   // "0" problem: 0 + foo != foo (because it has a different origin). TODO can we do better?
   // (technically they're equal, but the representations being different is weird)
@@ -600,26 +682,39 @@ public:
   
   polynomial_with_origin operator-()const { return polynomial_with_origin(origin, -p); }
   
-  void operator+=(polynomial_with_origin const& other) { p += other.p.with_origin(origin - other.origin); }
-  void operator-=(polynomial_with_origin const& other) { p -= other.p.with_origin(origin - other.origin); }
-  void operator*=(polynomial_with_origin const& other) { p *= other.p.with_origin(origin - other.origin); }
+  template<num_terms_t OtherMaxTerms>
+  void operator+=(polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other) { p += other.p.with_origin(origin - other.origin); }
+  template<num_terms_t OtherMaxTerms>
+  void operator-=(polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other) { p -= other.p.with_origin(origin - other.origin); }
+  template<num_terms_t OtherMaxTerms>
+  void operator*=(polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other) { p *= other.p.with_origin(origin - other.origin); }
   void operator+=(value_type const& other) { p += other; }
   void operator-=(value_type const& other) { p -= other; }
   void operator*=(value_type const& other) { p *= other; }
 private:
-  typedef polynomial_with_origin<domain_type, value_type> pwo;
+  
+  typedef polynomial_with_origin<domain_type, value_type, max_terms> pwo;
 public:
-  pwo operator+(pwo const& other)const { return pwo(origin, p + other.p.with_origin(origin - other.origin)); }
-  pwo operator-(pwo const& other)const { return pwo(origin, p - other.p.with_origin(origin - other.origin)); }
-  pwo operator*(pwo const& other)const { return pwo(origin, p * other.p.with_origin(origin - other.origin)); }
-  pwo operator+(value_type const& other)const { return pwo(origin, p + poly(other)); }
-  pwo operator-(value_type const& other)const { return pwo(origin, p - poly(other)); }
-  pwo operator*(value_type const& other)const { return pwo(origin, p * poly(other)); }
+  template<num_terms_t OtherMaxTerms>
+  polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() + polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator+(
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
+    polynomial_with_origin<domain_type, value_type, decltype(p + other.p)::max_terms>(origin, p + other.p.with_origin(origin - other.origin)); }
+  template<num_terms_t OtherMaxTerms>
+  polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() - polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator-(
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
+    polynomial_with_origin<domain_type, value_type, decltype(p - other.p)::max_terms>(origin, p - other.p.with_origin(origin - other.origin)); }
+  template<num_terms_t OtherMaxTerms>
+  polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() * polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator*(
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
+    polynomial_with_origin<domain_type, value_type, decltype(p * other.p)::max_terms>(origin, p * other.p.with_origin(origin - other.origin)); }
+  pwo operator+(value_type const& other)const { return pwo(origin, p + other); }
+  pwo operator-(value_type const& other)const { return pwo(origin, p - other); }
+  pwo operator*(value_type const& other)const { return pwo(origin, p * other); }
   
   class sign_interval_boundary_iterator {
   private:
     domain_type origin_;
-    typename poly::sign_interval_boundary_iterator backend_;
+    typename without_origin_t::sign_interval_boundary_iterator backend_;
   public:
     sign_interval_boundary_iterator(){}
     sign_interval_boundary_iterator(polynomial_with_origin const* p, domain_type start):origin_(p->origin),backend_(&p->p, start - p->origin){}
@@ -646,7 +741,7 @@ public:
   }
 private:
   domain_type origin;
-  poly p;
+  without_origin_t p;
 };
 
 
@@ -671,9 +766,10 @@ public:
   //template<typename ...T>
   //explicit finite_dimensional_vector(T&&...data):data{ std::forward<T>(data)... }{}
   
-  CoordinateType dot(finite_dimensional_vector const& other)const {
+  template<typename OtherCoordinateType>
+  decltype(std::declval<CoordinateType>()*std::declval<OtherCoordinateType>()) dot(finite_dimensional_vector<num_dimensions, OtherCoordinateType> const& other)const {
     // TODO: 0d vectors? deal with "0" problem with polynomial_with_origin
-    CoordinateType result(data[0] * other.data[0]);
+    decltype(std::declval<CoordinateType>()*std::declval<OtherCoordinateType>()) result(data[0] * other.data[0]);
     for (int i = 1; i < num_dimensions; ++i) result += data[i] * other.data[i];
     return result;
   }
@@ -737,14 +833,14 @@ private:
   std::array<CoordinateType, num_dimensions> data;
 };
 
-void test_iterate(polynomial<int64_t> p) {
+void test_iterate(polynomial<int64_t,int64_t,5> p) {
   std::cerr << "iterating " << p << "\n";
   for (auto i = p.sign_interval_boundaries_upper_bound(std::numeric_limits<int64_t>::min()); i != p.sign_interval_boundaries_end(); ++i) {
     std::cerr << *i << "\n";
   }
 }
 void test() {
-  typedef polynomial<int64_t> p;
+  typedef polynomial<int64_t,int64_t,5> p;
   const int64_t big = 1LL << 20;
   const int64_t huge = isqrt(p::max_coefficient)+2;
 #define SHOULD_EXCEPT(expr) \
