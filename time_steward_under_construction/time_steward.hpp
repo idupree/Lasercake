@@ -1254,10 +1254,10 @@ namespace fields_list_impl {
   };
 }
 template<typename ...Input> using fields_list = typename fields_list_impl::make_fields_list<Input...>::type;
-template<typename IdentifyingType, typename InnerDataType = IdentifyingType, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
-using field        = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, InnerDataTraits, false>;
-template<typename IdentifyingType, typename InnerDataType = IdentifyingType, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
-using field_per_id = fields_list_impl::fields_list_entry<IdentifyingType, optional<InnerDataType>, InnerDataTraits, true>;
+template<typename IdentifyingType, typename InnerDataType = optional<IdentifyingType>, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
+using field        = fields_list_impl::fields_list_entry<IdentifyingType, InnerDataType, InnerDataTraits, false>;
+template<typename IdentifyingType, typename InnerDataType = optional<IdentifyingType>, typename InnerDataTraits = fields_list_impl::default_field_traits<InnerDataType>>
+using field_per_id = fields_list_impl::fields_list_entry<IdentifyingType, InnerDataType, InnerDataTraits, true>;
 template<typename FieldsList, typename FieldID>
 using field_data = fields_list_impl::field_data<FieldsList, FieldID>;
 
@@ -1448,6 +1448,10 @@ public:
   static const time_type min_time = TimeTypeInfo::min_time;
   static const time_type max_time = TimeTypeInfo::max_time;
   static const time_type never = TimeTypeInfo::never;
+  struct time_field_traits {
+    static inline time_type null() { return never; }
+    static inline bool is_null(time_type const& t) { return t == null(); }
+  };
   
   // TODO can the action/event/trigger stuff be template parameters rather than always being virtual classes to be subclassed?
   class event {

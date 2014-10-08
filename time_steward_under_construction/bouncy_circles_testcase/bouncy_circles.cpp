@@ -72,6 +72,7 @@ struct circle_shape {
 };
 
 struct circle_overlaps {};
+struct circle_last_update {};
 
 poly distish(circle_shape const& c1, circle_shape const& c2) {
   const auto d = c1.center - c2.center;
@@ -87,7 +88,8 @@ struct global_data {
 };
 
 typedef bbox_collision_detector_system<64, num_dimensions> bbcd_system;
-typedef time_steward_system::fields_list<global_data, circle_shape, time_steward_system::field<circle_overlaps, time_steward_system::persistent_id_set>, bbcd_system::fields> fields;
+using time_steward_system::field;
+typedef time_steward_system::fields_list<global_data, circle_shape, field<circle_last_update, time_type, hack_time_steward::time_field_traits>, field<circle_overlaps, time_steward_system::persistent_id_set>, bbcd_system::fields> fields;
 typedef time_steward_system::time_steward<fields> time_steward;
 typedef time_steward::accessor accessor;
 typedef time_steward::event event;
@@ -97,7 +99,7 @@ typedef accessor::entity_ref entity_ref;
 void update_acceleration(accessor* accessor, entity_ref e) {
   fd_vector new_acceleration(0,0);
   circle_shape& c0 = *accessor->get_mut<circle_shape>(e);
-  for (entity_id other_id : *accessor->get<circle_overlaps>(e)) {
+  for (entity_id other_id : accessor->get<circle_overlaps>(e)) {
     auto other = accessor->get(other_id);
     circle_shape const& c1 = *accessor->get<circle_shape>(other);
     const fd_vector diff = (c0.center - c1.center).get_term<space_coordinate>(accessor->now(), 0);
@@ -114,6 +116,7 @@ void update_acceleration(accessor* accessor, entity_ref e) {
     }
   }
   c0.center.set_term(accessor->now(), 2, new_acceleration);
+  accessor->set<circle_last_update>(e, accessor->now());
 }
   
 
@@ -134,8 +137,8 @@ public:
     const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
     assert ((d < 0) == (magsq - (radsum*radsum) < 0));
     
-    time_steward_system::persistent_id_set& c0_overlaps = *accessor->get_mut<circle_overlaps>(e0);
-    time_steward_system::persistent_id_set& c1_overlaps = *accessor->get_mut<circle_overlaps>(e1);
+    time_steward_system::persistent_id_set& c0_overlaps = accessor->get_mut<circle_overlaps>(e0);
+    time_steward_system::persistent_id_set& c1_overlaps = accessor->get_mut<circle_overlaps>(e1);
     if (d < 0) {
       c0_overlaps = c0_overlaps.insert(id1);
       c1_overlaps = c1_overlaps.insert(id0);
@@ -196,19 +199,19 @@ public:
   void anticipate_interactions(accessor* accessor, entity_ref e0, entity_ref e1) {
     auto c0 = accessor->get<circle_shape>(e0);
     auto c1 = accessor->get<circle_shape>(e1);
+    const time_type last_update = std::max(accessor->get<circle_last_update>(e0), accessor->get<circle_last_update>(e1));
     
     const poly d = distish(*c0, *c1);
     time_type when = never;
-    const bool overlapping = d(0) < 0;
-    for (auto i = d.sign_interval_boundaries_upper_bound(accessor->now()); i != d.sign_interval_boundaries_end(); ++i) {
+    const bool overlapping = d(last_update) < 0;
+    for (auto i = d.sign_interval_boundaries_upper_bound(last_update); i != d.sign_interval_boundaries_end(); ++i) {
       if ((d(*i) < 0) != overlapping) {
         when = *i;
         break;
       }
     }
     if (overlapping) {
-      // TODO: this isn't idempotent when called at different times
-      when = std::max(when, accessor->now() + (time_units_per_gloppp>>6));
+      when = std::min(when, last_update + (time_units_per_gloppp>>6));
     }
     if (when != never) {
       accessor->anticipate_event(when, std::shared_ptr<event>(new circles_interact(e0.id(), e1.id())));
@@ -258,7 +261,7 @@ public:
         poly_fd_vector(poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(xv)), poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>(yv))),
         poly(0, bounded_int_calculus::polynomial<time_type,space_coordinate>((50+(rand()%100))*arena_width/5000)) // 1-3% the width of the arena
       ));
-      accessor->set<circle_overlaps>(e, time_steward_system::persistent_id_set());
+      accessor->set<circle_last_update>(e, 0);
       bbcd_operations::insert(accessor, bbcd.id(), e);
     }
   }

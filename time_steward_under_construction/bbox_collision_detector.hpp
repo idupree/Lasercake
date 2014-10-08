@@ -609,7 +609,7 @@ private:
       e(e),
       metadata(*accessor->template get_mut<bbcd_entry_metadata>(e, bbcd_id))
     {
-      optional<entity_id> const* root = nullptr;
+      entity_id const* root = nullptr;
       if (hint_nodes.empty()) {
         root = &accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id));
       }
@@ -713,8 +713,8 @@ private:
         //if (zb.overlaps(bbox)) {
           entity_ref best_hint_ref;
           if (hint_nodes.empty()) {
-            if ((*root) && (**root)) {
-              best_hint_ref = accessor->get(**root);
+            if (*root) {
+              best_hint_ref = accessor->get(*root);
             }
             else {
               best_hint_ref = accessor->create_entity();
@@ -1058,7 +1058,7 @@ public:
   template<typename GetCost>
   static inline boost::iterator_range<iterator<GetCost>> iterate(accessor const* accessor, entity_id bbcd_id, GetCost const& getcost) {
     typedef iterator<GetCost> iter;
-    boost::iterator_range<iter> result(iter(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost), iter());
+    boost::iterator_range<iter> result(iter(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost), iter());
     return result;
   }
   
@@ -1066,14 +1066,14 @@ public:
   static inline boost::optional<typename iterator<GetCost>::value_type> find_least(accessor const* accessor, entity_id bbcd_id, GetCost const& getcost) {
     typedef iterator<GetCost> iter;
     typedef boost::optional<typename iterator<GetCost>::value_type> result_type;
-    iter i(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost);
+    iter i(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), getcost);
     return i ? result_type(*i) : result_type();
   }
 
   template<typename GetCostBool>
   static inline std::unordered_set<entity_id> filter(accessor const* accessor, entity_id bbcd_id, GetCostBool getcost) {
     std::unordered_set<entity_id> results;
-    filter_impl(accessor, *accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), results, getcost);
+    filter_impl(accessor, accessor->template get<bbox_collision_detector_root_node>(accessor->get(bbcd_id)), results, getcost);
     return results;
   }
 }; // struct operations

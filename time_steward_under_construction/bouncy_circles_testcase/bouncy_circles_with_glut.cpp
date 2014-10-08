@@ -92,11 +92,35 @@ void draw_time(gl_triangles& triangles, time_steward& w, time_type time, gl_data
         (cube_size*time/view_duration)-cube_size/2,
         x + std::cos(theta)*rad,
         y + std::sin(theta)*rad,
-        accessor->get<circle_overlaps>(e)->empty() ? color : gl_data_format::color(0x00ffffb0)));
+        color));
     }
     push_wireframe_polygon(triangles, rad/5, polygon);
+    for (entity_id oid : accessor->get<circle_overlaps>(e)) {
+      auto oe = accessor->get(oid);
+      auto oc = accessor->get<circle_shape>(oe);
+      double ox = (double)oc->center(0)(accessor->now())*cube_size/view_width;
+      double oy = (double)oc->center(1)(accessor->now())*cube_size/view_width;
+      double theta = atan2(x-ox,oy-y);
+      gl_polygon opolygon;
+      opolygon.vertices_.push_back(gl_data_format::vertex_with_color(
+        (cube_size*time/view_duration)-cube_size/2,
+        x + std::cos(theta)*rad/3,
+        y + std::sin(theta)*rad/3,
+        color));
+      opolygon.vertices_.push_back(gl_data_format::vertex_with_color(
+        (cube_size*time/view_duration)-cube_size/2,
+        x - std::cos(theta)*rad/3,
+        y - std::sin(theta)*rad/3,
+        color));
+      opolygon.vertices_.push_back(gl_data_format::vertex_with_color(
+        (cube_size*time/view_duration)-cube_size/2,
+        ox,
+        oy,
+        color));
+      push_wireframe_polygon(triangles, rad/5, opolygon);
+    }
   }
-  draw_ztree_node(triangles, accessor.get(), *accessor->get<bbcd_system::bbox_collision_detector_root_node>(accessor->get(bbcd_id)), color);
+  draw_ztree_node(triangles, accessor.get(), accessor->get<bbcd_system::bbox_collision_detector_root_node>(accessor->get(bbcd_id)), color);
 }
 
 gl_triangles display(vector3<double> const& where, time_steward& w, time_type focus_time) {
