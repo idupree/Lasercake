@@ -1119,7 +1119,7 @@ namespace fields_list_impl {
   template<typename FieldsListEntry, template<typename> class Data>
   struct fields_list_entry_data<FieldsListEntry, Data, false, true> {
     typedef Data<typename FieldsListEntry::inner_data_type> inner_type;
-    typedef std::map<siphash_id, inner_type> type;
+    typedef std::unordered_map<siphash_id, inner_type> type;
     inner_type& get(siphash_id id) {
       return t[id];
     }

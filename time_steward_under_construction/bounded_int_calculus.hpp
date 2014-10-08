@@ -154,7 +154,9 @@ private:
     caller_correct_if(c >= min_coefficient && c <= max_coefficient, "polynomial coefficient out of bounds");
   }
   inline void check_coefficients() {
-    for (value_type term : terms) { check_coefficient(term); }
+    for (num_terms_t i = 0; i < num_terms; ++i) {
+      check_coefficient(terms[i]);
+    }
   }
   static inline bool add_overflows(value_type c1, value_type c2) {
     return (c1>>1)+(c2>>1)+(c1&c2&  max_coefficient &1)+((c1|c2)&(~max_coefficient)&1) > (max_coefficient>>1);
@@ -169,22 +171,22 @@ private:
   }
   // Add some numbers without allowing the final result to be out-of-bounds,
   // but tolerating (above_max)+(below_min) if the result is in bounds.
-  template<typename VectorType>
-  static value_type lenient_sum(VectorType& pos_summands, VectorType& neg_summands) {
-    typedef typename VectorType::value_type sum_type;
+  template<typename ArrayType>
+  static value_type lenient_sum(ArrayType& pos_summands, ArrayType& neg_summands, num_terms_t num_pos_summands, num_terms_t num_neg_summands) {
+    typedef typename ArrayType::value_type sum_type;
     // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
     sum_type accumulated = 0;
     while (true) {
-      if ((accumulated <= 0) && !pos_summands.empty()) { accumulated += pos_summands.back(); pos_summands.pop_back(); }
-      else if ((accumulated >= 0) && !neg_summands.empty()) { accumulated += neg_summands.back(); neg_summands.pop_back(); }
+      if ((accumulated <= 0) && (num_pos_summands > 0)) { accumulated += pos_summands[--num_pos_summands]; }
+      else if ((accumulated >= 0) && (num_neg_summands > 0)) { accumulated += neg_summands[--num_neg_summands]; }
       else {
-        for (num_terms_t i = 0; i < pos_summands.size(); ++i) {
+        for (num_terms_t i = 0; i < num_pos_summands; ++i) {
           sum_type const& summand = pos_summands[i];
           caller_error_if(summand > max_coefficient, "overflow in polynomial operation");
           accumulated += summand;
           caller_error_if(accumulated > max_coefficient, "overflow in polynomial operation");
         }
-        for (num_terms_t i = 0; i < neg_summands.size(); ++i) {
+        for (num_terms_t i = 0; i < num_neg_summands; ++i) {
           sum_type const& summand = neg_summands[i];
           caller_error_if(summand < min_coefficient, "underflow in polynomial operation");
           accumulated += summand;
@@ -307,14 +309,16 @@ public:
         const int first = std::max(0, int(i-(other.num_terms-1)));
         const int  last = std::min(i, int(num_terms-1));
         // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
-        arrayvector<std::vector<bigger_int_t>, 8> pos_summands;
-        arrayvector<std::vector<bigger_int_t>, 8> neg_summands;
+        std::array<bigger_int_t, (max_terms > OtherMaxTerms ? max_terms : OtherMaxTerms)> pos_summands;
+        std::array<bigger_int_t, (max_terms > OtherMaxTerms ? max_terms : OtherMaxTerms)> neg_summands;
+        num_terms_t num_pos_summands = 0;
+        num_terms_t num_neg_summands = 0;
         for (int j = first; j <= last; ++j) {
           const int k = i-j;
           const bigger_int_t summand = lossless_multiply(terms[j], other.terms[k]);
-          ((summand<0) ? neg_summands : pos_summands).push_back(summand);
+          ((summand<0) ? neg_summands[num_neg_summands++] : pos_summands[num_pos_summands++]) = summand;
         }
-        result.terms[i] = lenient_sum(pos_summands, neg_summands);
+        result.terms[i] = lenient_sum(pos_summands, neg_summands, num_pos_summands, num_neg_summands);
       }
     }
     return std::move(result);
@@ -339,9 +343,9 @@ public:
   
   polynomial operator-()const {
     polynomial result(*this);
-    for (value_type& c : result.terms) {
-      c = -c;
-      check_coefficient(c);
+    for (num_terms_t i = 0; i < result.num_terms; ++i) {
+      result.terms[i] = -result.terms[i];
+      check_coefficient(result.terms[i]);
     }
     return std::move(result);
   }
@@ -365,15 +369,17 @@ public:
     if (which_term >= num_terms) return 0;
     domain_type factor = 1;
     // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
-    arrayvector<std::vector<bigger_int_t>, 8> pos_summands;
-    arrayvector<std::vector<bigger_int_t>, 8> neg_summands;
-    ((terms[which_term]<0) ? neg_summands : pos_summands).push_back(terms[which_term]);
+    std::array<bigger_int_t, max_terms> pos_summands;
+    std::array<bigger_int_t, max_terms> neg_summands;
+    num_terms_t num_pos_summands = 0;
+    num_terms_t num_neg_summands = 0;
+    ((terms[which_term]<0) ? neg_summands[num_neg_summands++] : pos_summands[num_pos_summands++]) = terms[which_term];
     for (uint32_t i = which_term+1; i < num_terms; ++i) {
       factor *= origin;
       const bigger_int_t summand = lossless_multiply(terms[i], binomial_coefficient(i, which_term) * factor);
-      ((summand<0) ? neg_summands : pos_summands).push_back(summand);
+      ((summand<0) ? neg_summands[num_neg_summands++] : pos_summands[num_pos_summands++]) = summand;
     }
-    return lenient_sum(pos_summands, neg_summands);
+    return lenient_sum(pos_summands, neg_summands, num_pos_summands, num_neg_summands);
   }
   
   void move_origin(domain_type const& new_origin) {
@@ -397,24 +403,26 @@ public:
     // With ones, that doesn't work, so we need a special case.
     if ((input == 1) or (input == -1)) {
       // TODO reduce duplicate code (id z0IwiMnmm4DpFA)
-      arrayvector<std::vector<value_type>, 8> pos_summands;
-      arrayvector<std::vector<value_type>, 8> neg_summands;
+      std::array<value_type, max_terms> pos_summands;
+      std::array<value_type, max_terms> neg_summands;
+      num_terms_t num_pos_summands = 0;
+      num_terms_t num_neg_summands = 0;
       for (num_terms_t i = 0; i < num_terms; ++i) {
         const value_type summand = ((input<0) && (i&1)) ? -terms[i] : terms[i];
-        ((summand<0) ? neg_summands : pos_summands).push_back(summand);
+        ((summand<0) ? neg_summands[num_neg_summands++] : pos_summands[num_pos_summands++]) = summand;
       }
       value_type result = 0;
       while (true) {
-        if ((result <= 0) && !pos_summands.empty()) { result += pos_summands.back(); pos_summands.pop_back(); }
-        else if ((result >= 0) && !neg_summands.empty()) { result += neg_summands.back(); neg_summands.pop_back(); }
+        if ((result <= 0) && (num_pos_summands > 0)) { result += pos_summands[--num_pos_summands]; }
+        else if ((result >= 0) && (num_neg_summands > 0)) { result += neg_summands[--num_neg_summands]; }
         else {
-          for (value_type summand : pos_summands) {
-            if (add_overflows(result, summand)) { return lots; }
-            result += summand;
+          for (num_terms_t i = 0; i < num_pos_summands; ++i) {
+            if (add_overflows(result, pos_summands[i])) { return lots; }
+            result += pos_summands[i];
           }
-          for (value_type summand : neg_summands) {
-            if (add_underflows(result, summand)) { return neglots; }
-            result += summand;
+          for (num_terms_t i = 0; i < num_neg_summands; ++i) {
+            if (add_underflows(result, neg_summands[i])) { return lots; }
+            result += neg_summands[i];
           }
           return result;
         }
@@ -673,6 +681,9 @@ public:
     p.set_term(which_term, new_value);
   }
   value_type operator()(domain_type const& where)const { return p(where - origin); }
+  domain_type get_origin()const {
+    return origin;
+  }
   void set_origin(domain_type const& new_origin) {
     if (new_origin != origin) {
       p.move_origin(new_origin - origin);
@@ -697,16 +708,28 @@ private:
 public:
   template<num_terms_t OtherMaxTerms>
   polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() + polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator+(
-    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
-    polynomial_with_origin<domain_type, value_type, decltype(p + other.p)::max_terms>(origin, p + other.p.with_origin(origin - other.origin)); }
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { typedef
+    polynomial_with_origin<domain_type, value_type, decltype(p + other.p)::max_terms> ret_t;
+    if (origin == other.origin)          { return ret_t(      origin,       p + other.p); }
+    else if (max_terms >= OtherMaxTerms) { return ret_t(      origin,       p + other.p.with_origin(origin - other.origin)); }
+    else                                 { return ret_t(other.origin, other.p +       p.with_origin(other.origin - origin)); }
+  }
   template<num_terms_t OtherMaxTerms>
   polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() - polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator-(
-    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
-    polynomial_with_origin<domain_type, value_type, decltype(p - other.p)::max_terms>(origin, p - other.p.with_origin(origin - other.origin)); }
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { typedef
+    polynomial_with_origin<domain_type, value_type, decltype(p - other.p)::max_terms> ret_t;
+    if (origin == other.origin)          { return ret_t(      origin,        p - other.p); }
+    else if (max_terms >= OtherMaxTerms) { return ret_t(      origin,        p - other.p.with_origin(origin - other.origin)); }
+    else                                 { return ret_t(other.origin, -other.p +       p.with_origin(other.origin - origin)); } // TODO can optimize?
+  }
   template<num_terms_t OtherMaxTerms>
   polynomial_with_origin<domain_type, value_type, decltype(without_origin_t() * polynomial<domain_type, value_type, OtherMaxTerms>())::max_terms> operator*(
-    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { return
-    polynomial_with_origin<domain_type, value_type, decltype(p * other.p)::max_terms>(origin, p * other.p.with_origin(origin - other.origin)); }
+    polynomial_with_origin<domain_type, value_type, OtherMaxTerms> const& other)const { typedef
+    polynomial_with_origin<domain_type, value_type, decltype(p * other.p)::max_terms> ret_t;
+    if (origin == other.origin)          { return ret_t(      origin,       p * other.p); }
+    else if (max_terms >= OtherMaxTerms) { return ret_t(      origin,       p * other.p.with_origin(origin - other.origin)); }
+    else                                 { return ret_t(other.origin, other.p *       p.with_origin(other.origin - origin)); }
+  }
   pwo operator+(value_type const& other)const { return pwo(origin, p + other); }
   pwo operator-(value_type const& other)const { return pwo(origin, p - other); }
   pwo operator*(value_type const& other)const { return pwo(origin, p * other); }

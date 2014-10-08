@@ -78,10 +78,13 @@ struct circle_last_update {};
 
 poly5 distish(circle_shape const& c1, circle_shape const& c2) {
   const auto d = c1.center - c2.center;
-  const poly5 d_mag_sq = d.dot(d);
-  const poly1 radsum = c1.radius + c2.radius;
+  poly5 result = d.dot(d);
+  poly1 radsum = c1.radius;
+  radsum.set_origin(result.get_origin());
+  radsum += c2.radius;
   const poly1 r_sq = (radsum*radsum);
-  return d_mag_sq - r_sq;
+  result -= r_sq;
+  return result;
 }
 
 struct global_data {
