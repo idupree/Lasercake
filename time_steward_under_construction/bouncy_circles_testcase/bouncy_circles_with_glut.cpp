@@ -372,6 +372,7 @@ static void Draw(void) {
 
 int main(int argc, char **argv)
 {
+  srand(0);
   bounded_int_calculus::test();
   steward.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   steward2.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));

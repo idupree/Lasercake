@@ -805,7 +805,7 @@ private:
     event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id::null()) :
       instigating_event (instigating_event),
       tid(tid),
-      creation_cut_off (0),
+      creation_cut_off (false),
       has_been_executed (false)
       {}
     std::shared_ptr<const event> instigating_event;
@@ -830,15 +830,30 @@ private:
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
   void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
+    // with undoing==false: Either a trigger was created/replaced, or an entity a trigger-call accessed changed.
+    //   We need to do two things:
+    //   1) Create a new trigger-call soon after the current time (if it doesn't already exist);
+    //   2) Cancel any events that trigger calls anticipated to happen after the current time (which should be equivalent to "after the new trigger time").
     trigger_throughout_time_info& trigger_info = triggers[tid];
-    const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound: if we're IN a trigger call, we still want to trigger it again
+    const auto next_call_iter = trigger_info.upper_bound(field_change_andor_creation_time); // upper_bound:
+    // if we're IN a trigger call, we still want to trigger it again,
+    // so it still needs to have its anticipated events cut off.
     if (next_call_iter != trigger_info.begin()) {
       const auto cut_off_call_iter = boost::prior(next_call_iter);
-      const auto end_iter2 = (next_call_iter == trigger_info.end()) ?
-        cut_off_call_iter->second.anticipated_events.end() : 
-        cut_off_call_iter->second.anticipated_events.lower_bound(next_call_iter->first); // upper/lower shouldn't matter: anticipated events are never triggers
-      for (auto i = cut_off_call_iter->second.anticipated_events.upper_bound(field_change_andor_creation_time); i != end_iter2; ++i) {
+      for (auto i = cut_off_call_iter->second.anticipated_events.upper_bound(field_change_andor_creation_time); // upper_bound:
+           // if we're in one of its anticipated events, don't paradoxically cancel that event
+           i != cut_off_call_iter->second.anticipated_events.end(); ++i) {
         const auto pile_iter = event_piles.find(*i);
+        if (next_call_iter != trigger_info.end()) {
+          assert (*i != next_call_iter->first); // > vs >= shouldn't matter: anticipated events are never triggers
+          if (*i > next_call_iter->first) {
+            // We can skip these because they are cut off by the later trigger regardless.
+            assert (pile_iter->second.creation_cut_off == true);
+            // TODO uncomment:
+            //break;
+            continue;
+          }
+        }
         if (undoing) {
           pile_iter->second.creation_cut_off = false;
           if (pile_iter->second.should_be_executed()) { event_piles_not_correctly_executed.insert(pile_iter->first); }
@@ -1040,9 +1055,11 @@ private:
   void insert_instigating_event(extended_time time, event_pile_info const& e) {
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
-    const auto p2 = event_piles_not_correctly_executed.insert(time);
-    assert(*p2.first == time);
-    assert(p2.second);
+    if (e.should_be_executed()) {
+      const auto p2 = event_piles_not_correctly_executed.insert(time);
+      assert(*p2.first == time);
+      assert(p2.second);
+    }
   }
   void erase_instigating_event(extended_time time) {
     const auto event_pile_iter = event_piles.find(time);
@@ -1106,9 +1123,17 @@ private:
       if (pile_info.tid) {
         auto& trigger_info = triggers.find(pile_info.tid)->second;
         const auto call_iter = trigger_info.find(time);
+        const auto next_call_iter = boost::next(call_iter);
         for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
-          insert_instigating_event(ev.first, event_pile_info(ev.second));
           call_iter->second.anticipated_events.insert(ev.first);
+          event_pile_info e(ev.second);
+          if (next_call_iter != trigger_info.end()) {
+            assert (ev.first != next_call_iter->first); // > vs >= shouldn't matter: anticipated events are never triggers
+            if (ev.first > next_call_iter->first) {
+              e.creation_cut_off = true;
+            }
+          }
+          insert_instigating_event(ev.first, e);
         }
         if (call_iter != trigger_info.begin()) {
           const auto last_call_iter = boost::prior(call_iter);
