@@ -817,7 +817,7 @@ public:
   template<typename Hack = void>
   static /*std::enable_if_t<std::is_same<key_type, value_type>::value, persistent_siphash_id_trie>*/ persistent_siphash_id_trie insert(iterator const& i) {
     persistent_siphash_id_trie result = set_leaf(i, allocate_leaf(i.id));
-    assert(result.find(i.id).back().leaf().id() == i.id);
+    //assert(result.find(i.id).back().leaf().id() == i.id);
     return result;
   }
   template<class... Args>
@@ -827,7 +827,7 @@ public:
   template<class... Args>
   static persistent_siphash_id_trie emplace(iterator const& i, Args&&... args) {
     persistent_siphash_id_trie result = set_leaf(i, allocate_leaf(i.id, std::forward<Args>(args)...));
-    assert(result.find(i.id).back().leaf().id() == i.id);
+    //assert(result.find(i.id).back().leaf().id() == i.id);
     return result;
   }
   persistent_siphash_id_trie erase(key_type k)const {
@@ -839,7 +839,7 @@ public:
 //       if (j.id != i.id) old_leaves.push_back(j.back());
 //     }
     persistent_siphash_id_trie result = unset_leaf(i);
-    assert(!result.find(i.id));
+    //assert(!result.find(i.id));
 //     size_t idx = 0;
 //     for (iterator j = result.begin(); j != result.end(); ++j) {
 //       assert(old_leaves[idx++] == j.back());
@@ -1487,7 +1487,8 @@ private:
     siphash_id id; // unused for base_time_roots
     uint32_t trigger_iteration; // constant not_a_trigger for all non-triggers
     extended_time closest_non_trigger_ancestor; // unused for all non-triggers
-    std::set<extended_time, sort_sibling_extended_times_by_id> children; // usually empty
+    typedef std::set<extended_time, sort_sibling_extended_times_by_id> children_set;
+    std::unique_ptr<children_set> children; // usually empty
     
     bool operator==(extended_time_metadata const& o)const {
       return id == o.id;
@@ -1523,29 +1524,31 @@ private:
   }
   /*static*/ extended_time get_base_time_end(time_type t)const {
     extended_time root = get_base_time_root(t);
-    if (root->children.empty()) {
+    if (!root->children) {
       // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
+      root->children.reset(new typename extended_time_metadata::children_set());
       const extended_time sentinel = all_extended_times.construct(t, siphash_id::greatest());
       all_extended_times.put_after(sentinel, root);
-      root->children.insert(sentinel);
+      root->children->insert(sentinel);
       return sentinel;
     }
-    return *boost::prior(root->children.end());
+    return *boost::prior(root->children->end());
   }
   template <class... Args>
   /*static*/ extended_time make_extended_time_impl(extended_time parent, Args&&... args)const {
-    if (parent->children.empty()) {
+    if (!parent->children) {
       // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
+      parent->children.reset(new typename extended_time_metadata::children_set());
       const extended_time sentinel = all_extended_times.construct(parent->base_time, siphash_id::greatest());
       all_extended_times.put_after(sentinel, parent);
-      parent->children.insert(sentinel);
+      parent->children->insert(sentinel);
     }
     const extended_time result = all_extended_times.construct(parent->base_time, std::forward<Args>(args)...);
-    const auto i = parent->children.lower_bound(result);
-    assert(i != parent->children.end());
+    const auto i = parent->children->lower_bound(result);
+    assert(i != parent->children->end());
     if (**i == *result) { return *i; }
     all_extended_times.put_before(result, *i);
-    parent->children.emplace_hint(i, result);
+    parent->children->emplace_hint(i, result);
     return result;
   }
   /*static*/ extended_time make_event_time(time_type t, siphash_id id)const {
