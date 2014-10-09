@@ -810,9 +810,9 @@ private:
       {}
     std::shared_ptr<const event> instigating_event;
     trigger_id tid;
-    std::unordered_set<entity_field_id> entity_fields_pile_accessed;
-    std::unordered_set<entity_field_id> entity_fields_pile_modified;
-    std::unordered_set<trigger_id> triggers_changed;
+    std::vector<entity_field_id> entity_fields_pile_accessed;
+    std::vector<entity_field_id> entity_fields_pile_modified;
+    std::vector<trigger_id> triggers_changed;
     bool creation_cut_off;
     bool has_been_executed;
     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
@@ -1078,8 +1078,8 @@ private:
       accessor a(this, time, bool(pile_info.tid));
       a.process_event(pile_info.instigating_event.get());
       
-      for (entity_field_id const& id : a.entity_fields_preexisting_state_accessed) {
-        pile_info.entity_fields_pile_accessed.insert(id);
+      pile_info.entity_fields_pile_accessed = std::move(a.entity_fields_preexisting_state_accessed);
+      for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
         auto& metadata = get_field_metadata_throughout_time(id);
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
@@ -1093,13 +1093,14 @@ private:
           metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, old_triggers.insert(pile_info.tid)));
         }
       }
-      for (entity_field_id const& id : a.entity_fields_modified) {
-        pile_info.entity_fields_pile_modified.insert(id);
+      pile_info.entity_fields_pile_modified = std::move(a.entity_fields_modified);
+      for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
         (*copy_field_change_from_accessor_funcs[id.f.base])(this, time, a.entities.find(id.e)->second.fields, id.e, id.f.which);
         update_triggers(false, id, time);
       }
+      pile_info.triggers_changed.reserve(a.trigger_changes.size());
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
-        pile_info.triggers_changed.insert(t.first);
+        pile_info.triggers_changed.push_back(t.first);
         update_trigger(false, t.first, time, true, t.second);
       }
       if (pile_info.tid) {
