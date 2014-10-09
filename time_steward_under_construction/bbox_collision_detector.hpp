@@ -415,12 +415,12 @@ struct ztree_node {
   zbox here;
   entity_id parent;
   std::array<entity_id, 2> children;
-  time_steward_system::persistent_id_set objects_here;
+  persistent_siphash_id_set objects_here;
 
   ztree_node(zbox box, entity_id parent):here(box),parent(parent){}
 };
 struct bbcd_entry_metadata {
-  time_steward_system::persistent_id_set nodes;
+  persistent_siphash_id_set nodes;
   bounding_box zboxes_union;
 };
 struct bbox_collision_detector_root_node {};
@@ -524,7 +524,7 @@ private:
   }
   
   static void erase_from_nodes(accessor* accessor, entity_id bbcd_id, entity_ref e,
-                                    bbcd_entry_metadata& metadata, time_steward_system::persistent_id_set nodes) {
+                                    bbcd_entry_metadata& metadata, persistent_siphash_id_set nodes) {
 //     for (entity_id node_id : nodes) {
 //       check_node(accessor, node_id, bbcd_id);
 //     }
@@ -602,7 +602,7 @@ private:
     entity_ref e;
     bbcd_entry_metadata& metadata;
   public:
-    update_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, time_steward_system::persistent_id_set hint_nodes)
+    update_zboxes(accessor* accessor, entity_id bbcd_id, entity_ref e, bounding_box bbox, persistent_siphash_id_set hint_nodes)
       :
       accessor_(accessor),
       bbcd_id(bbcd_id),
@@ -696,7 +696,7 @@ private:
       }
       metadata.zboxes_union = bounding_box::min_and_size_minus_one(zboxes_union_min, zboxes_union_size_minus_one);
       
-      time_steward_system::persistent_id_set old_nodes_to_remove = metadata.nodes;
+      persistent_siphash_id_set old_nodes_to_remove = metadata.nodes;
       for (num_zboxes_type i = 0; i < number_of_zboxes_to_use_if_necessary; ++i) {
         coordinate_array coords = bbox.min();
         for (num_coordinates_type j = num_dims_using_one_zbox_of_twice_base_box_size; j < num_dimensions - num_dims_using_one_zbox_of_exactly_base_box_size; ++j) {

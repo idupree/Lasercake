@@ -94,7 +94,7 @@ struct global_data {
 
 typedef bbox_collision_detector_system<64, num_dimensions> bbcd_system;
 using time_steward_system::field;
-typedef time_steward_system::fields_list<global_data, circle_shape, field<circle_last_update, time_type, hack_time_steward::time_field_traits>, field<circle_overlaps, time_steward_system::persistent_id_set>, bbcd_system::fields> fields;
+typedef time_steward_system::fields_list<global_data, circle_shape, field<circle_last_update, time_type, hack_time_steward::time_field_traits>, field<circle_overlaps, persistent_siphash_id_set>, bbcd_system::fields> fields;
 typedef time_steward_system::time_steward<fields> time_steward;
 typedef time_steward::accessor accessor;
 typedef time_steward::event event;
@@ -142,8 +142,8 @@ public:
     const space_coordinate radsum = c0->radius(accessor->now()) + c1->radius(accessor->now());
     assert ((d < 0) == (magsq - (radsum*radsum) < 0));
     
-    time_steward_system::persistent_id_set& c0_overlaps = accessor->get_mut<circle_overlaps>(e0);
-    time_steward_system::persistent_id_set& c1_overlaps = accessor->get_mut<circle_overlaps>(e1);
+    persistent_siphash_id_set& c0_overlaps = accessor->get_mut<circle_overlaps>(e0);
+    persistent_siphash_id_set& c1_overlaps = accessor->get_mut<circle_overlaps>(e1);
     if (d < 0) {
       c0_overlaps = c0_overlaps.insert(id1);
       c1_overlaps = c1_overlaps.insert(id0);
