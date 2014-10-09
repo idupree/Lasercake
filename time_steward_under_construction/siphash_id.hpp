@@ -35,20 +35,7 @@ const char siphash_key[16] = { 0xb7, 0xac, 0x3d, 0xf8, 0xc3, 0xa2, 0x8c, 0xd9, 0
 // fixed-size, statistically almost certainly unique, equality-comparable
 // and orderable data structure (i.e. 128 bits of data).  The ==
 // is true iff the things are the same; the < is an arbitrary total ordering.
-namespace impl {
-  template<typename... Args> struct combining_helper;
-}
-namespace persistent_siphash_id_trie_system {
-typedef uint32_t num_bits_type;
-template<typename MappedType = void, num_bits_type bits_per_level = 4>
-class persistent_siphash_id_trie;
-}
 class siphash_id {
-  template<typename... Args> friend struct impl::combining_helper;
-  template<typename MappedType, persistent_siphash_id_trie_system::num_bits_type bits_per_level>
-  friend class persistent_siphash_id_trie_system::persistent_siphash_id_trie;
-  typedef std::array<uint64_t,2> data_type;
-public:
   // Implementation note:
   // A reply from the SipHash developers about our idea to get a
   // large enough result from SipHash to be statistically unique
@@ -75,6 +62,8 @@ public:
   // JP
   
 public:
+  typedef std::array<uint64_t,2> data_type;
+  
   // Accepts any combination of siphash_ids and types castable to uint64_t.
   // Combines all the entropy from all the arguments.
   template<typename... Args>
@@ -115,6 +104,7 @@ public:
     os << s.data_[0] << "," << s.data_[1];
     return os;
   }
+  data_type const& data()const { return data_; }
 private:
   constexpr siphash_id(data_type data):data_(data){}
   data_type data_;
@@ -124,21 +114,22 @@ namespace impl {
   template<typename... Args> struct combining_helper;
   template<> struct combining_helper<> {
     static const size_t next_idx = 0;
-    static inline void enter_arg(uint64_t[]){}
+    static inline void enter_arg(char[]){}
   };
   template<typename... Tail> struct combining_helper<siphash_id, Tail...> {
-    static const size_t next_idx = combining_helper<Tail...>::next_idx + 2;
-    static inline void enter_arg(uint64_t in[], siphash_id head, Tail... tail) {
+    static const size_t next_idx = combining_helper<Tail...>::next_idx + 2*sizeof(uint64_t);
+    static inline void enter_arg(char in[], siphash_id head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
-      in[combining_helper<Tail...>::next_idx] = head.data_[0];
-      in[combining_helper<Tail...>::next_idx+1] = head.data_[1];
+      *(uint64_t*)(&in[combining_helper<Tail...>::next_idx                   ]) = head.data()[0];
+      *(uint64_t*)(&in[combining_helper<Tail...>::next_idx + sizeof(uint64_t)]) = head.data()[1];
     }
   };
   template<typename Head, typename... Tail> struct combining_helper<Head, Tail...> {
-    static const size_t next_idx = combining_helper<Tail...>::next_idx + 1;
-    static inline void enter_arg(uint64_t in[], Head head, Tail... tail) {
+    static_assert(std::is_integral<Head>::value, "siphash_id::combining only accepts siphash_ids and integral types");
+    static const size_t next_idx = combining_helper<Tail...>::next_idx + sizeof(Head);
+    static inline void enter_arg(char in[], Head head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
-      in[combining_helper<Tail...>::next_idx] = uint64_t(head);
+      *(Head*)(&in[combining_helper<Tail...>::next_idx]) = head;
     }
   };
   template<typename Head, typename... Tail> struct combining_helper<Head&, Tail...> : public combining_helper<Head, Tail...> {};
@@ -146,7 +137,7 @@ namespace impl {
 template<typename... Args>
 siphash_id siphash_id::combining(Args... args) {
   siphash_id result;
-  uint64_t in[impl::combining_helper<Args...>::next_idx];
+  char in[impl::combining_helper<Args...>::next_idx];
   impl::combining_helper<Args...>::enter_arg(in, args...);
   result.data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
   ++in[0];
@@ -160,13 +151,14 @@ namespace std {
     public:
     size_t operator()(siphash_id const& i)const {
       // Since the siphash is already a hash, just return some of it.
-      return i.data_[0];
+      return i.data()[0];
     }
   };
 }
   
 
 namespace persistent_siphash_id_trie_system {
+typedef uint32_t num_bits_type;
 template<typename KeyType, typename MappedType, bool IsMap> struct value_typer;
 template<typename KeyType, typename MappedType> struct value_typer<KeyType, MappedType, false> {
   typedef KeyType type;
@@ -176,7 +168,7 @@ template<typename KeyType, typename MappedType> struct value_typer<KeyType, Mapp
   typedef std::pair<KeyType, MappedType> type;
   static KeyType get_key(type const& t) { return t.first; }
 };
-template<typename MappedType, num_bits_type bits_per_level>
+template<typename MappedType = void, num_bits_type bits_per_level = 4>
 class persistent_siphash_id_trie {
 public:
   static_assert((128 % bits_per_level) == 0, "I don't think everything works right if 128 isn't a multiple of bits_per_level");
@@ -260,7 +252,7 @@ private:
   child_ptr root;
   
   static inline num_bits_type which_child(siphash_id id, num_bits_type which_bits) {
-    return (id.data_[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
+    return (id.data()[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
   }
   
   persistent_siphash_id_trie(child_ptr root):root(root){ root.inc_ref(); }
