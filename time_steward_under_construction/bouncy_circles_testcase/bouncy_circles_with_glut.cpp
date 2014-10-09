@@ -328,6 +328,7 @@ void do_gl(time_steward& w, time_type time, double wid, double height_angle, dou
 
 
 time_steward steward;
+time_steward steward2;
 double view_length = 2*cube_size;
 double height_angle = 0;
 double rot = 0;
@@ -364,6 +365,8 @@ static void Idle(void) {
 
 static void Draw(void) {
   do_gl(steward, gtime, view_length, height_angle, rot);
+  steward2.debug__randomly_update_through_time(gtime);
+  steward.debug__check_equivalence(steward2);
   glutSwapBuffers();
 }
 
@@ -371,6 +374,7 @@ int main(int argc, char **argv)
 {
   bounded_int_calculus::test();
   steward.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
+  steward2.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
   glutCreateWindow("bouncy circles");

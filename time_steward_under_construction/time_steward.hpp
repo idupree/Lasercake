@@ -977,7 +977,32 @@ public:
   void update_through_time(time_type const& time) {
     update_through_time(get_base_time_end(time));
   }
+  void debug__randomly_update_through_time(time_type const& bt) {
+    extended_time time = get_base_time_end(bt);
+    while (!is_updated_through(time)) {
+      auto iter = event_piles_not_correctly_executed.begin();
+      while (rand()&3) {
+        auto next_iter = boost::next(iter);
+        if (next_iter == event_piles_not_correctly_executed.end()) { break; }
+        iter = next_iter;
+      }
+      execute_event_pile(*iter);
+    }
+  }
+  void debug__check_equivalence(time_steward const& other)const {
+    debug__check_equivalence_one_sided(other);
+    other.debug__check_equivalence_one_sided(*this);
+  }
 private:
+  void debug__check_equivalence_one_sided(time_steward const& other)const {
+    for (auto const& p : event_piles) {
+      extended_time time = p.first;
+      if (is_updated_through(time) && other.is_updated_through(time)) {
+        auto it = other.event_piles.find(time);
+        assert(it != other.event_piles.end());
+      }
+    }
+  }
   event_piles_map event_piles;
   std::set<extended_time> event_piles_not_correctly_executed;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
