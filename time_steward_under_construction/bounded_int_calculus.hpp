@@ -329,7 +329,7 @@ public:
   void operator*=(value_type const& other) {
     if (other == 0) { num_terms = 0; }
     else {
-      for (num_terms_t i = 0; i < other.num_terms; ++i) {
+      for (num_terms_t i = 0; i < num_terms; ++i) {
         const auto product = lossless_multiply(terms[i], other);
         caller_error_if(product > max_coefficient, "overflow in polynomial operation");
         caller_error_if(product < min_coefficient, "underflow in polynomial operation");

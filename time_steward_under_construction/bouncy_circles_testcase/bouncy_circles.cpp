@@ -259,19 +259,18 @@ public:
   void operator()(time_steward::accessor* accessor)const override {
     auto bbcd = bbcd_operations::create_bbox_collision_detector(accessor);
     auto g = accessor->set<global_data>(accessor->get(time_steward_system::global_object_id), global_data(bbcd.id()));
-    srand(0);
     for (int i = 0; i < 150; ++i) {
       auto e = accessor->create_entity();
-      space_coordinate a = -(arena_width/2)+(rand()%1024)*(arena_width/1024);
-      space_coordinate b = (-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
-      space_coordinate c = -(arena_width/2)+(rand()%1024)*(arena_width/1024);
-      space_coordinate d = (-10000+(rand()%20000))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
+      space_coordinate a = -(arena_width/2)+int64_t(accessor->random_bits(10))*(arena_width/1024);
+      space_coordinate b = (-10000+int64_t(accessor->random_bits(21)%20001))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
+      space_coordinate c = -(arena_width/2)+int64_t(accessor->random_bits(10))*(arena_width/1024);
+      space_coordinate d = (-10000+int64_t(accessor->random_bits(21)%20001))*arena_width/(100000*time_units_per_gloppp); // "Might cross the whole arena in only ten gloppps"
       
       accessor->set<circle_shape>(e, circle_shape(
         poly3_fd_vector(
           poly3(0, poly3::without_origin_t(a,b)),
           poly3(0, poly3::without_origin_t(c,d))),
-        poly1(0, poly1::without_origin_t((50+(rand()%100))*arena_width/5000)) // radius: 1-3% the width of the arena
+        poly1(0, poly1::without_origin_t((50+(accessor->random_bits(14)%101))*arena_width/5000)) // radius: 1-3% the width of the arena
       ));
       accessor->set<circle_last_update>(e, 0);
       bbcd_operations::insert(accessor, bbcd.id(), e);

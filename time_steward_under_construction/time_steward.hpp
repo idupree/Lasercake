@@ -608,6 +608,32 @@ public:
     // this will result in all unique entity IDs.
     return get(create_id());
   }
+  uint64_t random_bits(uint32_t bits) {
+    assert (bits <= 64);
+    if (random_pool_idx>=128) { random_pool = create_id(); random_pool_idx = 0; }
+    const uint32_t bits_unavailable = (random_pool_idx & 63);
+    const uint32_t bits_available = 64-bits_unavailable;
+    const uint64_t mask = (1ULL<<(bits-1))-1ULL+(1ULL<<(bits-1));
+    uint64_t result = (random_pool.data()[random_pool_idx>=64] >> bits_unavailable) & mask;
+    if (bits > bits_available) {
+      const uint32_t bits_still_needed = bits-bits_available;
+      if (random_pool_idx>=64) {
+        random_pool = create_id();
+        random_pool_idx = bits_still_needed;
+      }
+      else {
+        random_pool_idx = 64+bits_still_needed;
+      }
+      const uint64_t result_finisher = (random_pool.data()[random_pool_idx>=64] & ((1ULL<<bits_still_needed)-1))<<bits_available;
+      assert (!(result & result_finisher));
+      result |= result_finisher;
+    }
+    else {
+      random_pool_idx += bits;
+    }
+    assert(!(result & ~mask));
+    return result;
+  }
     
   time_steward_accessor(time_steward_accessor const&) = delete;
   time_steward_accessor(time_steward_accessor&&) = delete;
@@ -619,6 +645,8 @@ private:
   bool is_trigger_;
   size_t ids_created_;
   mutable std::unordered_map<entity_id, entity_info> entities;
+  siphash_id random_pool;
+  uint32_t random_pool_idx;
   
   std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
@@ -627,7 +655,7 @@ private:
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
-  time_steward_accessor(TimeSteward const* ts, extended_time time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0){}
+  time_steward_accessor(TimeSteward const* ts, extended_time time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0),random_pool_idx(128){}
   void process_event(event const* e) {
     (*e)(this);
   }
