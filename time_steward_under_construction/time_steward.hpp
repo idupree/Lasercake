@@ -1032,7 +1032,7 @@ private:
     field_throughout_time<field_data<entity_fields, FieldID>> const* f = e.fields.template find<FieldID>(ext...);
     if (!f) { return entity_fields::template get_null_const_ref<FieldID>(); }
     
-    const auto next_change_iter = f->upper_bound(time);
+    const auto next_change_iter = f->lower_bound(time);
     if (next_change_iter == f->begin()) { return entity_fields::template get_null_const_ref<FieldID>(); }
     return boost::prior(next_change_iter)->second;
   }
