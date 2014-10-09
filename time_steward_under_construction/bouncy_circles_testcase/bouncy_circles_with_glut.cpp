@@ -364,6 +364,7 @@ static void Idle(void) {
 }
 
 static void Draw(void) {
+  std::cerr << "Time: " << gtime << "\n";
   do_gl(steward, gtime, view_length, height_angle, rot);
   steward2.debug__randomly_update_through_time(gtime);
   steward.debug__check_equivalence(steward2);

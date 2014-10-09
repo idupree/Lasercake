@@ -758,6 +758,9 @@ private:
     }
     return *boost::prior(root->children->end());
   }
+  /*static*/ extended_time get_max_exttime()const {
+    return get_base_time_root(max_time);
+  }
   template <class... Args>
   /*static*/ extended_time make_extended_time_impl(extended_time parent, Args&&... args)const {
     if (!parent->children) {
@@ -885,7 +888,7 @@ private:
       ++p.first->second.field_changes_andor_creations_triggering_this;
     }
   }
-  void update_triggers(bool undoing, entity_field_id id, extended_time field_change_time) {
+  void update_triggers(bool undoing, entity_field_id const& id, extended_time field_change_time) {
     auto& metadata = get_field_metadata_throughout_time(id);
     const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(field_change_time);
     if (next_triggers_iter == metadata.triggers_pointing_at_this_changes.begin()) return;
@@ -894,41 +897,50 @@ private:
       update_trigger(undoing, tid, field_change_time);
     }
   }
+  void invalidate_events(entity_field_id const& id, extended_time field_change_time, extended_time field_change_end_time) {
+    auto& metadata = get_field_metadata_throughout_time(id);
+    for (auto incorrect_event_time = metadata.event_piles_which_accessed_this.upper_bound(field_change_time); // upper_bound:
+       // don't paradoxically cancel the event that changed this field
+         (incorrect_event_time != metadata.event_piles_which_accessed_this.end()) && (*incorrect_event_time <= field_change_end_time); // <=:
+         // if the event that changed this field examined this field, it needs redoing
+         ++incorrect_event_time) {
+      event_piles_not_correctly_executed.insert(*incorrect_event_time);
+    }
+  }
+  template<typename Iterator, typename Map>
+  void invalidate_events(entity_field_id const& id, Iterator const& field_iter, Map const& f) {
+    const Iterator next = boost::next(field_iter);
+    invalidate_events(id, field_iter->first, (next == f.end()) ? get_max_exttime() : next->first);
+  }
   
   struct copy_field_change_from_accessor {
     template<typename FieldID>
-    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id       ).insert(std::make_pair(time, src.template get<FieldID>(     ).value));
-      assert(p.second);
+    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_data<entity_fields, FieldID>>
+    get_field(decltype(accessor::entity_info::fields)& src, entity_field_id const&   ) {
+      return src.template get<FieldID>(          ).value;
     }
     template<typename FieldID>
-    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id, which).insert(std::make_pair(time, src.template get<FieldID>(which).value));
-      assert(p.second);
+    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_data<entity_fields, FieldID>>
+    get_field(decltype(accessor::entity_info::fields)& src, entity_field_id const& id) {
+      return src.template get<FieldID>(id.f.which).value;
     }
+    
     template<typename FieldID>
-    static void func(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_id id, siphash_id which = siphash_id::null()) {
-      impl<FieldID>(ts, time, src, id, which);
+    static void func(time_steward* ts, extended_time time, decltype(accessor::entity_info::fields)& src, entity_field_id const& id) {
+      auto& f = ts->get_field_throughout_time<FieldID>(id);
+      const auto p = f.insert(std::make_pair(time, get_field<FieldID>(src, id)));
+      assert(p.second);
+      ts->invalidate_events(id, p.first, f);
     }
   };
   struct undo_field_change {
     template<typename FieldID>
-    static std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, entity_id id, siphash_id) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id).erase(time);
-      assert(p);
-    }
-    template<typename FieldID>
-    static std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id>
-    impl(time_steward* ts, extended_time time, entity_id id, siphash_id which) {
-      const auto p = ts->get_field_throughout_time<FieldID>(id, which).erase(time);
-      assert(p);
-    }
-    template<typename FieldID>
-    static void func(time_steward* ts, extended_time time, entity_id id, siphash_id which = siphash_id::null()) {
-      impl<FieldID>(ts, time, id, which);
+    static void func(time_steward* ts, extended_time time, entity_field_id const& id) {
+      auto& f = ts->get_field_throughout_time<FieldID>(id);
+      const auto i = f.find(time);
+      assert(i != f.end());
+      ts->invalidate_events(id, i, f);
+      f.erase(i);
     }
   };
   
@@ -947,6 +959,16 @@ private:
   template<typename FieldID, typename... Ext>
   field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
     return entities[id].fields.template get<FieldID>(ext...);
+  }
+  template<typename FieldID>
+  std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
+  get_field_throughout_time(entity_field_id const& id) {
+    return get_field_throughout_time<FieldID>(id.e            );
+  }
+  template<typename FieldID>
+  std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
+  get_field_throughout_time(entity_field_id const& id) {
+    return get_field_throughout_time<FieldID>(id.e, id.f.which);
   }
   field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
     return field_metadata[id];
@@ -1112,7 +1134,7 @@ private:
       }
       pile_info.entity_fields_pile_modified = std::move(a.entity_fields_modified);
       for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-        (*copy_field_change_from_accessor_funcs[id.f.base])(this, time, a.entities.find(id.e)->second.fields, id.e, id.f.which);
+        (*copy_field_change_from_accessor_funcs[id.f.base])(this, time, a.entities.find(id.e)->second.fields, id);
         update_triggers(false, id, time);
       }
       pile_info.triggers_changed.reserve(a.trigger_changes.size());
@@ -1180,7 +1202,7 @@ private:
       }
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-      (*undo_field_change_funcs[id.f.base])(this, time, id.e, id.f.which);
+      (*undo_field_change_funcs[id.f.base])(this, time, id);
       update_triggers(true, id, time);
     }
     for (trigger_id const& tid : pile_info.triggers_changed) {
