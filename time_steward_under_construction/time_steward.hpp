@@ -580,8 +580,8 @@ public:
   inline field_data<entity_fields, FieldID>& set(entity_ref e, siphash_id which, field_data<entity_fields, FieldID> new_contents) { return set_impl<FieldID>(e, new_contents, which); }
   
   void anticipate_event(time_type when, std::shared_ptr<const event> e) {
-    assert(is_trigger_); // TODO an exception
-    assert(when >= time_->base_time); // TODO an exception
+    caller_correct_if(bool(trigger_id_), "Only triggers can anticipate events");
+    caller_correct_if(when >= time_->base_time, "You can't anticipate an event in the past");
     const extended_time ext_when = (when == time_->base_time) ?
       /*TimeSteward::*/ts_->make_event_time(time_, create_id()) :
       /*TimeSteward::*/ts_->make_event_time(when , create_id());
@@ -596,6 +596,7 @@ public:
     set_trigger(id, t);
     return id;
   };
+  trigger_id this_trigger()const { return trigger_id_; }
   time_type now()const {
     return time_->base_time;
   }
@@ -609,7 +610,8 @@ public:
     return get(create_id());
   }
   uint64_t random_bits(uint32_t bits) {
-    assert (bits <= 64);
+    caller_correct_if(bits <= 64, "You can only get 64 random bits at a time");
+    if (bits == 0) { return 0; }
     if (random_pool_idx>=128) { random_pool = create_id(); random_pool_idx = 0; }
     const uint32_t bits_unavailable = (random_pool_idx & 63);
     const uint32_t bits_available = 64-bits_unavailable;
@@ -642,7 +644,7 @@ public:
 private:
   TimeSteward const* ts_;
   extended_time time_;
-  bool is_trigger_;
+  trigger_id trigger_id_;
   size_t ids_created_;
   mutable std::unordered_map<entity_id, entity_info> entities;
   siphash_id random_pool;
@@ -655,7 +657,8 @@ private:
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
-  time_steward_accessor(TimeSteward const* ts, extended_time time, bool is_trigger):ts_(ts),time_(time),is_trigger_(is_trigger),ids_created_(0),random_pool_idx(128){}
+  time_steward_accessor(TimeSteward const* ts, extended_time time, trigger_id trigger_id_ = trigger_id::null())
+    :ts_(ts),time_(time),trigger_id_(trigger_id_),ids_created_(0),random_pool_idx(128){}
   void process_event(event const* e) {
     (*e)(this);
   }
@@ -858,10 +861,12 @@ private:
           }
         }
         if (undoing) {
+          assert (pile_iter->second.creation_cut_off == true);
           pile_iter->second.creation_cut_off = false;
           if (pile_iter->second.should_be_executed()) { event_piles_not_correctly_executed.insert(pile_iter->first); }
         }
         else {
+          assert (pile_iter->second.creation_cut_off == false);
           pile_iter->second.creation_cut_off = true;
           if (pile_iter->second.has_been_executed) { event_piles_not_correctly_executed.insert(pile_iter->first); }
           else                                     { event_piles_not_correctly_executed.erase (pile_iter->first); }
@@ -1004,7 +1009,7 @@ public:
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
     const extended_time end_time = get_base_time_end(time);
     update_through_time(end_time);
-    return std::unique_ptr<accessor>(new accessor(this, end_time, false));
+    return std::unique_ptr<accessor>(new accessor(this, end_time));
   }
   
   // Some functions for external client code to regulate how much processing the time_steward
@@ -1115,7 +1120,7 @@ private:
     
     if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
-      accessor a(this, time, bool(pile_info.tid));
+      accessor a(this, time, pile_info.tid);
       a.process_event(pile_info.instigating_event.get());
       
       // Order is important: We must update a field's triggers_pointing_at_this_changes record
