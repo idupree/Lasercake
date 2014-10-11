@@ -503,7 +503,7 @@ private:
       // then this is not accessing the field's state *before* this time.
       if (!ever_modified && !accessed_preexisting_state) {
         accessed_preexisting_state = true;
-        acc.entity_fields_preexisting_state_accessed.push_back(id);
+        acc.entity_fields_preexisting_state_accessed.insert(id);
         return true;
       }
       return false;
@@ -653,7 +653,7 @@ private:
   std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
   mutable std::vector<entity_field_id> entity_fields_modified; // hack - we COULD make this non-mutable, but get_impl is easier this way
-  mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
+  mutable std::unordered_set<entity_field_id> entity_fields_preexisting_state_accessed;
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
@@ -815,7 +815,7 @@ private:
       {}
     std::shared_ptr<const event> instigating_event;
     trigger_id tid;
-    std::vector<entity_field_id> entity_fields_pile_accessed;
+    std::unordered_set<entity_field_id> entity_fields_pile_accessed;
     std::vector<entity_field_id> entity_fields_pile_modified;
     std::vector<trigger_id> triggers_changed;
     std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
@@ -961,15 +961,79 @@ private:
       f.erase(i);
     }
   };
+  void delete_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid) {
+    update_trigger_access_record(id, time, tid, bool(), true);
+  }
+  void update_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid, bool undoing, bool force_erase = false, bool modifies_future = true) {
+    assert (event_piles.find(time)->second.tid == tid);
+    auto& metadata = get_field_metadata_throughout_time(id);
+    persistent_siphash_id_set old_triggers;
+    bool changed = false;
+    const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.upper_bound(time); // upper_bound: really next
+    if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
+      const auto this_or_last_triggers_iter = boost::prior(next_triggers_iter);
+      if (this_or_last_triggers_iter->first == time) {
+        bool found_in_last = false;
+        if (this_or_last_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
+          found_in_last = bool(boost::prior(this_or_last_triggers_iter)->second.find(tid));
+        }
+        if (force_erase || (found_in_last != undoing)) {
+          metadata.triggers_pointing_at_this_changes.erase(this_or_last_triggers_iter);
+          changed = true;
+        }
+      }
+      else if (!force_erase) {
+        const persistent_siphash_id_set old_triggers = this_or_last_triggers_iter->second;
+        const persistent_siphash_id_set new_triggers = undoing ? old_triggers.erase(tid) : old_triggers.insert(tid);
+        if (new_triggers != old_triggers) {
+          const auto p = metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
+          assert (p.second);
+          changed = true;
+        }
+      }
+    }
+    else {
+      if (!undoing && !force_erase) {
+        const auto p = metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, persistent_siphash_id_set().insert(tid)));
+        assert (p.second);
+        changed = true;
+      }
+    }
+    assert (changed || modifies_future);
+    if (changed && modifies_future) {
+      // If we changed the future of metadata.triggers_pointing_at_this_changes, 
+      // anything in the future that referred to metadata.triggers_pointing_at_this_changes
+      // needs to be updated.
+      (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, tid, undoing);
+    }
+    
+    const auto n = metadata.triggers_pointing_at_this_changes.upper_bound(time);
+    if (n != metadata.triggers_pointing_at_this_changes.end()) {
+      assert (force_erase || (undoing == bool(n->second.find(tid))));
+    }
+    if (!force_erase) {
+      if (n == metadata.triggers_pointing_at_this_changes.begin()) {
+        assert (undoing);
+      }
+      else {
+        assert (undoing == !boost::prior(n)->second.find(tid));
+      }
+    }
+  }
   struct update_future_trigger_calls {
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, extended_time time,
-                     typename decltype(field_metadata_throughout_time::triggers_pointing_at_this_changes)::const_iterator next_triggers_iter,
-                     typename decltype(field_metadata_throughout_time::triggers_pointing_at_this_changes)::const_iterator end_iter,
-                     trigger_id tid, bool undoing) {
+    static void func(time_steward* ts, entity_field_id const& id, extended_time time, trigger_id tid, bool undoing) {
+      auto const& trigger_info = ts->triggers.find(tid)->second;
+      const auto next_call_iter = trigger_info.upper_bound(time);
+      if (next_call_iter != trigger_info.end()) {
+        const auto next_call_pile_iter = ts->event_piles.find(next_call_iter->first);
+        const bool next_didnt_access = next_call_pile_iter->second.entity_fields_pile_accessed.find(id) == next_call_pile_iter->second.entity_fields_pile_accessed.end();
+        ts->update_trigger_access_record(id, next_call_iter->first, tid, next_didnt_access, false, false);
+      }
+      
       auto const& f = ts->get_field_throughout_time<FieldID>(id);
       for (auto i = f.upper_bound(time); i != f.end(); ++i) { // upper_bound: we handle f[time], if any, in the regular update_triggers.
-        if ((next_triggers_iter != end_iter) && (i->first >= next_triggers_iter->first)) { break; } // >=:
+        if ((next_call_iter != trigger_info.end()) && (i->first >= next_call_iter->first)) { break; } // >=:
           // if a trigger changes a field, it doesn't matter what the trigger was looking at before that time.
         ts->update_trigger(undoing, tid, i->first);
       }
@@ -1128,6 +1192,12 @@ private:
   }
   
   void insert_instigating_event(extended_time time, event_pile_info const& e) {
+    if (event_piles_needing_unexecution.find(time) != event_piles_needing_unexecution.end()) {
+      // TODO: is it safe to unexecute an event in the future during execute_event_pile?
+      const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(time);
+      assert (event_pile_deleted_for_being_out_of_date);
+    }
+    
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
     if (e.should_be_executed()) {
@@ -1182,25 +1252,8 @@ private:
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
-          persistent_siphash_id_set old_triggers;
-          const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.lower_bound(time); // lower/upper bound shouldn't matter because there shouldn't be an entry now.
-          assert ((next_triggers_iter == metadata.triggers_pointing_at_this_changes.end()) || (next_triggers_iter->first != time));
-          if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
-            old_triggers = boost::prior(next_triggers_iter)->second;
-          }
-          const persistent_siphash_id_set new_triggers = old_triggers.insert(pile_info.tid);
-          
-          // Insert even if there's no change.
-          // That way, if the past changes, the past change will stop here, as is correct.
-          // Also, this supports Hack sZInnn3FkZy0yg.
-          metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
-          
-          if (new_triggers != old_triggers) {
-            // If we changed the future of metadata.triggers_pointing_at_this_changes, 
-            // anything in the future that referred to metadata.triggers_pointing_at_this_changes
-            // needs to be updated.
-            (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, next_triggers_iter, metadata.triggers_pointing_at_this_changes.end(), pile_info.tid, false);
-          }
+          assert (false == (pile_info.entity_fields_pile_accessed.find(id) == pile_info.entity_fields_pile_accessed.end()));
+          update_trigger_access_record(id, time, pile_info.tid, false);
         }
       }
       if (pile_info.tid) {
@@ -1225,20 +1278,8 @@ private:
           const extended_time last_call_time = last_call_iter->first;
           event_pile_info const& last_call_pile_info = event_piles.find(last_call_time)->second;
           for (entity_field_id const& accessed_by_last_call : last_call_pile_info.entity_fields_pile_accessed) {
-            auto& metadata = get_field_metadata_throughout_time(accessed_by_last_call);
-            const auto triggers_iter = metadata.triggers_pointing_at_this_changes.find(last_call_time);
-            assert (triggers_iter != metadata.triggers_pointing_at_this_changes.end());
-            const persistent_siphash_id_set old_triggers = triggers_iter->second;
-            const auto new_triggers = old_triggers.erase(pile_info.tid);
-            assert (new_triggers != old_triggers);
-            // Hack sZInnn3FkZy0yg: If the trigger accessed this object both last time and this time, 
-            // then we inserted above, so this insert fails.
-            const auto p = metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
-            if (p.second) {
-              // If we changed the future of metadata.triggers_pointing_at_this_changes, 
-              // anything in the future that referred to metadata.triggers_pointing_at_this_changes
-              // needs to be updated.
-              (*update_future_trigger_calls_funcs[accessed_by_last_call.f.base])(this, accessed_by_last_call, time, boost::next(triggers_iter), metadata.triggers_pointing_at_this_changes.end(), pile_info.tid, true);
+            if (pile_info.entity_fields_pile_accessed.find(accessed_by_last_call) == pile_info.entity_fields_pile_accessed.end()) {
+              update_trigger_access_record(accessed_by_last_call, time, pile_info.tid, true);
             }
           }
         }
@@ -1287,14 +1328,8 @@ private:
       auto i = trigger_info.lower_bound(time);
       if (i != trigger_info.begin()) {
         for (entity_field_id const& accessed_by_last_call : event_piles.find(boost::prior(i)->first)->second.entity_fields_pile_accessed) {
-          auto& metadata = get_field_metadata_throughout_time(accessed_by_last_call);
-          const auto triggers_iter = metadata.triggers_pointing_at_this_changes.find(time);
-          assert (triggers_iter != metadata.triggers_pointing_at_this_changes.end());
-          if (!triggers_iter->second.find(pile_info.tid)) { // (otherwise, this code isn't the undo-counterpart to what created it - see Hack sZInnn3FkZy0yg)
-            if (boost::prior(triggers_iter)->second.find(pile_info.tid)) {
-              (*update_future_trigger_calls_funcs[accessed_by_last_call.f.base])(this, accessed_by_last_call, time, boost::next(triggers_iter), metadata.triggers_pointing_at_this_changes.end(), pile_info.tid, false);
-            }
-            metadata.triggers_pointing_at_this_changes.erase(triggers_iter);
+          if (pile_info.entity_fields_pile_accessed.find(accessed_by_last_call) == pile_info.entity_fields_pile_accessed.end()) {
+            delete_trigger_access_record(accessed_by_last_call, time, pile_info.tid);
           }
         }
       }
@@ -1308,13 +1343,7 @@ private:
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
       assert(j);
       if (pile_info.tid) {
-        const auto triggers_iter = metadata.triggers_pointing_at_this_changes.find(time);
-        assert (triggers_iter != metadata.triggers_pointing_at_this_changes.end());
-        assert (triggers_iter->second.find(pile_info.tid));
-        if (!boost::prior(triggers_iter)->second.find(pile_info.tid)) {
-          (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, boost::next(triggers_iter), metadata.triggers_pointing_at_this_changes.end(), pile_info.tid, true);
-        }
-        metadata.triggers_pointing_at_this_changes.erase(triggers_iter);
+        delete_trigger_access_record(id, time, pile_info.tid);
       }
     }
     pile_info.entity_fields_pile_accessed.clear();
