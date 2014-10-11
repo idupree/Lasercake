@@ -31,6 +31,11 @@ public:
   };
 private:
   struct node {
+    node(bool splits_based_on_which_bound):
+      splits_based_on_which_bound(splits_based_on_which_bound),
+      num_descendant_intervals(0),
+      children({{nullptr,nullptr}}),
+      values_here(){}
     bool splits_based_on_which_bound;
     size_t num_descendant_intervals;
     
@@ -39,7 +44,7 @@ private:
     std::array<std::unique_ptr<node>, 2> children; // the first has the lower values, the second the higher values
     
     // only for leaves
-    std::unordered_map<interval, MappedType> intervals_here;
+    std::unordered_map<interval, MappedType> values_here;
   };
   
   std::unique_ptr<node> root;
@@ -123,7 +128,7 @@ public:
       while (!queue.front().value) {
         queue_node(queue.front(), 0);
         queue_node(queue.front(), 1);
-        for (value_type& v : queue.front().n->intervals_here) {
+        for (value_type& v : queue.front().n->values_here) {
           queue_value(queue.front().n, &v);
         }
         queue.pop();
@@ -185,6 +190,103 @@ public:
   }
   iterator end()const {
     return iterator();
+  }
+  
+  
+  // The tree maintains these invariants:
+  // Nodes always alternate splits_based_on_which_bound.
+  // No non-leaf directly contains any intervals.
+  // 1) No leaf contains more than max_leaf_size intervals.
+  // 2) No leaf contains less than min_leaf_size intervals (except for when the root is just a leaf).
+  // 3) No non-leaf has more than twice as many descendants on one side as on the other.
+  // (2) and (3) together bound the tree height at log_3(N).
+  static const min_leaf_size = 2;
+  static const max_leaf_size = 6;
+  static_assert (max_leaf_size+1 >= min_leaf_size * 2, "must be able to split a node that exceeds max size");
+  
+  static void collapse_node(node& n, std::unique_ptr<node>& descendant) {
+    for (value_type& v : descendant.values_here) {
+      n.values_here.insert(v);
+    }
+    if (descendant->children[0]) {
+      collapse_node(n, descendant->children[0]);
+      collapse_node(n, descendant->children[1]);
+    }
+    descendant = nullptr;
+  }
+  static void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n, std::vector<value_type_ref> const& values_to_insert, std::vector<value_type_ref> const& values_to_erase) {
+    if (!n) {
+      assert(is_root);
+      n.reset(new node(false));
+    }
+    n->num_descendant_intervals += values_to_insert.size();
+    n->num_descendant_intervals -= values_to_erase .size();
+    assert(is_root || (n->num_descendant_intervals >= min_leaf_size));
+    
+    if (n->children[0]) { // i.e. "if non leaf"
+      if (n->num_descendant_intervals <= max_leaf_size) {
+        collapse_node(*n, n->children[0]);
+        collapse_node(*n, n->children[1]);
+      }
+      else {
+        std::array<std::vector<value_type_ref>, 2> values_to_insert_by_child;
+        std::array<std::vector<value_type_ref>, 2> values_to_erase_by_child;
+        for (auto& v : values_to_insert_by_child) { v.reserve(values_to_insert.size()); }
+        for (auto& v : values_to_erase_by_child ) { v.reserve(values_to_erase .size()); }
+        for (value_type_ref v : values_to_insert) {
+          values_to_insert_by_child[v.first.bounds[n->splits_based_on_which_bound] > n->child_separator].push_back(v);
+        }
+        for (value_type_ref v : values_to_erase ) {
+          values_to_erase_by_child [v.first.bounds[n->splits_based_on_which_bound] > n->child_separator].push_back(v);
+        }
+  #define NEW_NUM_DESCENDANTS(which_child) (n->children[which_child]->num_descendant_intervals \
+    + values_to_insert_by_child[which_child].size() \
+    - values_to_erase_by_child[which_child].size())
+        for (which_child : true, false) {
+          if (NEW_NUM_DESCENDANTS(which_child) > 2*NEW_NUM_DESCENDANTS(!which_child)) {
+            iterator<> thief;
+            if (which_child) {
+              result.bound_minima_exist[0] = true;
+              result.bound_minima[0] = n->child_separator;
+            }
+            else {
+              result.bound_maxima_exist[1] = true;
+              result.bound_maxima[1] = n->child_separator;
+            }
+            iterator.queue_root(n->children[which_child].get());
+            while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1) {
+              values_to_erase_by_child [ which_child].push_back(*iterator);
+              values_to_insert_by_child[!which_child].push_back(*iterator);
+              n->child_separator = iterator->first.bounds[!which_child]; // TODO worry about < vs <=
+            }
+          }
+        }
+        for (which_child : true, false) {
+          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
+        }
+      }
+    }
+    else {
+      for (value_type& v : values_to_erase) {
+        n->values_here.erase(v);
+      }
+      for (value_type& v : values_to_insert) {
+        n->values_here.insert(v);
+      }
+      if (n->num_descendant_intervals > max_leaf_size) {
+        n->children[0].reset(new node(!n->splits_based_on_which_bound));
+        n->children[1].reset(new node(!n->splits_based_on_which_bound));
+        
+        n->child_separator = median(n->values_here)
+        std::array<std::vector<value_type_ref>, 2> values_to_insert_by_child;
+        for (value_type_ref v : n->values_here) {
+          values_to_insert_by_child[v > n->child_separator].push_back(v);
+        }
+        for (which_child : true, false) {
+          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
+        }
+      }
+    }
   }
   
   void erase(iterator i) {
