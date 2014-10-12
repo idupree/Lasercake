@@ -20,6 +20,7 @@
 */
 
 
+#include <memory>
 
 #include <boost/type_traits.hpp>
 #include <boost/range/iterator_range.hpp>
@@ -28,6 +29,9 @@
 
 // solely for get_primitive definition
 #include "../data_structures/bounds_checked_int.hpp"
+
+// for tests
+#include <iostream>
 
 namespace bounded_int_calculus {
 
