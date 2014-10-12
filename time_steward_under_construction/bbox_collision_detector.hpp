@@ -261,7 +261,7 @@ public:
     }
     new_box.num_low_bits_ = total_low_bits;
     for (num_coordinates_type i = 0; i != num_dimensions; ++i) {
-      assert_if_ASSERT_EVERYTHING(
+      maybe_assert(
             (zb1.coords_[i] & ~this_many_low_bits(dim_low_bits[i]))
         == (zb2.coords_[i] & ~this_many_low_bits(dim_low_bits[i]))
       );
@@ -808,10 +808,10 @@ private:
         accessor_->template set<bbox_collision_detector_root_node>(accessor_->get(bbcd_id), new_node_ref.id());
       }
       
-      assert_if_ASSERT_EVERYTHING(new_node->here.num_low_bits() > node->here.num_low_bits());
-      assert_if_ASSERT_EVERYTHING(new_node->here.subsumes(node->here));
-      assert_if_ASSERT_EVERYTHING(new_node->here.subsumes(box));
-      assert_if_ASSERT_EVERYTHING(box.subsumes(node->here) || (node->here.get_bit(new_node->here.num_low_bits() - 1) != box.get_bit(new_node->here.num_low_bits() - 1)));
+      maybe_assert(new_node->here.num_low_bits() > node->here.num_low_bits());
+      maybe_assert(new_node->here.subsumes(node->here));
+      maybe_assert(new_node->here.subsumes(box));
+      maybe_assert(box.subsumes(node->here) || (node->here.get_bit(new_node->here.num_low_bits() - 1) != box.get_bit(new_node->here.num_low_bits() - 1)));
 
       const size_t which_child = node->here.get_bit(new_node->here.num_low_bits() - 1);
       new_node->children[which_child] = node_ref.id();
