@@ -22,10 +22,16 @@
 #include <array>
 #include <vector>
 
+// A map from MappedType (rename?) to (finite union of closed intervals),
+// with fast lookup by overlapping point, interval, etc.
 template<typename DomainType, typename MappedType>
-class interval_tree {
+class bidirectional_interval_map {
 public:
   typedef std::pair<interval, MappedType> value_type;
+  struct tiebroken_domain_type {
+    DomainType
+    uint64_t tiebreaker;
+  };
   struct interval {
     std::array<DomainType, 2> bounds;
   };
@@ -40,14 +46,12 @@ private:
     size_t num_descendant_intervals;
     
     // only for non leaves
-    DomainType child_separator;
+    tiebroken_domain_type child_separator;
     std::array<std::unique_ptr<node>, 2> children; // the first has the lower values, the second the higher values
     
     // only for leaves
-    std::unordered_map<interval, MappedType> values_here;
+    std::unordered_set<value_type> values_here;
   };
-  
-  std::unique_ptr<node> root;
   
 public:
   template<typename Ordering>
@@ -146,6 +150,7 @@ public:
     result.bound_minima_exist[1] = true;
     result.bound_minima[1] = k;
     result.queue_root(root.get());
+    result.advance_to_a_returnable();
     return result;
   }
   iterator find_overlapping(interval const& k) {
@@ -155,6 +160,7 @@ public:
     result.bound_minima_exist[1] = true;
     result.bound_minima[1] = k.bounds[0];
     result.queue_root(root.get());
+    result.advance_to_a_returnable();
     return result;
   }
   iterator find_subsuming(interval const& k) {
@@ -164,6 +170,7 @@ public:
     result.bound_minima_exist[1] = true;
     result.bound_minima[1] = k.bounds[1];
     result.queue_root(root.get());
+    result.advance_to_a_returnable();
     return result;
   }
   iterator find_subsumed(interval const& k) {
@@ -173,6 +180,7 @@ public:
     result.bound_maxima_exist[1] = true;
     result.bound_maxima[1] = k.bounds[1];
     result.queue_root(root.get());
+    result.advance_to_a_returnable();
     return result;
   }
   iterator find_exact(interval const& k) {
@@ -186,11 +194,13 @@ public:
     result.bound_maxima_exist[1] = true;
     result.bound_maxima[1] = k.bounds[1];
     result.queue_root(root.get());
+    result.advance_to_a_returnable();
     return result;
   }
   iterator end()const {
     return iterator();
   }
+private:
   
   
   // The tree maintains these invariants:
@@ -214,7 +224,7 @@ public:
     }
     descendant = nullptr;
   }
-  static void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n, std::vector<value_type_ref> const& values_to_insert, std::vector<value_type_ref> const& values_to_erase) {
+  static void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n, std::vector<value_type*> const& values_to_insert, std::vector<value_type*> const& values_to_erase) {
     if (!n) {
       assert(is_root);
       n.reset(new node(false));
@@ -222,6 +232,10 @@ public:
     n->num_descendant_intervals += values_to_insert.size();
     n->num_descendant_intervals -= values_to_erase .size();
     assert(is_root || (n->num_descendant_intervals >= min_leaf_size));
+    if (n->num_descendant_intervals == 0) {
+      assert(is_root);
+      n = nullptr;
+    }
     
     if (n->children[0]) { // i.e. "if non leaf"
       if (n->num_descendant_intervals <= max_leaf_size) {
@@ -229,71 +243,153 @@ public:
         collapse_node(*n, n->children[1]);
       }
       else {
-        std::array<std::vector<value_type_ref>, 2> values_to_insert_by_child;
-        std::array<std::vector<value_type_ref>, 2> values_to_erase_by_child;
+        std::array<std::vector<value_type*>, 2> values_to_insert_by_child;
+        std::array<std::vector<value_type*>, 2> values_to_erase_by_child;
         for (auto& v : values_to_insert_by_child) { v.reserve(values_to_insert.size()); }
         for (auto& v : values_to_erase_by_child ) { v.reserve(values_to_erase .size()); }
-        for (value_type_ref v : values_to_insert) {
+        for (value_type* v : values_to_insert) {
           values_to_insert_by_child[v.first.bounds[n->splits_based_on_which_bound] > n->child_separator].push_back(v);
         }
-        for (value_type_ref v : values_to_erase ) {
+        for (value_type* v : values_to_erase ) {
           values_to_erase_by_child [v.first.bounds[n->splits_based_on_which_bound] > n->child_separator].push_back(v);
+          if (                      v.first.bounds[n->splits_based_on_which_bound]== n->child_separator) {
+            // for == values, we need to check both children.
+            values_to_erase_by_child [true].push_back(v);
+          }
         }
   #define NEW_NUM_DESCENDANTS(which_child) (n->children[which_child]->num_descendant_intervals \
     + values_to_insert_by_child[which_child].size() \
     - values_to_erase_by_child[which_child].size())
+        std::sort(values_to_insert_by_child[0], low to high);
+        std::sort(values_to_erase_by_child [0], low to high);
+        std::sort(values_to_insert_by_child[1], high to low);
+        std::sort(values_to_erase_by_child [1], high to low);
+    
         for (which_child : true, false) {
           if (NEW_NUM_DESCENDANTS(which_child) > 2*NEW_NUM_DESCENDANTS(!which_child)) {
             iterator<> thief;
+            std::vector<value_type*> stolen;
             if (which_child) {
-              result.bound_minima_exist[0] = true;
-              result.bound_minima[0] = n->child_separator;
+              thief.bound_minima_exist[0] = true;
+              thief.bound_minima[0] = n->child_separator;
+              thief.comes_before = low to high
             }
             else {
-              result.bound_maxima_exist[1] = true;
-              result.bound_maxima[1] = n->child_separator;
+              thief.bound_maxima_exist[1] = true;
+              thief.bound_maxima[1] = n->child_separator;
+              thief.comes_before = high to low
             }
-            iterator.queue_root(n->children[which_child].get());
+            thief.queue_root(n->children[which_child].get());
+            thief.advance_to_a_returnable();
             while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1) {
-              values_to_erase_by_child [ which_child].push_back(*iterator);
-              values_to_insert_by_child[!which_child].push_back(*iterator);
-              n->child_separator = iterator->first.bounds[!which_child]; // TODO worry about < vs <=
+              if (thief.comes_before(                   thief->first.bounds[n->splits_based_on_which_bound]
+                values_to_insert_by_child[which_child].back()->first.bounds[n->splits_based_on_which_bound])) {
+                if (!values_to_erase.find(*thief)) {
+                  stolen.push_back(*thief);
+                  n->child_separator = thief->first.bounds[!which_child];
+                }
+                ++thief;
+              }
+              else {
+                n->child_separator = values_to_insert_by_child[which_child].back()->first.bounds[n->splits_based_on_which_bound];
+                values_to_insert_by_child[!which_child].push_back(values_to_insert_by_child[which_child].back());
+                values_to_insert_by_child[which_child].pop_back();
+              }
+            }
+            for (value_type* v : stolen) {
+              values_to_erase_by_child [ which_child].push_back(v);
+              values_to_insert_by_child[!which_child].push_back(v);
             }
           }
         }
         for (which_child : true, false) {
-          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
+          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child[which_child]);
         }
       }
     }
     else {
-      for (value_type& v : values_to_erase) {
-        n->values_here.erase(v);
+      for (value_type* v : values_to_erase) {
+        const auto p = n->values_here.erase(*v);
+        caller_correct_if(p, "erasing an element that doesn't exist");
       }
-      for (value_type& v : values_to_insert) {
-        n->values_here.insert(v);
+      for (value_type* v : values_to_insert) {
+        const auto p = n->values_here.insert(*v);
+        assert(p.second);
       }
       if (n->num_descendant_intervals > max_leaf_size) {
         n->children[0].reset(new node(!n->splits_based_on_which_bound));
         n->children[1].reset(new node(!n->splits_based_on_which_bound));
         
         n->child_separator = median(n->values_here)
-        std::array<std::vector<value_type_ref>, 2> values_to_insert_by_child;
-        for (value_type_ref v : n->values_here) {
-          values_to_insert_by_child[v > n->child_separator].push_back(v);
+        std::array<std::vector<value_type*>, 2> values_to_insert_by_child;
+        for (value_type* v : n->values_here) {
+          values_to_insert_by_child[v->bounds[n->splits_based_on_which_bound] > n->child_separator].push_back(v);
         }
         for (which_child : true, false) {
-          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
+          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child[which_child]);
         }
       }
     }
   }
   
-  void erase(iterator i) {
-    i.queue.front().n
+public:
+  // Insert M elements and erase P elements.
+  // O(M+P+log(N)) amortized.
+  void insert_and_or_erase(std::vector<value_type*> const& values_to_insert, std::vector<value_type*> const& values_to_erase) {
+    for (value_type* v : values_to_insert) {
+      mapped_type_metadata& m = *metadata_by_mapped_type.insert(std::make_pair(v->second, mapped_type_metadata())).second;
+      if (!m.tiebreaker) { m.tiebreaker = next_tiebreaker++; }
+      const auto p = m.transitions.insert(std::make_pair(v->first.bounds[0], true));
+      bool already_filled;
+      auto i = boost::next(p.first);
+      if (p.first != m.transitions.begin()) {
+        const auto last_iter = boost::prior(p.first);
+        already_filled = last_iter->second;
+        if (already_filled) { m.transitions.erase(p.first); }
+      }
+      for (; i != m.transitions.end();) {
+        assert (i->second != already_filled);
+        if ((i != m.transitions.end()) && (i->first < v->first.bounds[1])) {
+          m.transitions.erase(i++);
+        }
+        else {
+          if (!already_filled) {
+            m.transitions.insert(std::make_pair(v->first.bounds[1], false));
+          }
+          else {
+            assert (i != m.transitions.end());
+          }
+          break;
+        }
+        already_filled = i->second;
+      }
+    }
+    insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
+  }
+  void erase(value_type const& i) {
+    std::vector<value_type*> values_to_insert;
+    std::vector<value_type*> values_to_erase;
+    values_to_erase.push_back(&i);
+    insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
+  }
+  void insert(value_type const& i) {
+    std::vector<value_type*> values_to_insert;
+    std::vector<value_type*> values_to_erase;
+    values_to_insert.push_back(&i);
+    insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
   }
   
+  bidirectional_interval_map():root(nullptr),metadata_by_mapped_type(),next_tiebreaker(1){}
   
+private:
+  struct mapped_type_metadata {
+    uint64_t tiebreaker;
+    std::map<DomainType, bool> transitions;
+  };
+  
+  std::unique_ptr<node> root;
+  std::unordered_map<MappedType, mapped_type_metadata> metadata_by_mapped_type;
+  uint64_t next_tiebreaker;
   
 };
 
