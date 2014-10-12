@@ -55,7 +55,14 @@ private:
   int val;
 };
 
-
+// arrayvector<std::vector<float>, 3> is a sequence container
+// that stores 3 floats directly in the arrayvector object
+// and any floats after the third in a conditionally-present
+// std::vector<float> object.  If size() is always <= ArraySize
+// then arrayvector never allocates.
+//
+// value_type must be DefaultConstructible and Assignable (this is
+// a conceptual bug).
 template<typename VectorType, size_t ArraySize> class arrayvector {
 public:
   typedef typename VectorType::value_type value_type;
