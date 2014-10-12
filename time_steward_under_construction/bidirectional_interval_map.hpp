@@ -22,12 +22,12 @@
 #include <array>
 #include <vector>
 
-// A map from MappedType (rename?) to (finite union of closed intervals),
+// A map from KeyType to (finite union of regularized intervals, cf. Robust Regularized Set Operations on Polyhedra, Beat Bruderlin),
 // with fast lookup by overlapping point, interval, etc.
-template<typename DomainType, typename MappedType>
+template<typename KeyType, typenameDomainType>
 class bidirectional_interval_map {
 public:
-  typedef std::pair<interval, MappedType> value_type;
+  typedef std::pair<interval, KeyType> value_type;
   struct tiebroken_domain_type {
     DomainType
     uint64_t tiebreaker;
@@ -331,40 +331,67 @@ private:
       }
     }
   }
+  void queue_setting(value_type* v, bool inserting)
+    interval new_internal_interval = v->first;
+    
+    key_metadata& m = *metadata_by_key.insert(std::make_pair(v->second, key_metadata())).second;
+    if (!m.tiebreaker) { m.tiebreaker = next_tiebreaker++; }
+    bool already_filled = false;
+    
+    const auto p = m.transitions.insert(std::make_pair(v->first.bounds[0], inserting));
+    auto i = boost::next(p.first);
+    
+    if (p.first == m.transitions.begin()) {
+      if (!inserting) {
+        new_internal_interval.bounds[0] = neginf;
+      }
+    }
+    else {
+      const auto last_iter = boost::prior(p.first);
+      new_internal_interval.bounds[0] = last_iter->first;
+      already_filled = last_iter->second;
+    }
+    if (already_filled == inserting) {
+      assert(new_internal_interval.bounds[0] != p.first->first);
+      if (p.first->second) {
+        assert (!inserting);
+        queue_erase(p.first->first, boost::next(p.first->first));
+      }
+      m.transitions.erase(p.first);
+    }
+    else {
+      assert(p.first->second == inserting);
+    }
+    
+    for (; i != m.transitions.end();) {
+      assert (i->second != already_filled);
+      if ((i != m.transitions.end()) && (i->first < v->first.bounds[1])) {
+        if (i->second) {
+          queue_erase(i->first, boost::next(i->first));
+        }
+        m.transitions.erase(i++);
+      }
+      else {
+        if (already_filled != inserting) {
+          m.transitions.insert(std::make_pair(v->first.bounds[1], !inserting));
+        }
+        else {
+          assert (i != m.transitions.end());
+          new_internal_interval.bounds[0] = i->first;
+        }
+        break;
+      }
+      already_filled = i->second;
+    }
+  }
   
 public:
   // Insert M elements and erase P elements.
   // O(M+P+log(N)) amortized.
   void insert_and_or_erase(std::vector<value_type*> const& values_to_insert, std::vector<value_type*> const& values_to_erase) {
-    for (value_type* v : values_to_insert) {
-      mapped_type_metadata& m = *metadata_by_mapped_type.insert(std::make_pair(v->second, mapped_type_metadata())).second;
-      if (!m.tiebreaker) { m.tiebreaker = next_tiebreaker++; }
-      const auto p = m.transitions.insert(std::make_pair(v->first.bounds[0], true));
-      bool already_filled;
-      auto i = boost::next(p.first);
-      if (p.first != m.transitions.begin()) {
-        const auto last_iter = boost::prior(p.first);
-        already_filled = last_iter->second;
-        if (already_filled) { m.transitions.erase(p.first); }
-      }
-      for (; i != m.transitions.end();) {
-        assert (i->second != already_filled);
-        if ((i != m.transitions.end()) && (i->first < v->first.bounds[1])) {
-          m.transitions.erase(i++);
-        }
-        else {
-          if (!already_filled) {
-            m.transitions.insert(std::make_pair(v->first.bounds[1], false));
-          }
-          else {
-            assert (i != m.transitions.end());
-          }
-          break;
-        }
-        already_filled = i->second;
-      }
-    }
-    insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
+    std::vector<value_type*> internal_values_to_insert;
+    std::vector<value_type*> internal_values_to_erase;
+    insert_and_or_erase_impl(true, root, internal_values_to_insert, internal_values_to_erase);
   }
   void erase(value_type const& i) {
     std::vector<value_type*> values_to_insert;
@@ -379,16 +406,16 @@ public:
     insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
   }
   
-  bidirectional_interval_map():root(nullptr),metadata_by_mapped_type(),next_tiebreaker(1){}
+  bidirectional_interval_map():root(nullptr),metadata_by_key(),next_tiebreaker(1){}
   
 private:
-  struct mapped_type_metadata {
+  struct key_metadata {
     uint64_t tiebreaker;
     std::map<DomainType, bool> transitions;
   };
   
   std::unique_ptr<node> root;
-  std::unordered_map<MappedType, mapped_type_metadata> metadata_by_mapped_type;
+  std::unordered_map<KeyType, key_metadata> metadata_by_key;
   uint64_t next_tiebreaker;
   
 };
