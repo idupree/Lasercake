@@ -37,15 +37,15 @@ static_assert(boost::is_same<decltype(std::abs(int32_t(1))), int32_t>::value, "b
 
 
 namespace comparators {
-struct first_is_true  { template<typename A, typename B> constexpr bool operator()(A&& a, B&&) { return bool(a); } };
-struct is_true        { template<typename A> constexpr bool operator()(A&& a) { return bool(a); } };
-struct is_false       { template<typename A> constexpr bool operator()(A&& a) { return !bool(a); } };
-struct not_equal_to   { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a != b; } };
-struct equal_to       { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a == b; } };
-struct less           { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a <  b; } };
-struct less_equal     { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a <= b; } };
-struct greater        { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a >  b; } };
-struct greater_equal  { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b) { return a >= b; } };
+struct first_is_true  { template<typename A, typename B> constexpr bool operator()(A&& a, B&&)const { return bool(a); } };
+struct is_true        { template<typename A> constexpr bool operator()(A&& a)const { return bool(a); } };
+struct is_false       { template<typename A> constexpr bool operator()(A&& a)const { return !bool(a); } };
+struct not_equal_to   { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a != b; } };
+struct equal_to       { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a == b; } };
+struct less           { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a <  b; } };
+struct less_equal     { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a <= b; } };
+struct greater        { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a >  b; } };
+struct greater_equal  { template<typename A, typename B> constexpr bool operator()(A&& a, B&& b)const { return a >= b; } };
 }
 
 // returns the signum (-1, 0, or 1)
@@ -76,6 +76,28 @@ typename boost::make_unsigned<Int>::type to_unsigned_type(Int i) {
   return result;
 }
 
+
+// num_zero_bits must be less than the number of bits
+// in T to prevent undefined behavior.
+template<typename T, typename ShiftT>
+BOOST_FORCEINLINE constexpr T n_low_zero_bits(ShiftT num_zero_bits) {
+  // left-shift (by a positive amount) of negative values
+  // is undefined behaviour, so we have to do those left shifts
+  // on unsigned types.
+  typedef typename boost::make_unsigned<T>::type UnsignedT;
+  return T(~UnsignedT(0) << num_zero_bits);
+}
+template<typename T, typename ShiftT>
+BOOST_FORCEINLINE constexpr T safer_n_low_zero_bits(ShiftT num_zero_bits) {
+  // left-shift (by a positive amount) of negative values
+  // is undefined behaviour, so we have to do those left shifts
+  // on unsigned types.
+  typedef typename boost::make_unsigned<T>::type UnsignedT;
+  return
+    std::numeric_limits<UnsignedT>::digits == num_zero_bits ?
+    T(0) :
+    T(~UnsignedT(0) << num_zero_bits);
+}
 
 // Zero divided by something is always zero.
 // Any other division result is always (before rounding)
@@ -327,20 +349,20 @@ BOOST_FORCEINLINE constexpr T shift_right_impl2(
       T num, ShiftT shift,
       rounding_strategy<round_down, negative_mirrors_positive>) {
   return (num >> shift) +
-         ((num < 0) && (num != (num >> shift << shift)) ? T(1) : T(0));
+         ((num < 0) && (num != (num & n_low_zero_bits<T>(shift))) ? T(1) : T(0));
 }
 template<typename T, typename ShiftT>
 BOOST_FORCEINLINE constexpr T shift_right_impl2(
       T num, ShiftT shift,
       rounding_strategy<round_up, negative_continuous_with_positive>) {
-  return ((num >> shift) + ((num != (num >> shift << shift)) ? T(1) : T(0)));
+  return ((num >> shift) + ((num != (num & n_low_zero_bits<T>(shift))) ? T(1) : T(0)));
 }
 template<typename T, typename ShiftT>
 BOOST_FORCEINLINE constexpr T shift_right_impl2(
       T num, ShiftT shift,
       rounding_strategy<round_up, negative_mirrors_positive>) {
   return (num >> shift) +
-         ((num >= 0) && (num != (num >> shift << shift)) ? T(1) : T(0));
+         ((num >= 0) && (num != (num & n_low_zero_bits<T>(shift))) ? T(1) : T(0));
 }
 template<typename T, typename ShiftT,
   rounding_strategy_for_positive_numbers PosStrategy,
@@ -358,8 +380,8 @@ inline constexpr T shift_right_impl2(
   // We check whether shift is 0 to avoid shifting by -1 or giving
   // the wrong result.
   return (shift == ShiftT(0)) ? num : round_to_nearest_impl<false>(
-     /*left, divisor/2 equivalent*/ (~T(0) << (shift - ShiftT(1))),
-     /*right, remainder equivalent*/ num | (~T(0) << shift),
+     /*left, divisor/2 equivalent*/ n_low_zero_bits<T>(shift - ShiftT(1)),
+     /*right, remainder equivalent*/ num | n_low_zero_bits<T>(shift),
              (num >> shift), T(1), (num >= T(0)), strat);
 }
 
@@ -511,6 +533,7 @@ inline bool shift_value_is_safe_for_type(ShiftValueType const& shift_value) {
   return shift_value_is_safe_impl_1<ShiftedType>::impl(shift_value);
 }
 
+// TODO this only is safe for nonnegative 'a'.
 template<typename ShiftedType, typename ShiftValueType>
 inline ShiftedType safe_left_shift(ShiftedType const& a, ShiftValueType const& shift) {
   if (shift_value_is_safe_for_type<ShiftedType>(shift)) {
@@ -867,8 +890,8 @@ inline result_t isqrt_impl(radicand_t radicand) {
 
 #if 0//def DETECTED_uint128_t
   typedef DETECTED_uint128_t twice_t;
-  assert_if_ASSERT_EVERYTHING(full_t(lower_bound)*lower_bound <= radicand);
-  assert_if_ASSERT_EVERYTHING(twice_t(upper_bound)*upper_bound > radicand);
+  maybe_assert(full_t(lower_bound)*lower_bound <= radicand);
+  maybe_assert(twice_t(upper_bound)*upper_bound > radicand);
 #endif
 
   while(lower_bound + 1 < upper_bound)
