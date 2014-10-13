@@ -451,8 +451,8 @@ public:
     return result;
   }
   
-  value_type neginf_sign()const { if (num_terms == 0) return 0; else return back() * ((num_terms & 1) ? 1 : -1); }
-  value_type posinf_sign()const { if (num_terms == 0) return 0; else return back(); }
+  value_type neginf_sign()const { if (num_terms == 0) return 0; else return sign(back() * ((num_terms & 1) ? 1 : -1)); }
+  value_type posinf_sign()const { if (num_terms == 0) return 0; else return sign(back()); }
   
   class sign_interval_boundary_iterator {
   private:
@@ -586,8 +586,8 @@ public:
             while(sign((*p_)(max)) != ps) { max <<= 1; }
           }
           assert(max > min);
-          const value_type sign_min((*p_)(min));
-          const value_type sign_max((*p_)(max));
+          const value_type sign_min = sign((*p_)(min));
+          const value_type sign_max = sign((*p_)(max));
           if (sign_min == sign_max) {
             if (derivative_iterator_->p_) {
               advance_to(derivative_iterator_->input_);
@@ -603,7 +603,7 @@ public:
             else {
               while(min + 1 < max) {
                 const domain_type mid = (min>>1)+(max>>1)+(min&max&1);
-                const value_type sign_mid((*p_)(mid));
+                const value_type sign_mid = sign((*p_)(mid));
                 if (sign_mid == 0) {
                   future[future_size++] = mid + 1;
                   future[future_size++] = mid;
