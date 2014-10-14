@@ -34,6 +34,7 @@
 #include <memory>
 #include "ordered_stuff.hpp"
 #include "siphash_id.hpp"
+#include "bidirectional_interval_map.hpp"
 
 /*
  
@@ -825,7 +826,7 @@ private:
   };
   
   struct field_metadata_throughout_time {
-    std::map<extended_time, persistent_siphash_id_set> triggers_pointing_at_this_changes;
+    bidirectional_interval_map<trigger_id, extended_time> triggers_pointing_at_this;
     std::set<extended_time> event_piles_which_accessed_this;
   };
   template<typename FieldData>
@@ -903,14 +904,12 @@ private:
   }
   void update_triggers(bool undoing, entity_field_id const& id, extended_time field_change_time) {
     auto const& metadata = get_field_metadata_throughout_time(id);
-    const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.upper_bound(field_change_time); // upper_bound:
-    // if a trigger checks a field and then changes it, it retriggers itself.
-    // if it changes the field without checking it, it doesn't, even if its previous iteration checked that field.
-    if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
-      const auto triggers_iter = boost::prior(next_triggers_iter);
-      assert (triggers_iter->first <= field_change_time);
-      for (auto tid : triggers_iter->second) {
-        update_trigger(undoing, tid, field_change_time);
+    for (auto v : metadata.triggers_pointing_at_this.range_containing(field_change_time)) {
+      // bidirectional_interval_map acts as if its intervals are closed intervals but we treat them as right-open ones.
+      // if a trigger checks a field and then changes it, it retriggers itself.
+      // if it changes the field without checking it, it doesn't, even if its previous iteration checked that field.
+      if (v.interval.bounds[1] > field_change_time) {
+        update_trigger(undoing, v.key, field_change_time);
       }
     }
   }
@@ -964,76 +963,36 @@ private:
   void delete_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid) {
     update_trigger_access_record(id, time, tid, bool(), true);
   }
-  void update_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid, bool undoing, bool force_erase = false, bool modifies_future = true) {
+  void update_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid, bool undoing, bool force_erase = false) {
     assert (event_piles.find(time)->second.tid == tid);
-    auto& metadata = get_field_metadata_throughout_time(id);
-    persistent_siphash_id_set old_triggers;
-    bool changed = false;
-    const auto next_triggers_iter = metadata.triggers_pointing_at_this_changes.upper_bound(time); // upper_bound: really next
-    if (next_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
-      const auto this_or_last_triggers_iter = boost::prior(next_triggers_iter);
-      if (this_or_last_triggers_iter->first == time) {
-        bool found_in_last = false;
-        if (this_or_last_triggers_iter != metadata.triggers_pointing_at_this_changes.begin()) {
-          found_in_last = bool(boost::prior(this_or_last_triggers_iter)->second.find(tid));
-        }
-        if (force_erase || (found_in_last != undoing)) {
-          metadata.triggers_pointing_at_this_changes.erase(this_or_last_triggers_iter);
-          changed = true;
-        }
-      }
-      else if (!force_erase) {
-        const persistent_siphash_id_set old_triggers = this_or_last_triggers_iter->second;
-        const persistent_siphash_id_set new_triggers = undoing ? old_triggers.erase(tid) : old_triggers.insert(tid);
-        if (new_triggers != old_triggers) {
-          const auto p = metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, new_triggers));
-          assert (p.second);
-          changed = true;
-        }
-      }
-    }
-    else {
-      if (!undoing && !force_erase) {
-        const auto p = metadata.triggers_pointing_at_this_changes.insert(std::make_pair(time, persistent_siphash_id_set().insert(tid)));
-        assert (p.second);
-        changed = true;
-      }
-    }
-    assert (changed || modifies_future);
-    if (changed && modifies_future) {
-      // If we changed the future of metadata.triggers_pointing_at_this_changes, 
-      // anything in the future that referred to metadata.triggers_pointing_at_this_changes
-      // needs to be updated.
-      (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, tid, undoing);
-    }
     
-    const auto n = metadata.triggers_pointing_at_this_changes.upper_bound(time);
-    if (n != metadata.triggers_pointing_at_this_changes.end()) {
-      assert (force_erase || (undoing == bool(n->second.find(tid))));
-    }
-    if (!force_erase) {
-      if (n == metadata.triggers_pointing_at_this_changes.begin()) {
-        assert (undoing);
+    auto const& trigger_info = triggers.find(tid)->second;
+    const auto next_call_iter = trigger_info.upper_bound(time);
+    const extended_time change_end = (next_call_iter == trigger_info.end()) ? get_max_exttime() : next_call_iter->first;
+    
+    auto& metadata = get_field_metadata_throughout_time(id);
+    if (force_erase) { undoing = !metadata.triggers_pointing_at_this.key_active_before(tid, time); }
+    const bool changed = (undoing == metadata.triggers_pointing_at_this.key_active_after(tid, time));
+    
+    if (changed) {
+      if (undoing) {
+        metadata.triggers_pointing_at_this.erase (tid, time, change_end);
       }
       else {
-        assert (undoing == !boost::prior(n)->second.find(tid));
+        metadata.triggers_pointing_at_this.insert(tid, time, change_end);
       }
+      // If we changed the future of metadata.triggers_pointing_at_this, 
+      // anything in the future that referred to metadata.triggers_pointing_at_this
+      // needs to be updated.
+      (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, change_end, tid, undoing);
     }
   }
   struct update_future_trigger_calls {
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, extended_time time, trigger_id tid, bool undoing) {
-      auto const& trigger_info = ts->triggers.find(tid)->second;
-      const auto next_call_iter = trigger_info.upper_bound(time);
-      if (next_call_iter != trigger_info.end()) {
-        const auto next_call_pile_iter = ts->event_piles.find(next_call_iter->first);
-        const bool next_didnt_access = next_call_pile_iter->second.entity_fields_pile_accessed.find(id) == next_call_pile_iter->second.entity_fields_pile_accessed.end();
-        ts->update_trigger_access_record(id, next_call_iter->first, tid, next_didnt_access, false, false);
-      }
-      
+    static void func(time_steward* ts, entity_field_id const& id, extended_time change_start, extended_time change_end, trigger_id tid, bool undoing) {
       auto const& f = ts->get_field_throughout_time<FieldID>(id);
-      for (auto i = f.upper_bound(time); i != f.end(); ++i) { // upper_bound: we handle f[time], if any, in the regular update_triggers.
-        if ((next_call_iter != trigger_info.end()) && (i->first >= next_call_iter->first)) { break; } // >=:
+      for (auto i = f.upper_bound(change_start); i != f.end(); ++i) { // upper_bound: we handle f[time], if any, in the regular update_triggers.
+        if (i->first >= change_end) { break; } // >=:
           // if a trigger changes a field, it doesn't matter what the trigger was looking at before that time.
         ts->update_trigger(undoing, tid, i->first);
       }
@@ -1154,7 +1113,7 @@ public:
     other.debug__check_equivalence_one_sided(*this);
   }
 private:
-  void debug__check_equivalence_one_sided(time_steward const& other)const {
+  void debug__check_equivalence_one_sided(time_steward const& /*other*/)const {
   }
   event_piles_map event_piles;
   std::set<extended_time> event_piles_needing_execution;
@@ -1244,7 +1203,7 @@ private:
       accessor a(this, time, pile_info.tid);
       a.process_event(pile_info.instigating_event.get());
       
-      // Order is important: We must update a field's triggers_pointing_at_this_changes record
+      // Order is important: We must update a field's triggers_pointing_at_this record
       //   before calling update_triggers on it.
       pile_info.entity_fields_pile_accessed = std::move(a.entity_fields_preexisting_state_accessed);
       for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {

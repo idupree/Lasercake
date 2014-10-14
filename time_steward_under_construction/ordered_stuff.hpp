@@ -53,6 +53,7 @@ public:
     if (o.data) { ++o.data->ref_count; }
     dec_ref();
     data = o.data;
+    return *this;
   }
   ~entry_ref() { dec_ref(); }
 private:

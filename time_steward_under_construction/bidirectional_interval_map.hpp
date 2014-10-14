@@ -27,34 +27,51 @@ namespace impl {
   template<typename QueueEntry, typename ComesAfter>
   struct iterator_queue {
     std::priority_queue<QueueEntry, std::vector<QueueEntry>, ComesAfter> data;
-    QueueEntry& front() { return data.top(); }
+    iterator_queue(ComesAfter const& comes_after):data(comes_after){}
+    QueueEntry const& front()const { return data.top(); }
     void pop() { return data.pop(); }
     void push(QueueEntry const& e) { return data.push(e); }
     bool empty()const { return data.empty(); }
-  }
+  };
   template<typename QueueEntry>
   struct iterator_queue<QueueEntry, unsorted> {
     std::queue<QueueEntry> data;
-    QueueEntry& front() { return data.front(); }
+    QueueEntry const& front()const { return data.front(); }
     void pop() { return data.pop(); }
     void push(QueueEntry const& e) { return data.push(e); }
     bool empty()const { return data.empty(); }
-  }
+  };
+  
+  template<typename DomainType>
+  struct interval_type {
+    interval_type(){}
+    interval_type(DomainType a, DomainType b):bounds({{a,b}}){}
+    std::array<DomainType, 2> bounds;
+    bool operator==(interval_type const& o)const { return (bounds[0] == o.bounds[0]) && (bounds[1] == o.bounds[1]); }
+    bool operator!=(interval_type const& o)const { return (bounds[0] != o.bounds[0]) || (bounds[1] != o.bounds[1]); }
+  };
+  template<typename KeyType, typename DomainType>
+  struct keyed_interval {
+    keyed_interval(KeyType key, DomainType a, DomainType b):key(key),interval(a,b){}
+    KeyType key;
+    interval_type<DomainType> interval;
+    bool operator==(keyed_interval const& o)const { return (key == o.key) && (interval == o.interval); }
+    bool operator!=(keyed_interval const& o)const { return (key != o.key) || (interval != o.interval); }
+  };
 }
 
-// A map from KeyType to (finite union of regularized intervals, cf. Robust Regularized Set Operations on Polyhedra, Beat Bruderlin),
+
+// A map from KeyType to finite unions of regularized intervals
+// (cf. Robust Regularized Set Operations on Polyhedra, Beat Bruderlin),
+// (essentially, "the endpoints don't matter")
 // with fast lookup by overlapping point, interval, etc.
 template<typename KeyType, typename DomainType>
 class bidirectional_interval_map {
 public:
-  struct interval_type {
-    std::array<DomainType, 2> bounds;
-  };
-  struct value_type {
-    interval_type interval;
-    KeyType key;
-  }
+  typedef impl::interval_type<DomainType> interval_type;
+  typedef impl::keyed_interval<KeyType, DomainType> value_type;
   struct tiebroken_domain_type {
+    tiebroken_domain_type(){}
     tiebroken_domain_type(DomainType value, uint64_t tiebreaker):value(value),tiebreaker(tiebreaker){}
     DomainType value;
     uint64_t tiebreaker;
@@ -91,101 +108,120 @@ private:
     }
   };
   
+  struct iterator_queue_entry {
+    iterator_queue_entry():n(nullptr),value(nullptr){}
+    node const* n;
+    value_type const* value;
+    std::array<interval_type, 2> possible_bounds;
+  };
 public:
-  
   template<typename ComesAfter = impl::unsorted>
   class iterator {
+  private:
+    struct contents {
+      contents(impl::unsorted = impl::unsorted()):queue(),
+        bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}){}
+      template<typename Hack = std::enable_if_t<!std::is_same<ComesAfter, impl::unsorted>::value>>
+      contents(ComesAfter const& comes_after):comes_after(comes_after),queue(comes_after),
+        bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}){}
+      
+      ComesAfter comes_after;
+      impl::iterator_queue<iterator_queue_entry, ComesAfter> queue;
+      std::array<bool, 2> bound_minima_exist;
+      std::array<bool, 2> bound_maxima_exist;
+      std::array<DomainType, 2> bound_minima;
+      std::array<DomainType, 2> bound_maxima;
+    };
+    
+    std::shared_ptr<contents> c_;
   public:
-    iterator(impl::unsorted = impl::unsorted()):queue(),
-      bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}),min_length_exists(false){}
-    iterator(std::enable_if_t<!std::is_same<ComesAfter, impl::unsorted>::value, ComesAfter const&> comes_after):comes_after(comes_after),queue(comes_after),
-      bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}),min_length_exists(false){}
-
-    value_type& operator*() const {
-      caller_error_if(queue.empty(), "can't dereference an empty iterator");
-      return *queue.front().value;
+    iterator():c_(nullptr){}
+    iterator(ComesAfter comes_after):c_(new contents(comes_after)){}
+    
+    value_type const& operator*() const {
+      caller_error_if(queue().empty(), "can't dereference an empty iterator");
+      return *queue().front().value;
     }
-    value_type* operator->() const {
-      caller_error_if(queue.empty(), "can't dereference an empty iterator");
-      return queue.front().value;
+    value_type const* operator->() const {
+      caller_error_if(queue().empty(), "can't dereference an empty iterator");
+      return queue().front().value;
     }
-    value_type* operator++(int) {
-      value_type* result = queue.front().value;
+    value_type const* operator++(int) {
+      value_type* result = queue().front().value;
       ++*this;
       return result;
     }
     iterator& operator++() {
-      queue.pop();
+      queue().pop();
       advance_to_a_returnable();
       return *this;
     }
 
-    bool operator==(iterator const& other) const {
-      if (queue.empty()) { return other.queue.empty(); }
-      if (other.queue.empty()) { return false; }
-      return queue.front() == other.queue.front();
-    }
+    bool operator==(iterator const& other) const { return c_ == other.c_; }
     bool operator!=(iterator const& other) const { return !(*this == other); }
     
   private:
-    struct queue_entry {
-      node* n;
-      value_type* value;
-      std::array<interval_type, 2> possible_bounds;
-    };
-    impl::iterator_queue<queue_entry, ComesAfter> queue;
-    ComesAfter comes_after;
-    std::array<bool, 2> bound_minima_exist;
-    std::array<bool, 2> bound_maxima_exist;
-    bool min_length_exists;
+    impl::iterator_queue<iterator_queue_entry, ComesAfter> const& queue()const { return c_->queue; }
+    impl::iterator_queue<iterator_queue_entry, ComesAfter>      & queue()      { return c_->queue; }
     
-    
-    void queue_root(node* root) {
-      queue_entry e;
+    void queue_root(node* root, interval_type const& observed_range) {
+      iterator_queue_entry e;
       e.n = root;
       if (!e.n) return;
-      e.possible_bounds[0][0] = neginf;
-      e.possible_bounds[0][1] = inf;
-      e.possible_bounds[1][0] = neginf;
-      e.possible_bounds[1][1] = inf;
-      queue.push(e);
+      e.possible_bounds[0] = observed_range;
+      e.possible_bounds[1] = observed_range;
+      queue().push(e);
     }
-    void queue_node(queue_entry const& parent, bool use_second_child) {
-      queue_entry e = parent;
+    void queue_node(iterator_queue_entry const& parent, bool use_second_child) {
+      iterator_queue_entry e = parent;
       e.n = parent.n->children[use_second_child].get();
       if (!e.n) return;
-      if (bound_minima_exist[parent.n->splits_based_on_which_bound] &&  use_second_child && (parent.n->child_separator.value < bound_minima[parent.n->splits_based_on_which_bound])) return;
-      if (bound_maxima_exist[parent.n->splits_based_on_which_bound] && !use_second_child && (parent.n->child_separator.value > bound_maxima[parent.n->splits_based_on_which_bound])) return;
+      if (c_->bound_minima_exist[parent.n->splits_based_on_which_bound] &&  use_second_child &&
+        (parent.n->child_separator.value < c_->bound_minima[parent.n->splits_based_on_which_bound])) return;
+      if (c_->bound_maxima_exist[parent.n->splits_based_on_which_bound] && !use_second_child &&
+        (parent.n->child_separator.value > c_->bound_maxima[parent.n->splits_based_on_which_bound])) return;
       e.possible_bounds[parent.n->splits_based_on_which_bound].bounds[!use_second_child] = parent.n->child_separator.value;
-      if (min_length_exists && interval_type(e.possible_bounds[0].bounds[0], e.possible_bounds[1].bounds[1]).length_less_than(min_length)) return;
-      queue.push(e);
+      queue().push(e);
     }
-    void queue_value(node* n, value_type* value) {
-      queue_entry e;
+    void queue_value(node const* n, value_type const* value) {
+      iterator_queue_entry e;
       e.n = n;
       e.value = value;
       std::array<DomainType, 2> const& bounds = value->interval.bounds;
-      if (bound_minima_exist[0] && (bounds[0] < bound_minima[0])) return;
-      if (bound_maxima_exist[0] && (bounds[0] > bound_maxima[0])) return;
-      if (bound_minima_exist[1] && (bounds[1] < bound_minima[1])) return;
-      if (bound_maxima_exist[1] && (bounds[1] > bound_maxima[1])) return;
-      if (min_length_exists && value->interval.length_less_than(min_length)) return;
-      queue.push(e);
+      if (c_->bound_minima_exist[0] && (bounds[0] < c_->bound_minima[0])) return;
+      if (c_->bound_maxima_exist[0] && (bounds[0] > c_->bound_maxima[0])) return;
+      if (c_->bound_minima_exist[1] && (bounds[1] < c_->bound_minima[1])) return;
+      if (c_->bound_maxima_exist[1] && (bounds[1] > c_->bound_maxima[1])) return;
+      queue().push(e);
     }
     void advance_to_a_returnable() {
-      while (!queue.front().value) {
-        queue_node(queue.front(), 0);
-        queue_node(queue.front(), 1);
-        for (value_type& v : queue.front().n->values_here) {
-          queue_value(queue.front().n, &v);
+      while (!queue().front().value) {
+        queue_node(queue().front(), 0);
+        queue_node(queue().front(), 1);
+        for (value_type const& v : queue().front().n->values_here) {
+          queue_value(queue().front().n, &v);
         }
-        queue.pop();
-        if (queue.empty()) { return; }
+        queue().pop();
+        if (queue().empty()) {
+          c_ = nullptr;
+          return;
+        }
       }
     }
     
     friend bidirectional_interval_map;
   };
+  template<typename ComesAfter>
+  class iterator_range {
+  public:
+    iterator_range(iterator<ComesAfter> begin, iterator<ComesAfter> end):begin_(begin),end_(end){}
+    iterator<ComesAfter> begin()const { return begin_; }
+    iterator<ComesAfter> end()const { return end_; }
+  private:
+    iterator<ComesAfter> begin_;
+    iterator<ComesAfter> end_;
+  };
+  
   
 private:
   class comes_after_by_bound_t {
@@ -200,28 +236,20 @@ private:
     // the *earliest* end of possible_bounds[bound].
     // So, for <, that's possible_bounds[bound][true] and for >, that's possible_bounds[bound][false].
     // a.possible_bounds[bound][]
-    DomainType const& get_value(typename iter_type::queue_entry const& v) {
-      return v.possible_bounds[bound][descending];
-    }
-    DomainType const& get_value(value_type const& v) {
-      return v.interval.bounds[descending];
-    }
-    DomainType const& get_value(tiebroken_domain_type const& v) {
-      return v.value;
-    }
-    DomainType const& get_tiebreaker(value_type const& v) {
-      return map->get_tiebreaker(v.key);
-    }
-    DomainType const& get_tiebreaker(tiebroken_domain_type const& v) {
-      return v.tiebreaker;
-    }
-    bool operator()(typename iter_type::queue_entry const& a, typename iter_type::queue_entry const& b) {
+    DomainType const& get_value( iterator_queue_entry const& v)const { return v.possible_bounds[bound].bounds[descending]; }
+    DomainType const& get_value(           value_type const& v)const { return v.interval.bounds[descending]; }
+    DomainType const& get_value(           value_type const* v)const { return get_value(*v); }
+    DomainType const& get_value(tiebroken_domain_type const& v)const { return v.value; }
+    uint64_t get_tiebreaker(           value_type const& v)const { return map->get_tiebreaker(v.key); }
+    uint64_t get_tiebreaker(           value_type const* v)const { return get_tiebreaker(*v); }
+    uint64_t get_tiebreaker(tiebroken_domain_type const& v)const { return v.tiebreaker; }
+    bool operator()(iterator_queue_entry const& a, iterator_queue_entry const& b)const {
       if (get_value(a) != get_value(b)) {
         return (get_value(a) < get_value(b)) == descending;
       }
       if (a.value && b.value) {
-        const uint64_t a_t = get_tiebreaker(a);
-        const uint64_t b_t = get_tiebreaker(b);
+        const uint64_t a_t = get_tiebreaker(a.value);
+        const uint64_t b_t = get_tiebreaker(b.value);
         if (a_t != b_t) {
           return (a_t < b_t) == descending;
         }
@@ -232,8 +260,8 @@ private:
       return false;
     }
     template<typename T1, typename T2>
-    std::enable_if_t<!(std::is_same<T1, typename iter_type::queue_entry>::value && std::is_same<T2, typename iter_type::queue_entry>::value),
-    bool> operator()(T1 const& a, T2 const& b) {
+    std::enable_if_t<!(std::is_same<T1, iterator_queue_entry>::value && std::is_same<T2, iterator_queue_entry>::value),
+    bool> operator()(T1 const& a, T2 const& b)const {
       if (get_value(a) != get_value(b)) {
         return (get_value(a) < get_value(b)) == descending;
       }
@@ -248,61 +276,63 @@ private:
     bidirectional_interval_map const* map;
     bool bound;
     bool descending;
-  }
+  };
     
-  iterator& finish_iterator(iterator& i) {
+  template<typename ComesAfter>
+  iterator<ComesAfter>& finish_iterator(iterator<ComesAfter>& i)const {
     commit_changes();
-    i.queue_root(root.get());
+    i.queue_root(root.get(), observed_range);
     i.advance_to_a_returnable();
+    return i;
   }
 public:
   template<typename ComesAfter = impl::unsorted>
-  iterator<ComesAfter> begin_containing(DomainType const& k, ComesAfter c = ComesAfter()) {
+  iterator<ComesAfter> begin_containing(DomainType const& k, ComesAfter c = ComesAfter())const {
     iterator<ComesAfter> result(c);
-    result.bound_maxima_exist[0] = true;
-    result.bound_maxima[0] = k;
-    result.bound_minima_exist[1] = true;
-    result.bound_minima[1] = k;
+    result.c_->bound_maxima_exist[0] = true;
+    result.c_->bound_maxima[0] = k;
+    result.c_->bound_minima_exist[1] = true;
+    result.c_->bound_minima[1] = k;
     return finish_iterator(result);
   }
   template<typename ComesAfter = impl::unsorted>
-  iterator<ComesAfter> begin_overlapping(interval_type const& k, ComesAfter c = ComesAfter()) {
+  iterator<ComesAfter> begin_overlapping(interval_type const& k, ComesAfter c = ComesAfter())const {
     iterator<ComesAfter> result(c);
-    result.bound_maxima_exist[0] = true;
-    result.bound_maxima[0] = k.bounds[1];
-    result.bound_minima_exist[1] = true;
-    result.bound_minima[1] = k.bounds[0];
+    result.c_->bound_maxima_exist[0] = true;
+    result.c_->bound_maxima[0] = k.bounds[1];
+    result.c_->bound_minima_exist[1] = true;
+    result.c_->bound_minima[1] = k.bounds[0];
     return finish_iterator(result);
   }
   template<typename ComesAfter = impl::unsorted>
-  iterator<ComesAfter> begin_subsuming(interval_type const& k, ComesAfter c = ComesAfter()) {
+  iterator<ComesAfter> begin_subsuming(interval_type const& k, ComesAfter c = ComesAfter())const {
     iterator<ComesAfter> result(c);
-    result.bound_maxima_exist[0] = true;
-    result.bound_maxima[0] = k.bounds[0];
-    result.bound_minima_exist[1] = true;
-    result.bound_minima[1] = k.bounds[1];
+    result.c_->bound_maxima_exist[0] = true;
+    result.c_->bound_maxima[0] = k.bounds[0];
+    result.c_->bound_minima_exist[1] = true;
+    result.c_->bound_minima[1] = k.bounds[1];
     return finish_iterator(result);
   }
   template<typename ComesAfter = impl::unsorted>
-  iterator<ComesAfter> begin_subsumed_by(interval_type const& k, ComesAfter c = ComesAfter()) {
+  iterator<ComesAfter> begin_subsumed_by(interval_type const& k, ComesAfter c = ComesAfter())const {
     iterator<ComesAfter> result(c);
-    result.bound_minima_exist[0] = true;
-    result.bound_minima[0] = k.bounds[0];
-    result.bound_maxima_exist[1] = true;
-    result.bound_maxima[1] = k.bounds[1];
+    result.c_->bound_minima_exist[0] = true;
+    result.c_->bound_minima[0] = k.bounds[0];
+    result.c_->bound_maxima_exist[1] = true;
+    result.c_->bound_maxima[1] = k.bounds[1];
     return finish_iterator(result);
   }
   template<typename ComesAfter = impl::unsorted>
-  iterator<ComesAfter> begin_equal_to(interval_type const& k, ComesAfter c = ComesAfter()) {
+  iterator<ComesAfter> begin_equal_to(interval_type const& k, ComesAfter c = ComesAfter())const {
     iterator<ComesAfter> result(c);
-    result.bound_minima_exist[0] = true;
-    result.bound_minima[0] = k.bounds[0];
-    result.bound_maxima_exist[0] = true;
-    result.bound_maxima[0] = k.bounds[0];
-    result.bound_minima_exist[1] = true;
-    result.bound_minima[1] = k.bounds[1];
-    result.bound_maxima_exist[1] = true;
-    result.bound_maxima[1] = k.bounds[1];
+    result.c_->bound_minima_exist[0] = true;
+    result.c_->bound_minima[0] = k.bounds[0];
+    result.c_->bound_maxima_exist[0] = true;
+    result.c_->bound_maxima[0] = k.bounds[0];
+    result.c_->bound_minima_exist[1] = true;
+    result.c_->bound_minima[1] = k.bounds[1];
+    result.c_->bound_maxima_exist[1] = true;
+    result.c_->bound_maxima[1] = k.bounds[1];
     return finish_iterator(result);
   }
   template<typename ComesAfter = impl::unsorted>
@@ -311,24 +341,24 @@ public:
   }
   
   template<typename ComesAfter = impl::unsorted>
-  boost::iterator_range<iterator<ComesAfter>> range_containing (   DomainType const& k, ComesAfter c = ComesAfter()) {
-    return boost::iterator_range<iterator<ComesAfter>>(begin_containing (k), end<ComesAfter>());
+  iterator_range<ComesAfter> range_containing (   DomainType const& k, ComesAfter c = ComesAfter())const {
+    return iterator_range<ComesAfter>(begin_containing (k, c), end<ComesAfter>());
   }
   template<typename ComesAfter = impl::unsorted>
-  boost::iterator_range<iterator<ComesAfter>> range_overlapping(interval_type const& k, ComesAfter c = ComesAfter()) {
-    return boost::iterator_range<iterator<ComesAfter>>(begin_overlapping(k), end<ComesAfter>());
+  iterator_range<ComesAfter> range_overlapping(interval_type const& k, ComesAfter c = ComesAfter())const {
+    return iterator_range<ComesAfter>(begin_overlapping(k, c), end<ComesAfter>());
   }
   template<typename ComesAfter = impl::unsorted>
-  boost::iterator_range<iterator<ComesAfter>> range_subsuming  (interval_type const& k, ComesAfter c = ComesAfter()) {
-    return boost::iterator_range<iterator<ComesAfter>>(begin_subsuming  (k), end<ComesAfter>());
+  iterator_range<ComesAfter> range_subsuming  (interval_type const& k, ComesAfter c = ComesAfter())const {
+    return iterator_range<ComesAfter>(begin_subsuming  (k, c), end<ComesAfter>());
   }
   template<typename ComesAfter = impl::unsorted>
-  boost::iterator_range<iterator<ComesAfter>> range_subsumed_by(interval_type const& k, ComesAfter c = ComesAfter()) {
-    return boost::iterator_range<iterator<ComesAfter>>(begin_subsumed_by(k), end<ComesAfter>());
+  iterator_range<ComesAfter> range_subsumed_by(interval_type const& k, ComesAfter c = ComesAfter())const {
+    return iterator_range<ComesAfter>(begin_subsumed_by(k, c), end<ComesAfter>());
   }
   template<typename ComesAfter = impl::unsorted>
-  boost::iterator_range<iterator<ComesAfter>> range_equal_to   (interval_type const& k, ComesAfter c = ComesAfter()) {
-    return boost::iterator_range<iterator<ComesAfter>>(begin_equal_to   (k), end<ComesAfter>());
+  iterator_range<ComesAfter> range_equal_to   (interval_type const& k, ComesAfter c = ComesAfter())const {
+    return iterator_range<ComesAfter>(begin_equal_to   (k, c), end<ComesAfter>());
   }
   
   comes_after_by_bound_t comes_after_by_bound(bool bound, bool descending)const {
@@ -344,10 +374,10 @@ private:
   // 2) No non-leaf has <= max_leaf_size descendant values (it should be collapsed into a leaf).
   // 3) No non-leaf has more than twice as many descendants on one side as on the other.
   // (2) and (3) together bound the tree height at log_3(N).
-  static const max_leaf_size = 6;
+  static const size_t max_leaf_size = 6;
   
   static void collapse_node(node& n, std::unique_ptr<node>& descendant) {
-    for (value_type& v : descendant.values_here) {
+    for (value_type& v : descendant->values_here) {
       n.insert_value(v);
     }
     if (descendant->children[0]) {
@@ -356,7 +386,7 @@ private:
     }
     descendant = nullptr;
   }
-  static void is_in_sorted_vector(value_type const& what, std::vector<value_type const*> const& vec, comes_after_by_bound_t const& comes_after) {
+  static bool is_in_sorted_vector(value_type const& what, std::vector<value_type const*> const& vec, comes_after_by_bound_t const& comes_after) {
     if (vec.empty()) { return false; }
     size_t min = 0;
     size_t maxplus1 = vec.size();
@@ -369,14 +399,14 @@ private:
   }
   // Insert M elements and erase P elements.
   // O(M+P+log(N)) amortized.
-  static void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n, std::vector<value_type const*> const& values_to_insert, std::vector<value_type const*> const& values_to_erase) {
+  void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n,
+      std::vector<value_type const*> const& values_to_insert, std::vector<value_type const*> const& values_to_erase)const {
     if (!n) {
       assert(is_root);
       n.reset(new node(false));
     }
     n->num_descendant_intervals += values_to_insert.size();
     n->num_descendant_intervals -= values_to_erase .size();
-    assert(is_root || (n->num_descendant_intervals >= min_leaf_size));
     if (n->num_descendant_intervals == 0) {
       assert(is_root);
       n = nullptr;
@@ -404,38 +434,41 @@ private:
     - values_to_erase_by_child[which_child].size())
     
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
+          assert(n->children[which_child]->num_descendant_intervals + values_to_insert_by_child[which_child].size() >= values_to_erase_by_child[which_child].size());
           if (NEW_NUM_DESCENDANTS(which_child) > 2*NEW_NUM_DESCENDANTS(!which_child)) {
             // reversed sense because std::sort wants a comes-before.
             // We want the *backs* of these vectors to be closest to the separator.
-            std::sort(values_to_insert_by_child[0], comes_after_by_bound(n->splits_based_on_which_bound,  true));
-            std::sort(values_to_insert_by_child[1], comes_after_by_bound(n->splits_based_on_which_bound, false));
-            std::sort(values_to_erase_by_child[which_child], comes_after_by_bound(n->splits_based_on_which_bound, !which_child));
+            std::sort(values_to_insert_by_child[0].begin(), values_to_insert_by_child[0].end(),
+                      comes_after_by_bound(n->splits_based_on_which_bound,  true));
+            std::sort(values_to_insert_by_child[1].begin(), values_to_insert_by_child[1].end(),
+                      comes_after_by_bound(n->splits_based_on_which_bound, false));
+            std::sort(values_to_erase_by_child[which_child].begin(), values_to_erase_by_child[which_child].end(),
+                      comes_after_by_bound(n->splits_based_on_which_bound, !which_child));
             // Regular sense, but we want the *front* of the thief iterator to be closest to the separator.
             comes_after_by_bound_t is_further_from_separator = comes_after_by_bound(n->splits_based_on_which_bound, !which_child);
             iterator<comes_after_by_bound_t> thief(is_further_from_separator);
             comes_after_by_bound_t is_closer_to_separator = comes_after_by_bound(n->splits_based_on_which_bound, which_child);
             std::vector<value_type const*> stolen;
             if (which_child) {
-              thief.bound_minima_exist[0] = true;
-              thief.bound_minima[0] = n->child_separator.value;
+              thief.c_->bound_minima_exist[0] = true;
+              thief.c_->bound_minima[0] = n->child_separator.value;
             }
             else {
-              thief.bound_maxima_exist[1] = true;
-              thief.bound_maxima[1] = n->child_separator.value;
+              thief.c_->bound_maxima_exist[1] = true;
+              thief.c_->bound_maxima[1] = n->child_separator.value;
             }
-            thief.queue_root(n->children[which_child].get());
+            thief.queue_root(n->children[which_child].get(), observed_range);
             thief.advance_to_a_returnable();
             while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1) {
-              const value_type const* closest_to_insert = values_to_insert_by_child[which_child].back();
+              value_type const* closest_to_insert = values_to_insert_by_child[which_child].back();
               const int64_t not_quite_as_close = (which_child ? 1 : -1);
-              const DomainType closest_to_insert_bound = tiebroken_domain_type(
+              const tiebroken_domain_type closest_to_insert_bound(
                 closest_to_insert->interval.bounds[n->splits_based_on_which_bound],
                 get_tiebreaker(closest_to_insert->key));
-              const DomainType closest_to_steal_bound  = tiebroken_domain_type(
+              const tiebroken_domain_type closest_to_steal_bound(
                             thief->interval.bounds[n->splits_based_on_which_bound],
                 get_tiebreaker(            thief->key));
               if (is_further_from_separator(closest_to_insert_bound, closest_to_steal_bound)) {
-                if ()
                 if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
                   stolen.push_back(&*thief);
                   n->child_separator = closest_to_steal_bound;
@@ -474,25 +507,26 @@ private:
         n->children[1].reset(new node(!n->splits_based_on_which_bound));
         
         // Ascending order. Reversed sense because std::sort wants a comes-before.
-        std::sort(n->values_here, comes_after_by_bound(n->splits_based_on_which_bound, true));
+        std::sort(n->values_here.begin(), n->values_here.end(), comes_after_by_bound(n->splits_based_on_which_bound, true));
         size_t median_idx = n->values_here.size() >> 1;
         n->child_separator = tiebroken_domain_type(
           n->values_here[median_idx].interval.bounds[n->splits_based_on_which_bound],
           get_tiebreaker(n->values_here[median_idx].key) - 1);
-        std::array<std::vector<value_type*>, 2> values_to_insert_by_child;
+        std::array<std::vector<value_type const*>, 2> values_to_insert_by_child;
+        std::vector<value_type const*> values_to_erase_by_child;
         
         for (size_t i = 0; i < n->values_here.size(); ++i) {
           values_to_insert_by_child[i >= median_idx].push_back(&n->values_here[i]);
         }
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
-          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child[which_child]);
+          insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
         }
         n->values_here.clear();
       }
     }
   }
   
-  void commit_changes() {
+  void commit_changes()const {
     std::vector<value_type const*> values_to_insert;
     std::vector<value_type const*> values_to_erase;
     
@@ -516,6 +550,12 @@ private:
   }
   void queue_imposition(value_type const& v, bool inserting) {
     caller_correct_if(v.interval.bounds[1] > v.interval.bounds[0], "intervals must have positive length");
+    if (metadata_by_key.empty() || (v.interval.bounds[0] < observed_range.bounds[0])) {
+      observed_range.bounds[0] = v.interval.bounds[0];
+    }
+    if (metadata_by_key.empty() || (v.interval.bounds[1] > observed_range.bounds[1])) {
+      observed_range.bounds[1] = v.interval.bounds[1];
+    }
     interval_type new_internal_interval = v.interval;
     
     key_metadata& m = metadata_by_key[v.key];
@@ -572,7 +612,8 @@ private:
           }
         }
         else if (inserting) {
-          new_internal_interval.bounds[1] = (i != m.transitions.end()) ? posinf : i->first;
+          assert (i != m.transitions.end());
+          new_internal_interval.bounds[1] = i->first;
           queue_insert(v.key, new_internal_interval);
         }
         break;
@@ -591,31 +632,50 @@ public:
   // TODO are these good names?
   void erase (value_type const& v) { queue_imposition(v, false); }
   void insert(value_type const& v) { queue_imposition(v, true ); }
+  template<typename...Args> void erase (Args&&... args) { erase (value_type(std::forward<Args>(args)...)); }
+  template<typename...Args> void insert(Args&&... args) { insert(value_type(std::forward<Args>(args)...)); }
   
   bidirectional_interval_map():root(nullptr),metadata_by_key(),next_tiebreaker(2){}
   
+  bool key_active_after(KeyType const& k, DomainType where) {
+    auto m_iter = metadata_by_key.find(k);
+    if (m_iter == metadata_by_key.end()) { return false; }
+    auto t_iter = m_iter->second.transitions.upper_bound(where);
+    if (t_iter == m_iter->second.transitions.end()) { return false; }
+    return !t_iter->second;
+  }
+  bool key_active_before(KeyType const& k, DomainType where) {
+    auto m_iter = metadata_by_key.find(k);
+    if (m_iter == metadata_by_key.end()) { return false; }
+    auto t_iter = m_iter->second.transitions.lower_bound(where);
+    if (t_iter == m_iter->second.transitions.end()) { return false; }
+    return !t_iter->second;
+  }
 private:
   struct key_metadata {
     uint64_t tiebreaker;
     std::map<DomainType, bool> transitions;
   };
   
-  std::unordered_set<value_type> to_be_erased;
-  std::unordered_set<value_type> to_be_inserted;
-  std::unique_ptr<node> root;
+  mutable std::unordered_set<value_type> to_be_erased;
+  mutable std::unordered_set<value_type> to_be_inserted;
+  mutable std::unique_ptr<node> root;
   std::unordered_map<KeyType, key_metadata> metadata_by_key;
   uint64_t next_tiebreaker;
   
+  // hacks to init iterator possible_bounds:
+  interval_type observed_range;
 };
 
 namespace std {
   template<typename KeyType, typename DomainType>
-  struct hash<typename bidirectional_interval_map<KeyType, DomainType>::value_type> {
+  struct hash<typename impl::keyed_interval<KeyType, DomainType>> {
     public:
-    size_t operator()(typename bidirectional_interval_map<KeyType, DomainType>::value_type const& i)const {
+    size_t operator()(typename impl::keyed_interval<KeyType, DomainType> const& i)const {
       size_t seed = std::hash<KeyType>()(i.key);
       boost::hash_combine(seed, std::hash<DomainType>()(i.interval.bounds[0]));
       boost::hash_combine(seed, std::hash<DomainType>()(i.interval.bounds[1]));
+      return seed;
     }
   };
 }
