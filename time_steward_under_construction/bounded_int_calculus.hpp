@@ -19,6 +19,9 @@
 
 */
 
+#ifndef LASERCAKE_BOUNDED_INT_CALCULUS_HPP__
+#define LASERCAKE_BOUNDED_INT_CALCULUS_HPP__
+
 
 #include <memory>
 
@@ -918,3 +921,5 @@ void test() {
 }
 
 } // namespace bounded_int_calculus
+
+#endif

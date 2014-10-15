@@ -19,6 +19,9 @@
 
 */
 
+#ifndef LASERCAKE_TIME_STEWARD_HPP__
+#define LASERCAKE_TIME_STEWARD_HPP__
+
 
 
 #include <array>
@@ -34,6 +37,7 @@
 #include <memory>
 #include "ordered_stuff.hpp"
 #include "siphash_id.hpp"
+#include "time.hpp"
 #include "bidirectional_interval_map.hpp"
 
 /*
@@ -211,25 +215,7 @@ in a rocket
 
 namespace time_steward_system {
 
-template<typename IntType>
-struct combine_hash_with_integer {
-  siphash_id operator()(siphash_id const& hash, IntType i)const noexcept {
-    return siphash_id::combining(hash, static_cast<uint64_t>(i));
-  }
-};
-
-template<typename TimeType = int64_t, TimeType Never = std::numeric_limits<TimeType>::min(), TimeType MinTime = Never+1, TimeType MaxTime = std::numeric_limits<TimeType>::max(), class CombineHashWithTimeTypeFuncType = combine_hash_with_integer<TimeType>>
-struct time_type_info {
-  static_assert(Never < MinTime, "Never must be less than MinTime");
-  typedef TimeType time_type;
-  static const TimeType never = Never;
-  static const TimeType min_time = MinTime;
-  static const TimeType max_time = MaxTime;
-  typedef CombineHashWithTimeTypeFuncType combine_hash_with_time_type_func_type;
-};
-
 typedef siphash_id entity_id;
-typedef siphash_id trigger_id;
 const entity_id global_object_id = siphash_id::least();
 
 typedef size_t field_base_id;
@@ -584,8 +570,8 @@ public:
     caller_correct_if(bool(trigger_id_), "Only triggers can anticipate events");
     caller_correct_if(when >= time_->base_time, "You can't anticipate an event in the past");
     const extended_time ext_when = (when == time_->base_time) ?
-      /*TimeSteward::*/ts_->make_event_time(time_, create_id()) :
-      /*TimeSteward::*/ts_->make_event_time(when , create_id());
+      TimeSteward::make_extended_time::event_time(time_, create_id()) :
+      TimeSteward::make_extended_time::event_time(when , create_id());
     assert(ext_when > time_);
     new_upcoming_events.push_back(std::make_pair(ext_when, e));
   };
@@ -682,6 +668,8 @@ public:
     static inline time_type null() { return never; }
     static inline bool is_null(time_type const& t) { return t == null(); }
   };
+  typedef extended_time_maker<TimeTypeInfo> make_extended_time;
+  typedef typename make_extended_time::extended_time extended_time;
   
   // TODO can the action/event/trigger stuff be template parameters rather than always being virtual classes to be subclassed?
   class event {
@@ -692,116 +680,6 @@ public:
   typedef event trigger;
 private:
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
-  
-  static const uint32_t not_a_trigger = std::numeric_limits<uint32_t>::max();
-  struct extended_time_metadata {
-    typedef typename ordered_stuff<extended_time_metadata>::entry_ref extended_time;
-    
-    extended_time_metadata(time_type base_time):base_time(base_time){}
-    extended_time_metadata(time_type base_time, siphash_id id):
-      base_time(base_time),id(id),trigger_iteration(not_a_trigger){}
-    extended_time_metadata(time_type base_time, siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
-      base_time(base_time),id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
-    
-    struct sort_sibling_extended_times_by_id {
-      bool operator()(extended_time a, extended_time b)const {
-        if (a->trigger_iteration != b->trigger_iteration) { return a->trigger_iteration < b->trigger_iteration; }
-        return a->id < b->id;
-      }
-    };
-    
-    // TODO: can we optimize for size in common cases?
-    time_type base_time;
-    siphash_id id; // unused for base_time_roots
-    uint32_t trigger_iteration; // constant not_a_trigger for all non-triggers
-    extended_time closest_non_trigger_ancestor; // unused for all non-triggers
-    typedef std::set<extended_time, sort_sibling_extended_times_by_id> children_set;
-    std::unique_ptr<children_set> children; // usually empty
-    
-    bool operator==(extended_time_metadata const& o)const {
-      return id == o.id;
-    }
-  };
-  
-  typedef typename extended_time_metadata::extended_time extended_time;
-  struct sort_extended_times_by_base_time {
-    bool operator()(extended_time a, extended_time b)const {
-      return a->base_time < b->base_time;
-    }
-  };
-  // statics must also be declared outside the class like other globals
-  //   but we can't figure out how to do that WRT templating (id U+cErimeRjHMjQ)
-  /*static*/ mutable ordered_stuff<extended_time_metadata> all_extended_times;
-  /*static*/ mutable std::set<extended_time, sort_extended_times_by_base_time> base_time_roots;
-  
-  /*static*/ extended_time get_base_time_root(time_type t)const {
-    if (base_time_roots.empty()) {
-      // create a sentinel with no children at the end
-      // time_type() is a hack - without it, compiler tries to pass max_time as reference and gets undefined reference
-      const extended_time sentinel = all_extended_times.construct(time_type(max_time));
-      all_extended_times.put_only(sentinel);
-      base_time_roots.insert(sentinel);
-    }
-    const extended_time result = all_extended_times.construct(t);
-    const auto i = base_time_roots.lower_bound(result);
-    assert(i != base_time_roots.end());
-    if ((*i)->base_time == t) { return *i; }
-    all_extended_times.put_before(result, *i);
-    base_time_roots.emplace_hint(i, result);
-    return result;
-  }
-  /*static*/ extended_time get_base_time_end(time_type t)const {
-    extended_time root = get_base_time_root(t);
-    if (!root->children) {
-      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
-      root->children.reset(new typename extended_time_metadata::children_set());
-      const extended_time sentinel = all_extended_times.construct(t, siphash_id::greatest());
-      all_extended_times.put_after(sentinel, root);
-      root->children->insert(sentinel);
-      return sentinel;
-    }
-    return *boost::prior(root->children->end());
-  }
-  /*static*/ extended_time get_max_exttime()const {
-    return get_base_time_root(max_time);
-  }
-  template <class... Args>
-  /*static*/ extended_time make_extended_time_impl(extended_time parent, Args&&... args)const {
-    if (!parent->children) {
-      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
-      parent->children.reset(new typename extended_time_metadata::children_set());
-      const extended_time sentinel = all_extended_times.construct(parent->base_time, siphash_id::greatest());
-      all_extended_times.put_after(sentinel, parent);
-      parent->children->insert(sentinel);
-    }
-    const extended_time result = all_extended_times.construct(parent->base_time, std::forward<Args>(args)...);
-    const auto i = parent->children->lower_bound(result);
-    assert(i != parent->children->end());
-    if (**i == *result) { return *i; }
-    all_extended_times.put_before(result, *i);
-    parent->children->emplace_hint(i, result);
-    return result;
-  }
-  /*static*/ extended_time make_event_time(time_type t, siphash_id id)const {
-    return make_extended_time_impl(get_base_time_root(t), id);
-  }
-  /*static*/ extended_time make_event_time(extended_time t, siphash_id id)const {
-    return make_extended_time_impl(t->closest_non_trigger_ancestor ? t->closest_non_trigger_ancestor : t, id);
-  }
-  /*static*/ extended_time trigger_call_time(trigger_id tid, extended_time when_triggered)const {
-    const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
-    uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 : when_triggered->trigger_iteration;
-    
-    siphash_id id = siphash_id::combining(t->id, tid, trigger_iteration);
-    if ((when_triggered->trigger_iteration == trigger_iteration) && (when_triggered->id >= id)) {
-      ++trigger_iteration;
-      id = siphash_id::combining(t->id, tid, trigger_iteration);
-    }
-    
-    const extended_time result = make_extended_time_impl(t, id, trigger_iteration, t);
-    assert (result > when_triggered);
-    return result;
-  }
   
   struct trigger_call_info {
     trigger_call_info():field_changes_andor_creations_triggering_this(0){}
@@ -844,7 +722,7 @@ private:
     // We do (2), then (1).
     // Note that with undoing==true, we need to do the parts in the opposite order (undo 1, then undo 2).
     trigger_throughout_time_info& trigger_info = triggers[tid];
-    const extended_time new_trigger_call_time = trigger_call_time(tid, field_change_andor_creation_time);
+    const extended_time new_trigger_call_time = make_extended_time::trigger_call_time(tid, field_change_andor_creation_time);
     if (undoing) {
       const auto i = trigger_info.find(new_trigger_call_time);
       assert(i != trigger_info.end());
@@ -927,7 +805,7 @@ private:
   template<typename Iterator, typename Map>
   void invalidate_events(entity_field_id const& id, Iterator const& field_iter, Map const& f) {
     const Iterator next = boost::next(field_iter);
-    invalidate_events(id, field_iter->first, (next == f.end()) ? get_max_exttime() : next->first);
+    invalidate_events(id, field_iter->first, (next == f.end()) ? make_extended_time::max_time() : next->first);
   }
   
   struct copy_field_change_from_accessor {
@@ -968,7 +846,7 @@ private:
     
     auto const& trigger_info = triggers.find(tid)->second;
     const auto next_call_iter = trigger_info.upper_bound(time);
-    const extended_time change_end = (next_call_iter == trigger_info.end()) ? get_max_exttime() : next_call_iter->first;
+    const extended_time change_end = (next_call_iter == trigger_info.end()) ? make_extended_time::max_time() : next_call_iter->first;
     
     auto& metadata = get_field_metadata_throughout_time(id);
     if (force_erase) { undoing = !metadata.triggers_pointing_at_this.key_active_before(tid, time); }
@@ -1037,12 +915,12 @@ public:
     // (persistent) extended_times are created.
     // Uniqueness justification:
     // TODO
-    const extended_time t = make_event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
+    const extended_time t = make_extended_time::event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
     insert_instigating_event(t, event_pile_info(e));
   }
   void erase_fiat_event(time_type time, uint64_t distinguisher) {
-    const extended_time t = make_event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
+    const extended_time t = make_extended_time::event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     erase_instigating_event(t);
   }
   
@@ -1057,7 +935,7 @@ public:
       get_actual_entity_data_before(id, extended_time(time, extended_time::last))));
   }*/
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
-    const extended_time end_time = get_base_time_end(time);
+    const extended_time end_time = make_extended_time::base_time_end(time);
     update_through_time(end_time);
     return std::unique_ptr<accessor>(new accessor(this, end_time));
   }
@@ -1065,10 +943,10 @@ public:
   // Some functions for external client code to regulate how much processing the time_steward
   //   does in advance of when it's needed.
   void update_through_time(time_type const& time) {
-    update_through_time(get_base_time_end(time));
+    update_through_time(make_extended_time::base_time_end(time));
   }
   void debug__randomly_update_through_time(time_type const& bt) {
-    extended_time time = get_base_time_end(bt);
+    extended_time time = make_extended_time::base_time_end(bt);
     while (!is_updated_through(time)) {
       auto iter = event_piles_needing_execution.begin();
       bool unexecute = false;
@@ -1324,4 +1202,4 @@ private:
 
 } //end namespace time_steward_system
 
-
+#endif

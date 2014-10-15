@@ -19,6 +19,8 @@
 
 */
 
+#ifndef LASERCAKE_TS_BBOX_COLLISION_DETECTOR_HPP__
+#define LASERCAKE_TS_BBOX_COLLISION_DETECTOR_HPP__
 
 
 #include <array>
@@ -444,7 +446,6 @@ private:
   typedef typename time_steward::accessor accessor;
   typedef typename time_steward::event event;
   typedef typename time_steward::trigger trigger;
-  typedef typename time_steward_system::trigger_id trigger_id;
   typedef typename time_steward_system::entity_id entity_id;
   typedef typename accessor::entity_ref entity_ref;
   
@@ -1079,5 +1080,4 @@ public:
 }; // struct operations
 }; // struct bbox_collision_detector_system
 
-
-
+#endif

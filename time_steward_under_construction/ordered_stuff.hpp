@@ -19,6 +19,9 @@
 
 */
 
+#ifndef LASERCAKE_ORDERED_STUFF_HPP__
+#define LASERCAKE_ORDERED_STUFF_HPP__
+
 
 namespace ordered_stuff_system {
 typedef uint64_t idx_type;
@@ -234,3 +237,5 @@ namespace std {
     }
   };
 }
+
+#endif

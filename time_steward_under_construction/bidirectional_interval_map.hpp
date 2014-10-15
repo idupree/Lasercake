@@ -19,6 +19,9 @@
 
 */
 
+#ifndef LASERCAKE_BIDIRECTIONAL_INTERVAL_MAP_HPP__
+#define LASERCAKE_BIDIRECTIONAL_INTERVAL_MAP_HPP__
+
 #include <array>
 #include <vector>
 
@@ -95,7 +98,7 @@ private:
     // only for leaves
     std::vector<value_type> values_here;
     void insert_value(value_type const& v) {
-      for (value_type const& v2 : values_here) { assert(v2 != v); }
+      for (value_type const& v2 : values_here) { assert(v2 != v); if (v2.interval == v.interval) { std::cerr << "gosh"; } }
       values_here.push_back(v);
     }
     void erase_value(value_type const& v) {
@@ -182,9 +185,9 @@ public:
       iterator_queue_entry e = parent;
       e.n = parent.n->children[use_second_child].get();
       if (!e.n) return;
-      if (c_->bound_minima_exist[parent.n->splits_based_on_which_bound] &&  use_second_child &&
+      if (c_->bound_minima_exist[parent.n->splits_based_on_which_bound] && !use_second_child &&
         (parent.n->child_separator.value < c_->bound_minima[parent.n->splits_based_on_which_bound])) return;
-      if (c_->bound_maxima_exist[parent.n->splits_based_on_which_bound] && !use_second_child &&
+      if (c_->bound_maxima_exist[parent.n->splits_based_on_which_bound] &&  use_second_child &&
         (parent.n->child_separator.value > c_->bound_maxima[parent.n->splits_based_on_which_bound])) return;
       e.possible_bounds[parent.n->splits_based_on_which_bound].bounds[!use_second_child] = parent.n->child_separator.value;
       queue().push(e);
@@ -210,12 +213,13 @@ public:
         return;
       }
       while (!queue().front().value) {
-        queue_node(queue().front(), 0);
-        queue_node(queue().front(), 1);
-        for (value_type const& v : queue().front().n->values_here) {
-          queue_value(queue().front().n, &v);
-        }
+        iterator_queue_entry e = queue().front();
         queue().pop();
+        queue_node(e, 0);
+        queue_node(e, 1);
+        for (value_type const& v : e.n->values_here) {
+          queue_value(e.n, &v);
+        }
         if (queue().empty()) {
           c_ = nullptr;
           return;
@@ -251,7 +255,7 @@ private:
     // So, for <, that's possible_bounds[bound][true] and for >, that's possible_bounds[bound][false].
     // a.possible_bounds[bound][]
     DomainType const& get_value( iterator_queue_entry const& v)const { return v.possible_bounds[bound].bounds[descending]; }
-    DomainType const& get_value(           value_type const& v)const { return v.interval.bounds[descending]; }
+    DomainType const& get_value(           value_type const& v)const { return v.interval.bounds[bound]; }
     DomainType const& get_value(           value_type const* v)const { return get_value(*v); }
     DomainType const& get_value(tiebroken_domain_type const& v)const { return v.value; }
     uint64_t get_tiebreaker(           value_type const& v)const { return map->get_tiebreaker(v.key); }
@@ -269,7 +273,9 @@ private:
         }
       }
       else if (a.value || b.value) {
-        return bool(b.value);
+        // All nodes are processed before all values.
+        // So, A has a value -> A comes after
+        return bool(a.value);
       }
       return false;
     }
@@ -389,15 +395,13 @@ private:
   // (2) and (3) together bound the tree height at log_3(N).
   static const size_t max_leaf_size = 6;
   
-  static void collapse_node(node& n, std::unique_ptr<node>& descendant) {
-    for (value_type& v : descendant->values_here) {
-      n.insert_value(v);
+  static bool is_in_unsorted_vector(value_type const& what, std::vector<value_type const*> const& vec) {
+    for (auto const& v : vec) {
+      if (*v == what) {
+        return true;
+      }
     }
-    if (descendant->children[0]) {
-      collapse_node(n, descendant->children[0]);
-      collapse_node(n, descendant->children[1]);
-    }
-    descendant = nullptr;
+    return false;
   }
   static bool is_in_sorted_vector(value_type const& what, std::vector<value_type const*> const& vec, comes_after_by_bound_t const& comes_after) {
     if (vec.empty()) { return false; }
@@ -410,6 +414,69 @@ private:
     }
     return *vec[min] == what;
   }
+  bool value_in_tree(value_type const& v, node const* n)const {
+    impl::unsorted f;
+    iterator<impl::unsorted> result(f);
+    result.c_->bound_minima_exist[0] = true;
+    result.c_->bound_minima[0] = v.interval.bounds[0];
+    result.c_->bound_maxima_exist[0] = true;
+    result.c_->bound_maxima[0] = v.interval.bounds[0];
+    result.c_->bound_minima_exist[1] = true;
+    result.c_->bound_minima[1] = v.interval.bounds[1];
+    result.c_->bound_maxima_exist[1] = true;
+    result.c_->bound_maxima[1] = v.interval.bounds[1];
+    result.get_started(n, observed_range);
+      std::cerr << "A";
+    for (; result != end(); ++result) {
+      assert (result->interval == v.interval);
+      std::cerr << "l";
+      if (result->key == v.key) {
+      std::cerr << "k";
+        assert (*result == v);
+        return true;
+      }
+    }
+    return false;
+  }
+  void validate_tree()const {
+    validate_tree(root);
+  }
+  void validate_tree(std::unique_ptr<node> const& n, std::vector<value_type const*> const* except = nullptr, std::vector<value_type const*> const* except2 = nullptr)const {
+    if (n && n->children[0]) {
+      for (uint32_t which_child = 0; which_child < 2; ++which_child) {
+        validate_tree_recurse(n, n->children[which_child], which_child, except, except2);
+        validate_tree(n->children[which_child], except, except2);
+      }
+    }
+  }
+  void validate_tree_recurse(std::unique_ptr<node> const& n, std::unique_ptr<node> const& n2, bool which_original_child, std::vector<value_type const*> const* except, std::vector<value_type const*> const* except2)const {
+    if (n2->children[0]) {
+      validate_tree_recurse(n, n2->children[0], which_original_child, except, except2);
+      validate_tree_recurse(n, n2->children[1], which_original_child, except, except2);
+    }
+    else {
+      for (auto const& v : n2->values_here) {
+        comes_after_by_bound_t is_higher = comes_after_by_bound(n->splits_based_on_which_bound, false);
+        if (!is_higher(v, n->child_separator) == which_original_child) {
+          bool ok = false;
+          if (except ) { for (auto const& v2 : *except ) { if (*v2 == v) { ok = true; }}}
+          if (except2) { for (auto const& v2 : *except2) { if (*v2 == v) { ok = true; }}}
+          assert (ok);
+        }
+      }
+    }
+  }
+  static void collapse_node(std::unique_ptr<node>& n, std::unique_ptr<node>& descendant) {
+    for (value_type const& v : descendant->values_here) {
+      n->insert_value(v);
+    }
+    if (descendant->children[0]) {
+      collapse_node(n, descendant->children[0]);
+      collapse_node(n, descendant->children[1]);
+    }
+    descendant = nullptr;
+  }
+  
   // Insert M elements and erase P elements.
   // O(M+P+log(N)) amortized.
   void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n,
@@ -427,9 +494,20 @@ private:
     }
     
     if (n->children[0]) { // i.e. "if non leaf"
+      validate_tree(n, &values_to_erase);
+      assert (n->children[1]);
       if (n->num_descendant_intervals <= max_leaf_size) {
-        collapse_node(*n, n->children[0]);
-        collapse_node(*n, n->children[1]);
+      std::cerr << "E";
+        for (value_type const* v : values_to_erase) {
+          assert (value_in_tree(*v, n.get()));
+        }
+        collapse_node(n, n->children[0]);
+        collapse_node(n, n->children[1]);
+      std::cerr << "Q";
+        for (value_type const* v : values_to_erase) {
+          assert (value_in_tree(*v, n.get()));
+        }
+      std::cerr << "W";
       }
       else {
         std::array<std::vector<value_type const*>, 2> values_to_insert_by_child;
@@ -443,11 +521,15 @@ private:
                   get_tiebreaker(v->key)) != n->child_separator);
           values_to_insert_by_child[is_higher(*v, n->child_separator)].push_back(v);
         }
-        for (value_type const* v : values_to_erase ) {
+        for (value_type const* v : values_to_erase) {
+          assert (value_in_tree(*v, n.get()));
           assert (tiebroken_domain_type(
                   v->interval.bounds[n->splits_based_on_which_bound],
                   get_tiebreaker(v->key)) != n->child_separator);
-          values_to_erase_by_child [is_higher(*v, n->child_separator)].push_back(v);
+          uint32_t which_child = is_higher(*v, n->child_separator);
+          assert (!is_in_unsorted_vector(*v, values_to_erase_by_child[which_child]));
+          values_to_erase_by_child[which_child].push_back(v);
+          assert (value_in_tree(*v, n->children[which_child].get()));
         }
   #define NEW_NUM_DESCENDANTS(which_child) (n->children[which_child]->num_descendant_intervals \
     + values_to_insert_by_child[which_child].size() \
@@ -469,17 +551,9 @@ private:
             iterator<comes_after_by_bound_t> thief(is_further_from_separator);
             comes_after_by_bound_t is_closer_to_separator = comes_after_by_bound(n->splits_based_on_which_bound, which_child);
             std::vector<value_type const*> stolen;
-            if (which_child) {
-              thief.c_->bound_minima_exist[0] = true;
-              thief.c_->bound_minima[0] = n->child_separator.value;
-            }
-            else {
-              thief.c_->bound_maxima_exist[1] = true;
-              thief.c_->bound_maxima[1] = n->child_separator.value;
-            }
             thief.get_started(n->children[which_child].get(), observed_range);
             while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1 + 2*stolen.size()) {
-              const int64_t not_quite_as_close = (which_child ? -1 : 1);
+              const int64_t not_quite_as_close = (which_child ? 1 : -1);
               tiebroken_domain_type closest_to_insert_bound;
               tiebroken_domain_type closest_to_steal_bound;
               bool use_thief  = (thief != end<comes_after_by_bound_t>());
@@ -507,19 +581,26 @@ private:
               }
               if (use_thief) {
                 assert (closest_to_steal_bound != n->child_separator);
-                if (is_further_from_separator(closest_to_steal_bound, n->child_separator) &&
-                    !is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
+                assert (is_further_from_separator(closest_to_steal_bound, n->child_separator));
+                if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
+                  assert (!is_in_unsorted_vector(*thief, values_to_erase_by_child[which_child]));
+                  assert (!is_in_unsorted_vector(*thief, stolen));
                   stolen.push_back(&*thief);
+                  assert (value_in_tree(*thief, n->children[which_child].get()));
                   n->child_separator = closest_to_steal_bound;
                   n->child_separator.tiebreaker += not_quite_as_close;
+                  assert (is_further_from_separator(n->child_separator, closest_to_steal_bound));
+                  validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
                 }
                 ++thief;
               }
               else {
                 n->child_separator = closest_to_insert_bound;
                 n->child_separator.tiebreaker += not_quite_as_close;
+                assert (is_further_from_separator(n->child_separator, closest_to_insert_bound));
                 values_to_insert_by_child[!which_child].push_back(closest_to_insert);
                 values_to_insert_by_child[which_child].pop_back();
+                validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
               }
             }
             for (value_type const* v : stolen) {
@@ -528,20 +609,33 @@ private:
             }
           }
         }
+        validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
+          for (value_type const* v : values_to_insert_by_child[which_child]) {
+            assert (is_higher(v, n->child_separator) == which_child);
+          }
+//           for (value_type const* v : values_to_erase_by_child[which_child]) {
+//             assert (is_higher(v, n->child_separator) == which_child);
+//           }
           insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child[which_child]);
         }
+        validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
+        validate_tree(n, &values_to_erase);
+        validate_tree(n);
       }
     }
-    else {
+    
+    if (!n->children[0]) {
       for (value_type const* v : values_to_erase) {
         n->erase_value(*v);
       }
       for (value_type const* v : values_to_insert) {
         n->insert_value(*v);
+        assert (value_in_tree(*v, root.get()));
       }
       assert (n->num_descendant_intervals == n->values_here.size());
       if (n->num_descendant_intervals > max_leaf_size) {
+        comes_after_by_bound_t is_higher = comes_after_by_bound(n->splits_based_on_which_bound, false);
         n->children[0].reset(new node(!n->splits_based_on_which_bound));
         n->children[1].reset(new node(!n->splits_based_on_which_bound));
         
@@ -556,12 +650,14 @@ private:
         
         for (size_t i = 0; i < n->values_here.size(); ++i) {
           values_to_insert_by_child[i >= median_idx].push_back(&n->values_here[i]);
+          assert (is_higher(n->values_here[i], n->child_separator) == (i >= median_idx));
         }
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
           insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child);
         }
         n->values_here.clear();
       }
+      validate_tree(n);
     }
   }
   
@@ -576,7 +672,9 @@ private:
       values_to_erase.push_back(&v);
     }
     
+    validate_tree();
     insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
+    validate_tree();
     
     to_be_inserted.clear();
     to_be_erased.clear();
@@ -751,3 +849,5 @@ namespace std {
     }
   };
 }
+
+#endif

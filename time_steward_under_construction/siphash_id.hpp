@@ -19,6 +19,8 @@
 
 */
 
+#ifndef LASERCAKE_SIPHASH_ID_HPP__
+#define LASERCAKE_SIPHASH_ID_HPP__
 
 
 uint64_t siphash24(const void *src,
@@ -565,3 +567,4 @@ typedef persistent_siphash_id_trie_system::persistent_siphash_id_trie<> persiste
 template<typename T>
 using persistent_siphash_id_map = persistent_siphash_id_trie_system::persistent_siphash_id_trie<T>;
 
+#endif
