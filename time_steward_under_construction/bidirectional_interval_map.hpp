@@ -75,6 +75,8 @@ public:
     tiebroken_domain_type(DomainType value, uint64_t tiebreaker):value(value),tiebreaker(tiebreaker){}
     DomainType value;
     uint64_t tiebreaker;
+    bool operator==(tiebroken_domain_type const& o)const { return (value == o.value) && (tiebreaker == o.tiebreaker); }
+    bool operator!=(tiebroken_domain_type const& o)const { return (value != o.value) || (tiebreaker != o.tiebreaker); }
   };
 private:
   struct node {
@@ -164,13 +166,17 @@ public:
     impl::iterator_queue<iterator_queue_entry, ComesAfter> const& queue()const { return c_->queue; }
     impl::iterator_queue<iterator_queue_entry, ComesAfter>      & queue()      { return c_->queue; }
     
-    void queue_root(node* root, interval_type const& observed_range) {
+    void get_started(node const* root, interval_type const& observed_range) {
       iterator_queue_entry e;
       e.n = root;
-      if (!e.n) return;
+      if (!e.n) {
+        c_ = nullptr;
+        return;
+      }
       e.possible_bounds[0] = observed_range;
       e.possible_bounds[1] = observed_range;
       queue().push(e);
+      advance_to_a_returnable();
     }
     void queue_node(iterator_queue_entry const& parent, bool use_second_child) {
       iterator_queue_entry e = parent;
@@ -188,6 +194,10 @@ public:
       e.n = n;
       e.value = value;
       std::array<DomainType, 2> const& bounds = value->interval.bounds;
+      e.possible_bounds[0].bounds[0] = bounds[0];
+      e.possible_bounds[0].bounds[1] = bounds[0];
+      e.possible_bounds[1].bounds[0] = bounds[1];
+      e.possible_bounds[1].bounds[1] = bounds[1];
       if (c_->bound_minima_exist[0] && (bounds[0] < c_->bound_minima[0])) return;
       if (c_->bound_maxima_exist[0] && (bounds[0] > c_->bound_maxima[0])) return;
       if (c_->bound_minima_exist[1] && (bounds[1] < c_->bound_minima[1])) return;
@@ -195,6 +205,10 @@ public:
       queue().push(e);
     }
     void advance_to_a_returnable() {
+      if (queue().empty()) {
+        c_ = nullptr;
+        return;
+      }
       while (!queue().front().value) {
         queue_node(queue().front(), 0);
         queue_node(queue().front(), 1);
@@ -281,8 +295,7 @@ private:
   template<typename ComesAfter>
   iterator<ComesAfter>& finish_iterator(iterator<ComesAfter>& i)const {
     commit_changes();
-    i.queue_root(root.get(), observed_range);
-    i.advance_to_a_returnable();
+    i.get_started(root.get(), observed_range);
     return i;
   }
 public:
@@ -410,6 +423,7 @@ private:
     if (n->num_descendant_intervals == 0) {
       assert(is_root);
       n = nullptr;
+      return;
     }
     
     if (n->children[0]) { // i.e. "if non leaf"
@@ -424,9 +438,15 @@ private:
         for (auto& v : values_to_erase_by_child ) { v.reserve(values_to_erase .size()); }
         comes_after_by_bound_t is_higher = comes_after_by_bound(n->splits_based_on_which_bound, false);
         for (value_type const* v : values_to_insert) {
+          assert (tiebroken_domain_type(
+                  v->interval.bounds[n->splits_based_on_which_bound],
+                  get_tiebreaker(v->key)) != n->child_separator);
           values_to_insert_by_child[is_higher(*v, n->child_separator)].push_back(v);
         }
         for (value_type const* v : values_to_erase ) {
+          assert (tiebroken_domain_type(
+                  v->interval.bounds[n->splits_based_on_which_bound],
+                  get_tiebreaker(v->key)) != n->child_separator);
           values_to_erase_by_child [is_higher(*v, n->child_separator)].push_back(v);
         }
   #define NEW_NUM_DESCENDANTS(which_child) (n->children[which_child]->num_descendant_intervals \
@@ -457,19 +477,38 @@ private:
               thief.c_->bound_maxima_exist[1] = true;
               thief.c_->bound_maxima[1] = n->child_separator.value;
             }
-            thief.queue_root(n->children[which_child].get(), observed_range);
-            thief.advance_to_a_returnable();
-            while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1) {
-              value_type const* closest_to_insert = values_to_insert_by_child[which_child].back();
-              const int64_t not_quite_as_close = (which_child ? 1 : -1);
-              const tiebroken_domain_type closest_to_insert_bound(
-                closest_to_insert->interval.bounds[n->splits_based_on_which_bound],
-                get_tiebreaker(closest_to_insert->key));
-              const tiebroken_domain_type closest_to_steal_bound(
-                            thief->interval.bounds[n->splits_based_on_which_bound],
-                get_tiebreaker(            thief->key));
-              if (is_further_from_separator(closest_to_insert_bound, closest_to_steal_bound)) {
-                if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
+            thief.get_started(n->children[which_child].get(), observed_range);
+            while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1 + 2*stolen.size()) {
+              const int64_t not_quite_as_close = (which_child ? -1 : 1);
+              tiebroken_domain_type closest_to_insert_bound;
+              tiebroken_domain_type closest_to_steal_bound;
+              bool use_thief  = (thief != end<comes_after_by_bound_t>());
+              bool use_insert = (!values_to_insert_by_child[which_child].empty());
+              value_type const* closest_to_insert;
+              assert (use_thief || use_insert);
+              if (use_thief) {
+                closest_to_steal_bound = tiebroken_domain_type(
+                              thief->interval.bounds[n->splits_based_on_which_bound],
+                  get_tiebreaker(            thief->key));
+              }
+              if (use_insert) {
+                closest_to_insert = values_to_insert_by_child[which_child].back();
+                closest_to_insert_bound = tiebroken_domain_type(
+                  closest_to_insert->interval.bounds[n->splits_based_on_which_bound],
+                  get_tiebreaker(closest_to_insert->key));
+              }
+              if (use_thief && use_insert) {
+                if (is_further_from_separator(closest_to_insert_bound, closest_to_steal_bound)) {
+                  use_insert = false;
+                }
+                else {
+                  use_thief = false;
+                }
+              }
+              if (use_thief) {
+                assert (closest_to_steal_bound != n->child_separator);
+                if (is_further_from_separator(closest_to_steal_bound, n->child_separator) &&
+                    !is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
                   stolen.push_back(&*thief);
                   n->child_separator = closest_to_steal_bound;
                   n->child_separator.tiebreaker += not_quite_as_close;
@@ -556,7 +595,7 @@ private:
     if (metadata_by_key.empty() || (v.interval.bounds[1] > observed_range.bounds[1])) {
       observed_range.bounds[1] = v.interval.bounds[1];
     }
-    interval_type new_internal_interval = v.interval;
+    value_type new_internal_value = v;
     
     key_metadata& m = metadata_by_key[v.key];
     if (!m.tiebreaker) {
@@ -564,8 +603,20 @@ private:
       next_tiebreaker += 2;
     }
     
+    bool b=false;
+    bool e=false;
+      std::cerr << inserting << "\n";
+    for (auto const& i : m.transitions) {
+      if (i.first >= v.interval.bounds[0] && !b) { std::cerr << "B"; b=true; }
+      if (i.first == v.interval.bounds[0]) { std::cerr << "="; }
+      if (i.first >= v.interval.bounds[1] && !e) { std::cerr << "E"; e=true; }
+      if (i.first == v.interval.bounds[1]) { std::cerr << "="; }
+      std::cerr << i.second;
+    }
+      std::cerr << "\n";
+    
     bool already_filled;
-    auto i = boost::prior(m.transitions.lower_bound(v.interval.bounds[0]));
+    auto i = m.transitions.lower_bound(v.interval.bounds[0]);
     if (i == m.transitions.begin()) {
       already_filled = false;
     }
@@ -573,32 +624,41 @@ private:
       const auto last_iter = boost::prior(i);
       already_filled = last_iter->second;
       if (last_iter->second) {
-        queue_erase(last_iter->first, boost::next(last_iter)->first);
+        queue_erase(value_type(v.key, last_iter->first, boost::next(last_iter)->first));
         if (inserting) {
-          new_internal_interval.bounds[0] = last_iter->first;
+          new_internal_value.interval.bounds[0] = last_iter->first;
         }
         else {
-          queue_insert(v.key, last_iter->first, v.interval.bounds[0]);
+          queue_insert(value_type(v.key, last_iter->first, v.interval.bounds[0]));
         }
       }
     }
     if (already_filled != inserting) {
       m.transitions.insert(std::make_pair(v.interval.bounds[0], inserting));
+      assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
+      // assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
       // If the insert fails, we need to delete instead, which we will do below.
+    }
+    else {
+      assert (key_active_before(v.key, v.interval.bounds[0]) ==  inserting);
+      assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
     }
     
     while (true) {
-      assert (i->second != already_filled);
+      assert (((i != m.transitions.end()) ? i->second : true) != already_filled);
       if ((i != m.transitions.end()) && (i->first <= v.interval.bounds[1])) {
         already_filled = i->second;
         if (i->second) {
-          queue_erase(v.key, i->first, boost::next(i)->first);
+          queue_erase(value_type(v.key, i->first, boost::next(i)->first));
         }
-        if (!((i->first == v.interval.bounds[0]) && (i->second == inserting))) {
-          m.transitions.erase(i++);
+        if ((i->first == v.interval.bounds[0]) && (i->second == inserting)) {
+          assert (false);
+          assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
+          assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+          ++i;
         }
         else {
-          ++i;
+          m.transitions.erase(i++);
         }
       }
       else {
@@ -608,13 +668,21 @@ private:
           if (!inserting) {
             assert (i != m.transitions.end());
             assert (i->first != v.interval.bounds[1]);
-            queue_insert(v.key, v.interval.bounds[1], i->first);
+            queue_insert(value_type(v.key, v.interval.bounds[1], i->first));
+          }
+          assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
+          assert (key_active_after (v.key, v.interval.bounds[1]) == !inserting);
+        }
+        else {
+          assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
+          assert (key_active_after (v.key, v.interval.bounds[1]) ==  inserting);
+          if (inserting) {
+            assert (i != m.transitions.end());
+            new_internal_value.interval.bounds[1] = i->first;
           }
         }
-        else if (inserting) {
-          assert (i != m.transitions.end());
-          new_internal_interval.bounds[1] = i->first;
-          queue_insert(v.key, new_internal_interval);
+        if (inserting) {
+          queue_insert(new_internal_value);
         }
         break;
       }
@@ -622,6 +690,8 @@ private:
     if (m.transitions.empty()) {
       metadata_by_key.erase(v.key);
     }
+    assert (key_active_after (v.key, v.interval.bounds[0]) == inserting);
+    assert (key_active_before(v.key, v.interval.bounds[1]) == inserting);
   }
   uint64_t get_tiebreaker(KeyType k)const {
     auto m_iter = metadata_by_key.find(k);
@@ -632,8 +702,10 @@ public:
   // TODO are these good names?
   void erase (value_type const& v) { queue_imposition(v, false); }
   void insert(value_type const& v) { queue_imposition(v, true ); }
-  template<typename...Args> void erase (Args&&... args) { erase (value_type(std::forward<Args>(args)...)); }
-  template<typename...Args> void insert(Args&&... args) { insert(value_type(std::forward<Args>(args)...)); }
+  template<typename T1, typename T2, typename...T>
+  void erase (T1 data1, T2 data2, T... data){ erase (value_type(std::forward<T1>(data1), std::forward<T2>(data2), std::forward<T>(data)...)); }
+  template<typename T1, typename T2, typename...T>
+  void insert(T1 data1, T2 data2, T... data){ insert(value_type(std::forward<T1>(data1), std::forward<T2>(data2), std::forward<T>(data)...)); }
   
   bidirectional_interval_map():root(nullptr),metadata_by_key(),next_tiebreaker(2){}
   
@@ -673,8 +745,8 @@ namespace std {
     public:
     size_t operator()(typename impl::keyed_interval<KeyType, DomainType> const& i)const {
       size_t seed = std::hash<KeyType>()(i.key);
-      boost::hash_combine(seed, std::hash<DomainType>()(i.interval.bounds[0]));
-      boost::hash_combine(seed, std::hash<DomainType>()(i.interval.bounds[1]));
+      seed ^= std::hash<DomainType>()(i.interval.bounds[0]) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= std::hash<DomainType>()(i.interval.bounds[1]) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
       return seed;
     }
   };
