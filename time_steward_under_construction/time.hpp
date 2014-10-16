@@ -23,7 +23,7 @@
 #define LASERCAKE_TIME_HPP__
 
 #include "siphash_id.hpp"
-#include "ordered_stuff.hpp"
+#include "manual_orderer.hpp"
 
 typedef siphash_id trigger_id;
 
@@ -47,7 +47,7 @@ struct time_type_info {
 static const uint32_t not_a_trigger = std::numeric_limits<uint32_t>::max();
 template<class TimeTypeInfo>
 struct extended_time_metadata {
-  typedef typename ordered_stuff<extended_time_metadata>::entry_ref extended_time;
+  typedef typename manual_orderer<extended_time_metadata>::entry_ref extended_time;
   typedef typename TimeTypeInfo::time_type time_type;
   
   extended_time_metadata(time_type base_time):base_time(base_time){}
@@ -126,8 +126,8 @@ private:
       return a->base_time < b->base_time;
     }
   };
-  static ordered_stuff<extended_time_metadata<TimeTypeInfo>>& all_extended_times() {
-    static ordered_stuff<extended_time_metadata<TimeTypeInfo>> a; return a;
+  static manual_orderer<extended_time_metadata<TimeTypeInfo>>& all_extended_times() {
+    static manual_orderer<extended_time_metadata<TimeTypeInfo>> a; return a;
   }
   static std::set<extended_time, sort_extended_times_by_base_time>& base_time_roots() {
     static std::set<extended_time, sort_extended_times_by_base_time> a; return a;

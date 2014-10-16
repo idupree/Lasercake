@@ -35,7 +35,6 @@
 #include <iostream>
 #include <boost/next_prior.hpp>
 #include <memory>
-#include "ordered_stuff.hpp"
 #include "siphash_id.hpp"
 #include "time.hpp"
 #include "bidirectional_interval_map.hpp"

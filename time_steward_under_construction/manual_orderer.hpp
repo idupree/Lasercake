@@ -19,17 +19,16 @@
 
 */
 
-#ifndef LASERCAKE_ORDERED_STUFF_HPP__
-#define LASERCAKE_ORDERED_STUFF_HPP__
+#ifndef LASERCAKE_MANUAL_ORDERER_HPP__
+#define LASERCAKE_MANUAL_ORDERER_HPP__
 
 
-namespace ordered_stuff_system {
+template<typename ValueType> class manual_orderer;
+namespace manual_orderer_impl {
 typedef uint64_t idx_type;
 typedef uint32_t num_bits_type;
 const idx_type no_idx = std::numeric_limits<idx_type>::max();
 
-template<typename ValueType> class ordered_stuff;
-namespace impl {
 template<typename ValueType>
 struct entry {
   template <class... Args>
@@ -38,51 +37,85 @@ struct entry {
   size_t ref_count;
   ValueType contents;
 };
+
+// an entry_ref is a non-threadsafe reference-counted smart pointer
+// that is LessThanComparable by a idx it stores next to the contents,
+// and EqualityComparable by the pointer.  You must not compare entry_refs
+// created by different manual_orderer instances.
+// 
+// manual_orderer is the only code allowed to access or change the idx;
+// it ensures that idx is equal iff pointers are equal, and that it only
+// changes idx in ways that are not observable using the less-than operations.
+// As an exception, entries can have idx be no_idx, in which case
+// less-than-comparison ops throw an exception and idx might later
+// be updated to a real idx.
 template<typename ValueType>
 struct entry_ref {
 public:
   entry_ref():data(nullptr){}
-  entry_ref(entry_ref const& o):data(o.data) { if (data) { ++data->ref_count; } }
-  bool operator< (entry_ref const& o)const { return data->idx <  o.data->idx; }
-  bool operator> (entry_ref const& o)const { return data->idx >  o.data->idx; }
-  bool operator<=(entry_ref const& o)const { return data->idx <= o.data->idx; }
-  bool operator>=(entry_ref const& o)const { return data->idx >= o.data->idx; }
+  entry_ref(entry_ref const& o):data(o.data) { inc_ref(); }
+  bool operator< (entry_ref const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <  o.data->idx;
+  }
+  bool operator> (entry_ref const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >  o.data->idx;
+  }
+  bool operator<=(entry_ref const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <= o.data->idx;
+  }
+  bool operator>=(entry_ref const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >= o.data->idx;
+  }
   bool operator==(entry_ref const& o)const { return data == o.data; }
   bool operator!=(entry_ref const& o)const { return data != o.data; }
   explicit operator bool()const { return bool(data); }
   ValueType& operator*()const { return data->contents; }
   ValueType* operator->()const { return &data->contents; }
   entry_ref& operator=(entry_ref const& o) {
-    if (o.data) { ++o.data->ref_count; }
+    o.inc_ref(); // do this before dec_ref in case lhs and rhs are the same object
     dec_ref();
     data = o.data;
     return *this;
   }
   ~entry_ref() { dec_ref(); }
 private:
+  void inc_ref()const {
+    if (data) { ++data->ref_count; }
+  }
   void dec_ref() {
     if (data && (--data->ref_count == 0)) {
       delete data;
+      data = nullptr;
     }
   }
-  entry_ref(entry<ValueType>* data):data(data){ ++data->ref_count; }
+  explicit entry_ref(entry<ValueType>* data):data(data){ inc_ref(); }
   entry<ValueType>* data;
-  friend class ordered_stuff<ValueType>;
+  friend class manual_orderer<ValueType>;
   friend struct std::hash<entry_ref>;
 };
-}
+} // end namespace manual_orderer_impl
 
 //#define AUDIT_ORDERED_STUFF
 
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by entry_ref instead of the object itself.
 template<typename ValueType>
-class ordered_stuff {
-  typedef impl::entry<ValueType> entry;
+class manual_orderer {
+  typedef manual_orderer_impl::entry<ValueType> entry;
+  typedef manual_orderer_impl::idx_type idx_type;
+  typedef manual_orderer_impl::num_bits_type num_bits_type;
 public:
-  typedef impl::entry_ref<ValueType> entry_ref;
+  typedef manual_orderer_impl::entry_ref<ValueType> entry_ref;
   template <class... Args>
   entry_ref construct(Args&&... args) {
     // TODO: better allocator
-    return entry_ref(new entry(no_idx, std::forward<Args>(args)...));
+    return entry_ref(new entry(manual_orderer_impl::no_idx, std::forward<Args>(args)...));
   }
 
   // TODO: allow moving and deletion
@@ -219,19 +252,18 @@ private:
     }
   }
   void place_at(idx_type idx, entry_ref moving) {
-    assert(moving.data->idx == no_idx);
+    assert(moving.data->idx == manual_orderer_impl::no_idx);
     moving.data->idx = idx;
     auto p = data.insert(std::make_pair(idx, moving));
     assert(p.second);
   }
 };
-} // namespace ordered_stuff_system
-using ordered_stuff_system::ordered_stuff;
+
 namespace std {
   template<typename ValueType>
-  struct hash<typename ordered_stuff_system::impl::entry_ref<ValueType>> {
+  struct hash<typename manual_orderer_impl::entry_ref<ValueType>> {
     public:
-    size_t operator()(ordered_stuff_system::impl::entry_ref<ValueType> const& i)const {
+    size_t operator()(manual_orderer_impl::entry_ref<ValueType> const& i)const {
       // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
       return std::hash<decltype(i.data)>()(i.data);
     }
