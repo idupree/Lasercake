@@ -105,6 +105,13 @@ private:
 // manual_orderer is a data structure that lets you place
 // arbitrary objects in an O(1)-comparable order, but you have to refer
 // to them by entry_ref instead of the object itself.
+//
+// Implementation limitation: if you put too many more than 2**32 items in,
+// this data structure will break (currently, by being buggy, not even
+// by throwing an exception).
+//
+// Issue: the contained data aren't destroyed unless you both drop all
+// its entry_refs and destroy the manual_orderer.
 template<typename ValueType>
 class manual_orderer {
   typedef manual_orderer_impl::entry<ValueType> entry;
@@ -112,16 +119,26 @@ class manual_orderer {
   typedef manual_orderer_impl::num_bits_type num_bits_type;
 public:
   typedef manual_orderer_impl::entry_ref<ValueType> entry_ref;
+
+  // create a ValueType in the heap and an entry_ref refcounted pointer
+  // to it.  It's not in the ordering until you put it there using one of
+  // this manual_orderer's put_*() methods.
   template <class... Args>
   entry_ref construct(Args&&... args) {
     // TODO: better allocator
     return entry_ref(new entry(manual_orderer_impl::no_idx, std::forward<Args>(args)...));
   }
 
-  // TODO: allow moving and deletion
+  // TODO: allow moving (maybe), and deletion
+
+  // put_only puts the first object in the ordering; you can't use it
+  // after it's been called once
   void put_only(entry_ref moving) {
     place_at(0, moving);
   }
+
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just prior to relative_to.
   void put_before(entry_ref moving, entry_ref relative_to) {
 #ifdef AUDIT_ORDERED_STUFF
     std::map<idx_type, entry_ref> old_data = data;
@@ -142,6 +159,8 @@ public:
     }
 #endif
   }
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just after relative_to.
   void put_after(entry_ref moving, entry_ref relative_to) {
 #ifdef AUDIT_ORDERED_STUFF
     std::map<idx_type, entry_ref> old_data = data;
