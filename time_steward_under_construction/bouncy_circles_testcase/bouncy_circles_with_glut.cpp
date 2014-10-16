@@ -336,7 +336,7 @@ time_type min_time = 0;
 time_type gtime = min_time;
 time_type max_time = 2*time_units_per_gloppp;
 
-static void Key(unsigned char key, int x, int y) {
+static void Key(unsigned char key, int /*x*/, int /*y*/) {
   switch (key) {
   case 27:
     exit(0); break;/*

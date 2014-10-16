@@ -295,7 +295,7 @@ public:
           num_bits_type child = which_child(id, back_bits());
           
           while (!back() || back().is_leaf() || !(back().node().children_exist & ~((1<<(child+1))-1))) {
-            if (back() && !back().is_leaf()) { assert(popcount(back().node().children_exist & ((1U<<child)-1)) + 1 == back().num_children()); }
+            if (back() && !back().is_leaf()) { assert(popcount(back().node().children_exist & ((1U<<child)-1)) + 1U == back().num_children()); }
             bool check = bool(back());
             if (path_len == 1) {
               id = siphash_id::null();
