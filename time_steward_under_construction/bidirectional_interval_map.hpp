@@ -98,7 +98,7 @@ private:
     // only for leaves
     std::vector<value_type> values_here;
     void insert_value(value_type const& v) {
-      for (value_type const& v2 : values_here) { assert(v2 != v); if (v2.interval == v.interval) { std::cerr << "gosh"; } }
+      for (value_type const& v2 : values_here) { assert(v2 != v); /*if (v2.interval == v.interval) { std::cerr << "gosh"; }*/ }
       values_here.push_back(v);
     }
     void erase_value(value_type const& v) {
@@ -494,20 +494,20 @@ private:
     }
     
     if (n->children[0]) { // i.e. "if non leaf"
-      validate_tree(n, &values_to_erase);
+      //validate_tree(n, &values_to_erase);
       assert (n->children[1]);
       if (n->num_descendant_intervals <= max_leaf_size) {
-      std::cerr << "E";
+      //std::cerr << "E";
         for (value_type const* v : values_to_erase) {
           assert (value_in_tree(*v, n.get()));
         }
         collapse_node(n, n->children[0]);
         collapse_node(n, n->children[1]);
-      std::cerr << "Q";
+      //std::cerr << "Q";
         for (value_type const* v : values_to_erase) {
           assert (value_in_tree(*v, n.get()));
         }
-      std::cerr << "W";
+      //std::cerr << "W";
       }
       else {
         std::array<std::vector<value_type const*>, 2> values_to_insert_by_child;
@@ -609,19 +609,16 @@ private:
             }
           }
         }
-        validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
+        //validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
           for (value_type const* v : values_to_insert_by_child[which_child]) {
             assert (is_higher(v, n->child_separator) == which_child);
           }
-//           for (value_type const* v : values_to_erase_by_child[which_child]) {
-//             assert (is_higher(v, n->child_separator) == which_child);
-//           }
           insert_and_or_erase_impl(false, n->children[which_child], values_to_insert_by_child[which_child], values_to_erase_by_child[which_child]);
         }
-        validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
-        validate_tree(n, &values_to_erase);
-        validate_tree(n);
+        //validate_tree(n, &values_to_erase_by_child[0], &values_to_erase_by_child[1]);
+        //validate_tree(n, &values_to_erase);
+        //validate_tree(n);
       }
     }
     
@@ -657,7 +654,7 @@ private:
         }
         n->values_here.clear();
       }
-      validate_tree(n);
+      //validate_tree(n);
     }
   }
   
@@ -672,9 +669,9 @@ private:
       values_to_erase.push_back(&v);
     }
     
-    validate_tree();
+    //validate_tree();
     insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
-    validate_tree();
+    //validate_tree();
     
     to_be_inserted.clear();
     to_be_erased.clear();
@@ -708,17 +705,17 @@ private:
       next_tiebreaker += 2;
     }
     
-    bool b=false;
-    bool e=false;
-      std::cerr << inserting << "\n";
-    for (auto const& i : m.transitions) {
-      if (i.first >= v.interval.bounds[0] && !b) { std::cerr << "B"; b=true; }
-      if (i.first == v.interval.bounds[0]) { std::cerr << "="; }
-      if (i.first >= v.interval.bounds[1] && !e) { std::cerr << "E"; e=true; }
-      if (i.first == v.interval.bounds[1]) { std::cerr << "="; }
-      std::cerr << i.second;
-    }
-      std::cerr << "\n";
+//     bool b=false;
+//     bool e=false;
+//       std::cerr << inserting << "\n";
+//     for (auto const& i : m.transitions) {
+//       if (i.first >= v.interval.bounds[0] && !b) { std::cerr << "B"; b=true; }
+//       if (i.first == v.interval.bounds[0]) { std::cerr << "="; }
+//       if (i.first >= v.interval.bounds[1] && !e) { std::cerr << "E"; e=true; }
+//       if (i.first == v.interval.bounds[1]) { std::cerr << "="; }
+//       std::cerr << i.second;
+//     }
+//       std::cerr << "\n";
     
     bool already_filled;
     auto i = m.transitions.lower_bound(v.interval.bounds[0]);
