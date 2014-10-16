@@ -396,11 +396,11 @@ private:
   static const size_t max_leaf_size = 6;
   
   static bool is_in_unsorted_vector(value_type const& what, std::vector<value_type const*> const& vec) {
-    for (auto const& v : vec) {
-      if (*v == what) {
-        return true;
-      }
-    }
+    for (auto const& v : vec) { if (*v == what) { return true; } }
+    return false;
+  }
+  static bool is_in_unsorted_vector(value_type const& what, std::vector<value_type> const& vec) {
+    for (auto const& v : vec) { if (v == what) { return true; } }
     return false;
   }
   static bool is_in_sorted_vector(value_type const& what, std::vector<value_type const*> const& vec, comes_after_by_bound_t const& comes_after) {
@@ -478,7 +478,7 @@ private:
   }
   
   // Insert M elements and erase P elements.
-  // O(M+P+log(N)) amortized.
+  // O((M+P)*log(N)) amortized.
   void insert_and_or_erase_impl(bool is_root, std::unique_ptr<node>& n,
       std::vector<value_type const*> const& values_to_insert, std::vector<value_type const*> const& values_to_erase)const {
     if (!n) {
@@ -535,6 +535,7 @@ private:
     + values_to_insert_by_child[which_child].size() \
     - values_to_erase_by_child[which_child].size())
     
+        std::vector<value_type> stolen;
         for (uint32_t which_child = 0; which_child < 2; ++which_child) {
           assert(n->children[which_child]->num_descendant_intervals + values_to_insert_by_child[which_child].size() >= values_to_erase_by_child[which_child].size());
           if (NEW_NUM_DESCENDANTS(which_child) > 2*NEW_NUM_DESCENDANTS(!which_child)) {
@@ -550,7 +551,6 @@ private:
             comes_after_by_bound_t is_further_from_separator = comes_after_by_bound(n->splits_based_on_which_bound, !which_child);
             iterator<comes_after_by_bound_t> thief(is_further_from_separator);
             comes_after_by_bound_t is_closer_to_separator = comes_after_by_bound(n->splits_based_on_which_bound, which_child);
-            std::vector<value_type const*> stolen;
             thief.get_started(n->children[which_child].get(), observed_range);
             while (NEW_NUM_DESCENDANTS(which_child) > NEW_NUM_DESCENDANTS(!which_child) + 1 + 2*stolen.size()) {
               const int64_t not_quite_as_close = (which_child ? 1 : -1);
@@ -585,12 +585,12 @@ private:
                 if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
                   assert (!is_in_unsorted_vector(*thief, values_to_erase_by_child[which_child]));
                   assert (!is_in_unsorted_vector(*thief, stolen));
-                  stolen.push_back(&*thief);
+                  stolen.push_back(*thief);
                   assert (value_in_tree(*thief, n->children[which_child].get()));
                   n->child_separator = closest_to_steal_bound;
                   n->child_separator.tiebreaker += not_quite_as_close;
                   assert (is_further_from_separator(n->child_separator, closest_to_steal_bound));
-                  validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
+                  //validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
                 }
                 ++thief;
               }
@@ -600,12 +600,12 @@ private:
                 assert (is_further_from_separator(n->child_separator, closest_to_insert_bound));
                 values_to_insert_by_child[!which_child].push_back(closest_to_insert);
                 values_to_insert_by_child[which_child].pop_back();
-                validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
+                //validate_tree(n, &values_to_erase_by_child[which_child], &stolen);
               }
             }
-            for (value_type const* v : stolen) {
-              values_to_erase_by_child [ which_child].push_back(v);
-              values_to_insert_by_child[!which_child].push_back(v);
+            for (value_type const& v : stolen) {
+              values_to_erase_by_child [ which_child].push_back(&v);
+              values_to_insert_by_child[!which_child].push_back(&v);
             }
           }
         }
@@ -678,6 +678,13 @@ private:
     
     to_be_inserted.clear();
     to_be_erased.clear();
+    for (KeyType k : keys_maybe_gone) {
+      auto m = metadata_by_key.find(k);
+      if ((m != metadata_by_key.end()) && m->second.transitions.empty()) {
+        metadata_by_key.erase(m);
+      }
+    }
+    keys_maybe_gone.clear();
   }
   void queue_erase(value_type const& v) {
     if (!to_be_inserted.erase(v)) { const auto p = to_be_erased.insert(v); assert(p.second); }
@@ -739,7 +746,8 @@ private:
     }
     else {
       assert (key_active_before(v.key, v.interval.bounds[0]) ==  inserting);
-      assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+      //assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+      // Relying on the delete below
     }
     
     while (true) {
@@ -786,7 +794,7 @@ private:
       }
     }
     if (m.transitions.empty()) {
-      metadata_by_key.erase(v.key);
+      keys_maybe_gone.push_back(v.key);
     }
     assert (key_active_after (v.key, v.interval.bounds[0]) == inserting);
     assert (key_active_before(v.key, v.interval.bounds[1]) == inserting);
@@ -829,8 +837,9 @@ private:
   
   mutable std::unordered_set<value_type> to_be_erased;
   mutable std::unordered_set<value_type> to_be_inserted;
+  mutable std::vector<KeyType> keys_maybe_gone;
   mutable std::unique_ptr<node> root;
-  std::unordered_map<KeyType, key_metadata> metadata_by_key;
+  mutable std::unordered_map<KeyType, key_metadata> metadata_by_key;
   uint64_t next_tiebreaker;
   
   // hacks to init iterator possible_bounds:
