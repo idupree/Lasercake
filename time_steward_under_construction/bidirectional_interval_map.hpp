@@ -426,12 +426,12 @@ private:
     result.c_->bound_maxima_exist[1] = true;
     result.c_->bound_maxima[1] = v.interval.bounds[1];
     result.get_started(n, observed_range);
-      std::cerr << "A";
+//       std::cerr << "A";
     for (; result != end(); ++result) {
       assert (result->interval == v.interval);
-      std::cerr << "l";
+//       std::cerr << "l";
       if (result->key == v.key) {
-      std::cerr << "k";
+//       std::cerr << "k";
         assert (*result == v);
         return true;
       }
@@ -572,6 +572,7 @@ private:
                   get_tiebreaker(closest_to_insert->key));
               }
               if (use_thief && use_insert) {
+                if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) { assert (closest_to_insert_bound != closest_to_steal_bound); }
                 if (is_further_from_separator(closest_to_insert_bound, closest_to_steal_bound)) {
                   use_insert = false;
                 }
@@ -581,8 +582,8 @@ private:
               }
               if (use_thief) {
                 assert (closest_to_steal_bound != n->child_separator);
-                assert (is_further_from_separator(closest_to_steal_bound, n->child_separator));
                 if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
+                  assert (is_further_from_separator(closest_to_steal_bound, n->child_separator));
                   assert (!is_in_unsorted_vector(*thief, values_to_erase_by_child[which_child]));
                   assert (!is_in_unsorted_vector(*thief, stolen));
                   stolen.push_back(*thief);
@@ -629,6 +630,10 @@ private:
       for (value_type const* v : values_to_insert) {
         n->insert_value(*v);
         assert (value_in_tree(*v, root.get()));
+        assert (key_active_before(v->key, v->interval.bounds[0]) == false);
+        assert (key_active_after (v->key, v->interval.bounds[0]) == true);
+        assert (key_active_before(v->key, v->interval.bounds[1]) == true);
+        assert (key_active_after (v->key, v->interval.bounds[1]) == false);
       }
       assert (n->num_descendant_intervals == n->values_here.size());
       if (n->num_descendant_intervals > max_leaf_size) {
@@ -669,7 +674,7 @@ private:
       values_to_erase.push_back(&v);
     }
     
-    //validate_tree();
+//     validate_tree();
     insert_and_or_erase_impl(true, root, values_to_insert, values_to_erase);
     //validate_tree();
     
@@ -812,14 +817,14 @@ public:
   
   bidirectional_interval_map():root(nullptr),metadata_by_key(),next_tiebreaker(2){}
   
-  bool key_active_after(KeyType const& k, DomainType where) {
+  bool key_active_after(KeyType const& k, DomainType where)const {
     auto m_iter = metadata_by_key.find(k);
     if (m_iter == metadata_by_key.end()) { return false; }
     auto t_iter = m_iter->second.transitions.upper_bound(where);
     if (t_iter == m_iter->second.transitions.end()) { return false; }
     return !t_iter->second;
   }
-  bool key_active_before(KeyType const& k, DomainType where) {
+  bool key_active_before(KeyType const& k, DomainType where)const {
     auto m_iter = metadata_by_key.find(k);
     if (m_iter == metadata_by_key.end()) { return false; }
     auto t_iter = m_iter->second.transitions.lower_bound(where);
