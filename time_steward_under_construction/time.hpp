@@ -50,7 +50,8 @@ struct extended_time_metadata {
   typedef typename manual_orderer<extended_time_metadata>::entry_ref extended_time;
   typedef typename TimeTypeInfo::time_type time_type;
   
-  extended_time_metadata(time_type base_time):base_time(base_time){}
+  extended_time_metadata(time_type base_time):
+    base_time(base_time),id(),trigger_iteration(not_a_trigger){}
   extended_time_metadata(time_type base_time, siphash_id id):
     base_time(base_time),id(id),trigger_iteration(not_a_trigger){}
   extended_time_metadata(time_type base_time, siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
