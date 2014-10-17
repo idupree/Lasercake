@@ -289,4 +289,107 @@ namespace std {
   };
 }
 
+
+num_bits_type bits_per_level = 4;
+num_children_t gap_size_in_children = 2;
+num_children_t hypothetical_children_per_node = (1<<bits_per_level)
+num_children_t max_children_per_node = hypothetical_children_per_node - gap_size_in_children;
+num_children_t node_last_child = max_children_per_node-1;
+// In the time it takes us to fill the front gap, move the back gap all the way to the front.
+// So, in gap_size_in_children*child_size, move by (hypothetical_children_per_node-gap_size_in_children)*child_size.
+ max_gap_speed = ((hypothetical_children_per_node+gap_size_in_children-1)/gap_size_in_children) - 1;
+struct node {
+  leaf_ref insert_spot;
+  leaf_ref gap_move_spot;
+  leaf_ref shed_spot;
+  uint64_t num_descendants;
+  
+  bool 
+  node* parent;
+  num_children_t which_child_of_parent;
+  std::array<std::unique_ptr<node> or entry_ref, max_children_per_node> children;
+  num_children_t last_empty_child
+  // Doesn't go into earlier nodes. Returns a null ref for the first leaf in this node.
+  leaf_ref prev_leaf() {
+  }
+  void insert_first (input) {
+    bool nowhere_left_to_insert = false;
+    assert(insert_spot.n->children[insert_spot.child]);
+    while (true) {
+      --insert_spot.child;
+      if (insert_spot.child < gap_size_in_children) {
+        insert_spot.n->saturated = true;
+        if (insert_spot.n == this) {
+          nowhere_left_to_insert = true;
+          break;
+        }
+        insert_spot.child = insert_spot.n->which_child_of_parent();
+        insert_spot.n = insert_spot.n->parent;
+      }
+      else { break; }
+    }
+    if (!nowhere_left_to_insert) {
+      assert (!insert_spot.n->children[insert_spot.child]);
+      while (above bottom level) {
+        insert_spot.n->children[insert_spot.child].reset(new node(insert_spot.n));
+        insert_spot.n = insert_spot.n->children[insert_spot.child].get();
+        insert_spot.child = node_last_child;
+      }
+    }
+    if (!saturated) { assert(!nowhere_left_to_insert); }
+    if (saturated) {
+      for (int i = 0; (i < max_gap_speed) && (gap_move_spot > insert_spot); ++i) {
+        gap_move_spot->idx += this->gap_length();
+        leaf_ref last = prev_leaf(gap_move_spot);
+        if (last) {
+          gap_move_spot = last;
+        }
+        else {
+          gap_move_spot = insert_spot;
+        }
+      }
+      if (nowhere_left_to_insert) {
+        assert (gap_move_spot == insert_spot)
+        for (num_children_t i = node_last_child; i >= max_children_per_node-gap_size_in_children; --i) {
+          assert (children[i]->empty());
+        }
+        for (num_children_t i = node_last_child; i >= gap_size_in_children; --i) {
+          children[i].swap(children[i-1]);
+        }
+        gap_move_spot = prev_leaf(shed_spot);
+        insert_spot = end of new empty child, children[gap_size_in_children-1];
+      }
+      insert_spot.n->children[insert_spot.child] = input;
+      shed_last();
+    }
+  }
+  void shed(input) {
+    if (input > parent->shed_spot) {
+      parent->shed(input);
+    }
+    else {
+      parent->children[which_child_of_parent()+1].insert(input);
+    }
+  }
+  void update_shed_spot() {
+    if (!shed_spot.n->children[shed_spot.child]) {
+      // The only way to get rid of it is if a 
+    }
+  }
+  void shed_last() {
+    entry_ref input = shed_spot.n->children[shed_spot.child];
+    shed_spot.n->children[shed_spot.child] = nullptr;
+    while (shed_spot.n->empty()) {
+      assert (shed_spot.n != this);
+      shed_spot.child = shed_spot.n->which_child_of_parent();
+      shed_spot.n = shed_spot.n->parent;
+      shed_spot.n->children[shed_spot.child] = nullptr;
+    }
+    assert (shed_spot.child > 0);
+    --shed_spot.child;
+    shed(input);
+  }
+};
+
+
 #endif
