@@ -289,6 +289,8 @@ namespace std {
   };
 }
 
+// O(log n) amortized, O(log^2 n) worst case?
+
 
 const num_bits_type level_size_shift = 4;
 const uint64_t level_size = 1 << level_size_shift;
@@ -297,7 +299,7 @@ const uint64_t supply_size = 1 << supply_size_shift;
 const uint32_t supplies_per_level = (level_size-supply_size) / supply_size;
 // In the time it takes us to use up a supply, move far enough to get all the way from its refill source
 // even if it's the first supply among the supplies_per_level supplies drawing from the same source.
-// max_gap_speed can be lenient, since it only affects the worst-case time and not the amortized time.
+// max_gap_speed can be lenient
 const uint32_t max_gap_speed = divide(supplies_per_level * level_size, supply_size, rounding_strategy<round_up, negative_is_forbidden>);
 constexpr uint64_t entries_beneath_supply(num_bits_type level) {
   if (level == 0) {
@@ -305,25 +307,43 @@ constexpr uint64_t entries_beneath_supply(num_bits_type level) {
   }
   return entries_beneath_supply(level-1) * supplies_per_level;
 }
-constexpr num_bits_type calc_max_level() {
-  for (num_bits_type level = 0; ; ++level) {
-    if (entries_beneath_supply(level) >= uint64_t(-1) / supplies_per_level) {
-      return level;
-    }
-  }
-}
-const num_bits_type max_level = calc_max_level();
+const num_bits_type max_level = divide(64, level_size_shift, rounding_strategy<round_down, negative_is_forbidden>);
 const num_bits_type entries_beneath_max_level = entries_beneath_supply(max_level);
 
-struct supply {
-  uint64_t max_size;
-  uint64_t current_size;
-  uint64_t reserved;
-  int64_t next_refill_progress_emptying_self;
-  supply* refill_source;
-  entry* lower_bound;
+struct node {
+  uint64_t supply_max_size;
+  uint64_t supply_current_size;
+  uint64_t supply_reserved;
+  int64_t next_refill_progress_emptying_supply;
+  supply* parent;
+  std::deque<node* or entry_ref, supplies_per_level> children;
+  entry* supply_lower_bound;
   entry* next_refill_lower_bound;
   
+  void require_parent() {
+    if (!parent) {
+      parent = new supply();
+      parent->supply_lower_bound = ;
+      parent->supply_max_size = supply_max_size << level_size_shift;
+      parent->supply_current_size = parent->supply_max_size;
+      parent->supply_reserved = 0;
+      parent->children.push_back(this);
+    }
+  }
+  supply* next_sibling(supply* existing_child) {
+    if (children.back() == existing_child) {
+      require_parent();
+      return parent->next_sibling(this)->children.front();
+    }
+    else {
+      for (auto i = children.begin(); i != children.end(); ++i) {
+        if (*i == existing_child) {
+          return *boost::next(i);
+        }
+      }
+      assert (false);
+    }
+  }
   void claim(uint64_t amount) {
     assert (reserved >= amount);
     reserved -= amount;
@@ -345,30 +365,35 @@ struct supply {
           refill_source = new supply();
           refill_source->lower_bound = lower_bound;
           refill_source->max_size = max_size;
-          refill_source->current_size = current_size - (1ULL<<i);
-          refill_source->reserved = reserved;
-          max_size = (1ULL<<i);
+          max_size = (supply_size_shift<<i);
+          refill_source->current_size = current_size - max_size;
           current_size = max_size;
+          refill_source->reserved = reserved;
           reserved = 0;
         }
         entries_this_level = entries_this_level / supplies_per_level;
       }
     }
     else {
-      refill_source->reserve_one();
+      assert (parent->lower_bound >= lower_bound);
+      
+      parent->reserve_one();
       ++reserved;
       if (current_size < reserved) {
-        assert (next_refill_lower_bound == lower_bound);
+        assert (next_refill_lower_bound == supply_lower_bound);
         assert (next_refill_progress_emptying_self == -1);
-        refill_source->claim(max_size);
+        parent->claim(max_size);
         current_size += max_size;
-        next_refill_lower_bound = refill_source->lower_bound;
+        next_refill_lower_bound = parent->supply_lower_bound;
         next_refill_progress_emptying_self = max_size;
       }
       for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_self >= 0); ++i) {
-        if (next_refill_lower_bound == lower_bound) {
-          lower_bound = lower_bound->prev;
-          int64_t new_progress_emptying_self = lower_bound->idx & (max_size - 1);
+        if (next_refill_lower_bound == supply_lower_bound) {
+          if (new_progress_emptying_self != max_size) {
+            assert (new_progress_emptying_self == supply_lower_bound->idx & (max_size - 1));
+          }
+          supply_lower_bound = supply_lower_bound->prev;
+          const int64_t new_progress_emptying_self = supply_lower_bound->idx & (max_size - 1);
           assert (new_progress_emptying_self != next_refill_progress_emptying_self);
           if (new_progress_emptying_self > next_refill_progress_emptying_self) {
             next_refill_progress_emptying_self = -1;
@@ -376,184 +401,20 @@ struct supply {
           else {
             next_refill_progress_emptying_self = new_progress_emptying_self;
           }
+          if (children.back()->supply_lower_bound > supply_lower_bound) {
+            require_parent();
+            supply* new_child_parent = parent->next_sibling(this);
+            children.back()->parent = new_child_parent;
+            new_child_parent->children.push_front(children.back());
+            children.pop_back();
+          }
         }
-        next_refill_lower_bound->idx += max_size;
+        next_refill_lower_bound->idx += supply_max_size;
         next_refill_lower_bound = next_refill_lower_bound->prev;
       }
-      assert (current_size >= reserved);
+      assert (supply_current_size >= supply_reserved);
     }
   }
 };
-
-
-num_bits_type bits_per_level = 4;
-num_children_t gap_size_in_children = 2;
-num_children_t hypothetical_children_per_node = (1<<bits_per_level)
-num_children_t max_children_per_node = hypothetical_children_per_node - gap_size_in_children;
-num_children_t node_last_child = max_children_per_node-1;
-// In the time it takes us to fill the front gap, move the back gap all the way to the front.
-// So, in gap_size_in_children*child_size, move by (hypothetical_children_per_node-gap_size_in_children)*child_size.
- max_gap_speed = ((hypothetical_children_per_node+gap_size_in_children-1)/gap_size_in_children) - 1;
-struct node {
-  leaf_ref insert_spot;
-  leaf_ref gap_move_spot;
-  leaf_ref shed_spot;
-  uint64_t num_descendants;
-  uint64_t first_hypothetical_idx;
-  
-  bool 
-  node* parent;
-  num_children_t which_child_of_parent;
-  std::array<std::unique_ptr<node> or entry_ref, max_children_per_node> children;
-  num_children_t last_empty_child
-  // Doesn't go into earlier nodes. Returns a null ref for the first leaf in this node.
-  leaf_ref prev_leaf() {
-  }
-  void insert_first (input) {
-    node* node_to_insert_into = this;
-    while (above bottom level) {
-      num_children_t child_to_insert_into = 0;
-      for (num_children_t i = 0; i < max_children_per_node; ++i) {
-        if (node_to_insert_into->children[i+1] && node_to_insert_into->children[i+1]->saturated()) {
-          break;
-        }
-        child_to_insert_into = i;
-      }
-      if (!node_to_insert_into->children[child_to_insert_into]) {
-        node_to_insert_into->children[child_to_insert_into].reset(new node(node_to_insert_into));
-      }
-      node_to_insert_into = node_to_insert_into->children[child_to_insert_into].get();
-    }
-    for (num_children_t i = 0; i < max_children_per_node; ++i) {
-      if (node_to_insert_into->children[i+1]) {
-        node_to_insert_into->children[i] = input;
-        while (node_to_insert_into) {
-          ++node_to_insert_into.num_descendants;
-          node_to_insert_into = node_to_insert_into->parent;
-        }
-        break;
-      }
-    }
-    if (saturated()) {
-      for (int i = 0; (i < max_gap_speed) && (gap_move_spot  first_hypothetical_idx); ++i) {
-        gap_move_spot->idx += this->gap_length();
-        while (true) {
-          if (insert_spot.child > 0) {
-            --gap_move_spot.child;
-          }
-          else {
-            gap_move_spot.n->first_hypothetical_idx += this->gap_length();
-            if (insert_spot.n == this) {
-              nowhere_left_to_insert = true;
-              break;
-            }
-            insert_spot.child = insert_spot.n->which_child_of_parent();
-            insert_spot.n = insert_spot.n->parent;
-          }
-          else { break; }
-        }
-        leaf_ref last = prev_leaf(gap_move_spot);
-        if (last) {
-          gap_move_spot = last;
-        }
-        else {
-          gap_move_spot = insert_spot;
-        }
-      }
-      if (nowhere_left_to_insert) {
-        assert (gap_move_spot == insert_spot)
-        for (num_children_t i = node_last_child; i >= max_children_per_node-gap_size_in_children; --i) {
-          assert (children[i]->empty());
-        }
-        for (num_children_t i = node_last_child; i >= gap_size_in_children; --i) {
-          children[i].swap(children[i-1]);
-        }
-        gap_move_spot = prev_leaf(shed_spot);
-        insert_spot = end of new empty child, children[gap_size_in_children-1];
-      }
-      insert_spot.n->children[insert_spot.child] = input;
-      shed_last();
-    }
-    
-    
-    
-    bool nowhere_left_to_insert = false;
-    assert(insert_spot.n->children[insert_spot.child]);
-    while (true) {
-      --insert_spot.child;
-      if (insert_spot.child < gap_size_in_children) {
-        insert_spot.n->saturated = true;
-        if (insert_spot.n == this) {
-          nowhere_left_to_insert = true;
-          break;
-        }
-        insert_spot.child = insert_spot.n->which_child_of_parent();
-        insert_spot.n = insert_spot.n->parent;
-      }
-      else { break; }
-    }
-    if (!nowhere_left_to_insert) {
-      assert (!insert_spot.n->children[insert_spot.child]);
-      while (above bottom level) {
-        insert_spot.n->children[insert_spot.child].reset(new node(insert_spot.n));
-        insert_spot.n = insert_spot.n->children[insert_spot.child].get();
-        insert_spot.child = node_last_child;
-      }
-    }
-    if (!saturated) { assert(!nowhere_left_to_insert); }
-    if (saturated) {
-      for (int i = 0; (i < max_gap_speed) && (gap_move_spot > insert_spot); ++i) {
-        gap_move_spot->idx += this->gap_length();
-        leaf_ref last = prev_leaf(gap_move_spot);
-        if (last) {
-          gap_move_spot = last;
-        }
-        else {
-          gap_move_spot = insert_spot;
-        }
-      }
-      if (nowhere_left_to_insert) {
-        assert (gap_move_spot == insert_spot)
-        for (num_children_t i = node_last_child; i >= max_children_per_node-gap_size_in_children; --i) {
-          assert (children[i]->empty());
-        }
-        for (num_children_t i = node_last_child; i >= gap_size_in_children; --i) {
-          children[i].swap(children[i-1]);
-        }
-        gap_move_spot = prev_leaf(shed_spot);
-        insert_spot = end of new empty child, children[gap_size_in_children-1];
-      }
-      insert_spot.n->children[insert_spot.child] = input;
-      shed_last();
-    }
-  }
-  void shed(input) {
-    if (input > parent->shed_spot) {
-      parent->shed(input);
-    }
-    else {
-      parent->children[which_child_of_parent()+1].insert(input);
-    }
-  }
-  void update_shed_spot() {
-    if (!shed_spot.n->children[shed_spot.child]) {
-      // The only way to get rid of it is if a 
-    }
-  }
-  void shed_last() {
-    entry_ref input = shed_spot.n->children[shed_spot.child];
-    shed_spot.n->children[shed_spot.child] = nullptr;
-    while (shed_spot.n->empty()) {
-      assert (shed_spot.n != this);
-      shed_spot.child = shed_spot.n->which_child_of_parent();
-      shed_spot.n = shed_spot.n->parent;
-      shed_spot.n->children[shed_spot.child] = nullptr;
-    }
-    assert (shed_spot.child > 0);
-    --shed_spot.child;
-    shed(input);
-  }
-};
-
 
 #endif
