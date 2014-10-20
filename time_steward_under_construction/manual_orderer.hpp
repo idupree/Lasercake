@@ -289,7 +289,7 @@ namespace std {
   };
 }
 
-// O(log n) amortized, O(log^2 n) worst case?
+// O(log n) amortized, maybe O(log^2 n) worst case?
 
 
 const num_bits_type level_size_shift = 4;
@@ -310,30 +310,106 @@ constexpr uint64_t entries_beneath_supply(num_bits_type level) {
 const num_bits_type max_level = divide(64, level_size_shift, rounding_strategy<round_down, negative_is_forbidden>);
 const num_bits_type entries_beneath_max_level = entries_beneath_supply(max_level);
 
+typedef uint64_t ordered_category;
+ordered_category new_unique_ordered_category() {
+  static ordered_category a = 0;
+  return ++ordered_category;
+}
+
+struct entry_base {
+  entry_base():idx(0),category(new_unique_ordered_category()),ref_count(0),parent(nullptr){}
+  idx_type idx;
+  ordered_category category;
+  size_t ref_count;
+  node* parent;
+  entry_base* prev() {
+    return parent->prev_sibling(this);
+  }
+  entry_base* next() {
+    return parent->next_sibling(this);
+  }
+  void put_before(entry_base* o) {
+    if (parent) {
+      parent->erase(this);
+    }
+    category = o.category;
+  }
+  void put_after(entry_base* o) {
+    if (parent) {
+      parent->erase(this);
+    }
+    category = o.category;
+  }
+};
+
 struct node {
   uint64_t supply_max_size;
   uint64_t supply_current_size;
   uint64_t supply_reserved;
   int64_t next_refill_progress_emptying_supply;
-  supply* parent;
-  std::deque<node* or entry_ref, supplies_per_level> children;
-  entry* supply_lower_bound;
-  entry* next_refill_lower_bound;
+  node* parent;
+  typedef (node* or entry_base*) child;
+  std::deque<child> children;
+  entry_base* supply_lower_bound;
+  entry_base* next_refill_lower_bound;
   
-  void require_parent() {
-    if (!parent) {
-      parent = new supply();
-      parent->supply_lower_bound = ;
-      parent->supply_max_size = supply_max_size << level_size_shift;
-      parent->supply_current_size = parent->supply_max_size;
-      parent->supply_reserved = 0;
-      parent->children.push_back(this);
+  void insert_before(entry_base* a, entry_base* existing_child) {
+    assert (is_bottom_level());
+    a->idx = existing_child->idx;
+    reserve_one_from_supply();
+    bool found = false;
+    for (auto i = children.begin(); i != children.end(); ++i) {
+      if (*i == existing_child) {
+        children.insert(i, a);
+        found = true;
+      }
+      if (found) {
+        ++i->idx;
+      }
     }
   }
-  supply* next_sibling(supply* existing_child) {
+  void insert_after(entry_base* a, entry_base* existing_child) {
+    assert (is_bottom_level());
+    reserve_one_from_supply();
+    a->idx = existing_child->idx;
+    bool found = false;
+    for (auto i = children.begin(); i != children.end(); ++i) {
+      if (found) {
+        ++i->idx;
+      }
+      if (*i == existing_child) {
+        children.insert(boost::next(i), a);
+        found = true;
+      }
+    }
+  }
+  
+  child prev_sibling(child existing_child) {
+    if (children.front() == existing_child) {
+      if (parent) {
+        return parent->prev_sibling(this)->children.back();
+      }
+      else {
+        return nullptr;
+      }
+    }
+    else {
+      for (auto i = children.begin(); i != children.end(); ++i) {
+        if (*i == existing_child) {
+          return *boost::prior(i);
+        }
+      }
+      assert (false);
+    }
+  }
+  child prev_sibling(child existing_child) {
     if (children.back() == existing_child) {
-      require_parent();
-      return parent->next_sibling(this)->children.front();
+      if (parent) {
+        return parent->prev_sibling(this)->children.front();
+      }
+      else {
+        return nullptr;
+      }
     }
     else {
       for (auto i = children.begin(); i != children.end(); ++i) {
@@ -344,77 +420,198 @@ struct node {
       assert (false);
     }
   }
-  void claim(uint64_t amount) {
+  void require_parent() {
+    if (!parent) {
+      parent = new node();
+      parent->supply_lower_bound = supply_lower_bound;
+      parent->supply_max_size = supply_max_size << level_size_shift;
+      parent->supply_current_size = parent->supply_max_size;
+      parent->supply_reserved = 0;
+      parent->children.push_back(this);
+    }
+  }
+  node* require_next_sibling(node* existing_child) {
+    if (children.back() == existing_child) {
+      assert (children.size() <= supplies_per_level);
+      if (children.size() >= supplies_per_level) {
+        require_parent();
+        return parent->next_sibling(this)->children.front();
+      }
+      else {
+        node* new_sibling = new node();
+        new_sibling->supply_lower_bound = existing_child->supply_lower_bound;
+        new_sibling->supply_max_size = existing_child->supply_max_size;
+        new_sibling->supply_current_size = new_sibling->supply_max_size;
+        new_sibling->supply_reserved = 0;
+        children.push_back();
+      }
+    }
+    else {
+      for (auto i = children.begin(); i != children.end(); ++i) {
+        if (*i == existing_child) {
+          return *boost::next(i);
+        }
+      }
+      assert (false);
+    }
+  }
+  void claim_from_supply(uint64_t amount) {
     assert (reserved >= amount);
     reserved -= amount;
     current_size -= amount;
   }
-  void reserve_one() {
-    if (!refill_source) {
-      // We're the near-infinite supply at the right. If we run out, it's over.
-      ++reserved;
-      caller_correct_if(current_size >= reserved, "manual_orderer overflowed");
-      
-      uint64_t entries = current_size-reserved;
-      uint64_t entries_this_level = entries_beneath_max_level;
-      for (int i = max_level; i >= 0; --i) {
-        while (entries >= entries_this_level) {
-          entries -= entries_this_level;
-        }
-        if (entries == 0) {
-          refill_source = new supply();
-          refill_source->lower_bound = lower_bound;
-          refill_source->max_size = max_size;
-          max_size = (supply_size_shift<<i);
-          refill_source->current_size = current_size - max_size;
-          current_size = max_size;
-          refill_source->reserved = reserved;
-          reserved = 0;
-        }
-        entries_this_level = entries_this_level / supplies_per_level;
-      }
+  void reserve_one_from_supply() {
+    assert (children.size() <= supplies_per_level);
+    if (children.size() >= supplies_per_level) {
+      require_parent();
+    }
+    if (!parent) {
+      // We have no later sibling, so there's no need to maintain a next_refill.
+      ++supply_reserved;
+      caller_correct_if(supply_current_size >= supply_reserved, "manual_orderer overflowed");
     }
     else {
-      assert (parent->lower_bound >= lower_bound);
+      assert (parent->supply_lower_bound >= supply_lower_bound);
       
-      parent->reserve_one();
-      ++reserved;
+      parent->reserve_one_from_supply();
       if (current_size < reserved) {
         assert (next_refill_lower_bound == supply_lower_bound);
-        assert (next_refill_progress_emptying_self == -1);
-        parent->claim(max_size);
-        current_size += max_size;
+        assert (next_refill_progress_emptying_supply == -1);
+        parent->claim_from_supply(supply_max_size);
+        current_size += supply_max_size;
         next_refill_lower_bound = parent->supply_lower_bound;
-        next_refill_progress_emptying_self = max_size;
+        next_refill_progress_emptying_supply = supply_max_size;
       }
-      for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_self >= 0); ++i) {
+      for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_supply >= 0); ++i) {
         if (next_refill_lower_bound == supply_lower_bound) {
-          if (new_progress_emptying_self != max_size) {
-            assert (new_progress_emptying_self == supply_lower_bound->idx & (max_size - 1));
+          if (next_refill_progress_emptying_supply != supply_max_size) {
+            assert (next_refill_progress_emptying_supply == supply_lower_bound->idx & (supply_max_size - 1) & ~((supply_max_size>>level_size_shift) - 1));
           }
-          supply_lower_bound = supply_lower_bound->prev;
-          const int64_t new_progress_emptying_self = supply_lower_bound->idx & (max_size - 1);
-          assert (new_progress_emptying_self != next_refill_progress_emptying_self);
-          if (new_progress_emptying_self > next_refill_progress_emptying_self) {
-            next_refill_progress_emptying_self = -1;
+          supply_lower_bound = supply_lower_bound->prev();
+          const int64_t new_progress_emptying_supply = supply_lower_bound->idx & (supply_max_size - 1) & ~((supply_max_size>>level_size_shift) - 1);
+          //assert (new_progress_emptying_supply != next_refill_progress_emptying_supply);
+          if (new_progress_emptying_supply > next_refill_progress_emptying_supply) {
+            next_refill_progress_emptying_supply = -1;
           }
           else {
-            next_refill_progress_emptying_self = new_progress_emptying_self;
+            next_refill_progress_emptying_supply = new_progress_emptying_supply;
           }
-          if (children.back()->supply_lower_bound > supply_lower_bound) {
-            require_parent();
-            supply* new_child_parent = parent->next_sibling(this);
-            children.back()->parent = new_child_parent;
-            new_child_parent->children.push_front(children.back());
-            children.pop_back();
+          
+          if (is_bottom_level()) {
+            if (children.back()->idx > supply_lower_bound->idx) {
+              node* new_child_parent = parent->require_next_sibling(this);
+              children.back()->parent = new_child_parent;
+              new_child_parent->children.push_front(children.back());
+              children.pop_back();
+            }
+          }
+          else {
+            if (children.back()->supply_lower_bound->idx > supply_lower_bound->idx) {
+              node* new_child_parent = parent->require_next_sibling(this);
+              children.back()->parent = new_child_parent;
+              new_child_parent->children.push_front(children.back());
+              children.pop_back();
+            }
           }
         }
         next_refill_lower_bound->idx += supply_max_size;
-        next_refill_lower_bound = next_refill_lower_bound->prev;
+        assert (next_refill_lower_bound->idx < next_refill_lower_bound->next()->idx);
+        next_refill_lower_bound = next_refill_lower_bound->prev();
       }
+      ++supply_reserved;
       assert (supply_current_size >= supply_reserved);
     }
   }
 };
+
+// a manually_orderable is a non-threadsafe reference-counted smart pointer
+// that is LessThanComparable by a idx it stores next to the contents,
+// and EqualityComparable by the pointer.
+// You must not compare entry_refs for which ... TODO explain
+
+template<typename ValueType>
+struct entry : public entry_base {
+  template <class... Args>
+  entry(Args&&... args):entry_base(),contents(std::forward<Args>(args)...){}
+  ValueType contents;
+};
+
+template<typename ValueType>
+struct manually_orderable {
+public:
+  template <class... Args>
+  manually_orderable(Args&&... args):data(new entry<ValueType>(std::forward<Args>(args)...)){}
+  manually_orderable():data(nullptr){}
+  manually_orderable(manually_orderable const& o):data(o.data) { inc_ref(); }
+  template<typename OtherValueType>
+  friend struct manually_orderable;
+  
+  template<typename OtherValueType>
+  void put_before(manually_orderable<OtherValueType> const& o) {
+    data->put_before(o.data);
+  }
+  template<typename OtherValueType>
+  void put_after(manually_orderable<OtherValueType> const& o) {
+    data->put_after(o.data);
+  }
+  
+  template<typename OtherValueType>
+  bool operator< (manually_orderable<OtherValueType> const& o)const {
+    caller_correct_if(data->category == o.data->category, "comparing items not ordered relative to each other");
+    return data->idx <  o.data->idx;
+  }
+  template<typename OtherValueType>
+  bool operator> (manually_orderable<OtherValueType> const& o)const {
+    caller_correct_if(data->category == o.data->category, "comparing items not ordered relative to each other");
+    return data->idx >  o.data->idx;
+  }
+  template<typename OtherValueType>
+  bool operator<=(manually_orderable<OtherValueType> const& o)const {
+    caller_correct_if(data->category == o.data->category, "comparing items not ordered relative to each other");
+    return data->idx <= o.data->idx;
+  }
+  template<typename OtherValueType>
+  bool operator>=(manually_orderable<OtherValueType> const& o)const {
+    caller_correct_if(data->category == o.data->category, "comparing items not ordered relative to each other");
+    return data->idx >= o.data->idx;
+  }
+  bool operator==(manually_orderable const& o)const { return data == o.data; }
+  bool operator!=(manually_orderable const& o)const { return data != o.data; }
+  explicit operator bool()const { return bool(data); }
+  ValueType& operator*()const { return data->contents; }
+  ValueType* operator->()const { return &data->contents; }
+  manually_orderable& operator=(manually_orderable const& o) {
+    o.inc_ref(); // do this before dec_ref in case lhs and rhs are the same object
+    dec_ref();
+    data = o.data;
+    return *this;
+  }
+  ~manually_orderable() { dec_ref(); }
+private:
+  void inc_ref()const {
+    if (data) { ++data->ref_count; }
+  }
+  void dec_ref() {
+    if (data && (--data->ref_count == 0)) {
+      delete data;
+      data = nullptr;
+    }
+  }
+  explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
+  entry<ValueType>* data;
+  friend class manual_orderer<ValueType>;
+  friend struct std::hash<manually_orderable>;
+};
+
+namespace std {
+  template<typename ValueType>
+  struct hash<typename manually_orderable<ValueType>> {
+    public:
+    size_t operator()(manually_orderable<ValueType> const& i)const {
+      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
+      return std::hash<decltype(i.data)>()(i.data);
+    }
+  };
+}
 
 #endif
