@@ -294,21 +294,14 @@ namespace std {
 
 const num_bits_type level_size_shift = 4;
 const uint64_t level_size = 1 << level_size_shift;
-const num_bits_type supply_size_shift = 1;
+const num_bits_type supply_size_shift = 2;
 const uint64_t supply_size = 1 << supply_size_shift;
-const uint32_t supplies_per_level = (level_size-supply_size) / supply_size;
+const uint32_t desired_supplies_per_level = (level_size-supply_size) / supply_size;
+const uint32_t max_supplies_per_level = level_size / supply_size;
 // In the time it takes us to use up a supply, move far enough to get all the way from its refill source
 // even if it's the first supply among the supplies_per_level supplies drawing from the same source.
 // max_gap_speed can be lenient
-const uint32_t max_gap_speed = divide(supplies_per_level * level_size, supply_size, rounding_strategy<round_up, negative_is_forbidden>);
-constexpr uint64_t entries_beneath_supply(num_bits_type level) {
-  if (level == 0) {
-    return 1;
-  }
-  return entries_beneath_supply(level-1) * supplies_per_level;
-}
-const num_bits_type max_level = divide(64, level_size_shift, rounding_strategy<round_down, negative_is_forbidden>);
-const num_bits_type entries_beneath_max_level = entries_beneath_supply(max_level);
+const uint32_t max_gap_speed = divide(max_supplies_per_level * level_size, supply_size, rounding_strategy<round_up, negative_is_forbidden>);
 
 typedef uint64_t ordered_category;
 ordered_category new_unique_ordered_category() {
@@ -328,22 +321,17 @@ struct entry_base {
   entry_base* next() {
     return parent->next_sibling(this);
   }
-  void put_before(entry_base* o) {
+  void put(entry_base* o, bool after) {
     if (parent) {
       parent->erase(this);
     }
-    category = o.category;
-  }
-  void put_after(entry_base* o) {
-    if (parent) {
-      parent->erase(this);
-    }
-    category = o.category;
+    category = o->category;
+    o->parent->insert(a, o, after);
   }
 };
 
 struct node {
-  uint64_t supply_max_size;
+  uint64_t supply_desired_size;
   uint64_t supply_current_size;
   uint64_t supply_reserved;
   int64_t next_refill_progress_emptying_supply;
@@ -353,33 +341,32 @@ struct node {
   entry_base* supply_lower_bound;
   entry_base* next_refill_lower_bound;
   
-  void insert_before(entry_base* a, entry_base* existing_child) {
+  void erase(entry_base* a) {
     assert (is_bottom_level());
-    a->idx = existing_child->idx;
-    reserve_one_from_supply();
     bool found = false;
-    for (auto i = children.begin(); i != children.end(); ++i) {
-      if (*i == existing_child) {
-        children.insert(i, a);
+    for (auto i = children.begin(); i != children.end(); ) {
+      if (found) { --i->idx; }
+      if (*i == a) {
+        children.erase(i++);
         found = true;
       }
-      if (found) {
-        ++i->idx;
+      else {
+        ++i;
       }
     }
+    reserve_one_from_supply(false);
   }
-  void insert_after(entry_base* a, entry_base* existing_child) {
+  void insert(entry_base* a, entry_base* existing_child, bool after) {
     assert (is_bottom_level());
-    reserve_one_from_supply();
     a->idx = existing_child->idx;
+    reserve_one_from_supply();
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ++i) {
-      if (found) {
-        ++i->idx;
-      }
+      if (found) { ++i->idx; }
       if (*i == existing_child) {
-        children.insert(boost::next(i), a);
+        children.insert(after ? boost::next(i) : i, a);
         found = true;
+        if (!after) { ++i->idx; }
       }
     }
   }
@@ -402,7 +389,7 @@ struct node {
       assert (false);
     }
   }
-  child prev_sibling(child existing_child) {
+  child next_sibling(child existing_child) {
     if (children.back() == existing_child) {
       if (parent) {
         return parent->prev_sibling(this)->children.front();
@@ -424,24 +411,24 @@ struct node {
     if (!parent) {
       parent = new node();
       parent->supply_lower_bound = supply_lower_bound;
-      parent->supply_max_size = supply_max_size << level_size_shift;
-      parent->supply_current_size = parent->supply_max_size;
+      parent->supply_desired_size = supply_desired_size << level_size_shift;
+      parent->supply_current_size = parent->supply_desired_size;
       parent->supply_reserved = 0;
       parent->children.push_back(this);
     }
   }
   node* require_next_sibling(node* existing_child) {
     if (children.back() == existing_child) {
-      assert (children.size() <= supplies_per_level);
-      if (children.size() >= supplies_per_level) {
+      assert (children.size() <= max_supplies_per_level);
+      if (children.size() >= desired_supplies_per_level) {
         require_parent();
         return parent->next_sibling(this)->children.front();
       }
       else {
         node* new_sibling = new node();
         new_sibling->supply_lower_bound = existing_child->supply_lower_bound;
-        new_sibling->supply_max_size = existing_child->supply_max_size;
-        new_sibling->supply_current_size = new_sibling->supply_max_size;
+        new_sibling->supply_desired_size = existing_child->supply_desired_size;
+        new_sibling->supply_current_size = new_sibling->supply_desired_size;
         new_sibling->supply_reserved = 0;
         children.push_back();
       }
@@ -455,72 +442,152 @@ struct node {
       assert (false);
     }
   }
-  void claim_from_supply(uint64_t amount) {
-    assert (reserved >= amount);
-    reserved -= amount;
-    current_size -= amount;
-  }
-  void reserve_one_from_supply() {
-    assert (children.size() <= supplies_per_level);
-    if (children.size() >= supplies_per_level) {
-      require_parent();
-    }
-    if (!parent) {
-      // We have no later sibling, so there's no need to maintain a next_refill.
-      ++supply_reserved;
-      caller_correct_if(supply_current_size >= supply_reserved, "manual_orderer overflowed");
+  void claim_from_supply(uint64_t amount, bool reserving = true) {
+    if (reserving) {
+      assert (reserved >= amount);
+      reserved -= amount;
+      current_size -= amount;
     }
     else {
-      assert (parent->supply_lower_bound >= supply_lower_bound);
-      
-      parent->reserve_one_from_supply();
-      if (current_size < reserved) {
-        assert (next_refill_lower_bound == supply_lower_bound);
-        assert (next_refill_progress_emptying_supply == -1);
-        parent->claim_from_supply(supply_max_size);
-        current_size += supply_max_size;
-        next_refill_lower_bound = parent->supply_lower_bound;
-        next_refill_progress_emptying_supply = supply_max_size;
-      }
-      for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_supply >= 0); ++i) {
-        if (next_refill_lower_bound == supply_lower_bound) {
-          if (next_refill_progress_emptying_supply != supply_max_size) {
-            assert (next_refill_progress_emptying_supply == supply_lower_bound->idx & (supply_max_size - 1) & ~((supply_max_size>>level_size_shift) - 1));
-          }
-          supply_lower_bound = supply_lower_bound->prev();
-          const int64_t new_progress_emptying_supply = supply_lower_bound->idx & (supply_max_size - 1) & ~((supply_max_size>>level_size_shift) - 1);
-          //assert (new_progress_emptying_supply != next_refill_progress_emptying_supply);
-          if (new_progress_emptying_supply > next_refill_progress_emptying_supply) {
-            next_refill_progress_emptying_supply = -1;
-          }
-          else {
-            next_refill_progress_emptying_supply = new_progress_emptying_supply;
-          }
-          
-          if (is_bottom_level()) {
-            if (children.back()->idx > supply_lower_bound->idx) {
-              node* new_child_parent = parent->require_next_sibling(this);
-              children.back()->parent = new_child_parent;
-              new_child_parent->children.push_front(children.back());
-              children.pop_back();
-            }
-          }
-          else {
-            if (children.back()->supply_lower_bound->idx > supply_lower_bound->idx) {
-              node* new_child_parent = parent->require_next_sibling(this);
-              children.back()->parent = new_child_parent;
-              new_child_parent->children.push_front(children.back());
-              children.pop_back();
-            }
+      reserved += amount;
+      current_size += amount;
+    }
+  }
+  void join_refill_to_supply(bool reserving = true) {
+    if (reserving) {
+      assert (next_refill_lower_bound == supply_lower_bound);
+      assert (next_refill_progress_emptying_supply == -1);
+      parent->claim_from_supply(supply_desired_size);
+      supply_current_size += supply_desired_size;
+      next_refill_lower_bound = parent->supply_lower_bound;
+      next_refill_progress_emptying_supply = supply_desired_size;
+    }
+    else {
+      assert (next_refill_lower_bound == parent->supply_lower_bound);
+      assert (next_refill_progress_emptying_supply == supply_desired_size);
+      assert (supply_current_size >= supply_desired_size);
+      parent->claim_from_supply(supply_desired_size, false);
+      supply_current_size -= supply_desired_size;
+      next_refill_lower_bound = supply_lower_bound;
+      next_refill_progress_emptying_supply = -1;
+    }
+  }
+  int64_t progress_emptying_supply() {
+    return supply_lower_bound->idx & (supply_desired_size - 1) & ~((supply_desired_size>>level_size_shift) - 1);
+  }
+  void roll_refill_once(bool reserving = true) {
+    if (reserving) {
+      if (next_refill_lower_bound == supply_lower_bound) {
+        if (next_refill_progress_emptying_supply != supply_desired_size) { assert (next_refill_progress_emptying_supply == progress_emptying_supply()); }
+        supply_lower_bound = supply_lower_bound->prev();
+        const int64_t new_progress_emptying_supply = progress_emptying_supply();
+        if (new_progress_emptying_supply > next_refill_progress_emptying_supply) {
+          next_refill_progress_emptying_supply = -1;
+        }
+        else {
+          next_refill_progress_emptying_supply = new_progress_emptying_supply;
+        }
+        
+        if (is_bottom_level()) {
+          if (children.back()->idx > supply_lower_bound->idx) {
+            node* new_child_parent = parent->require_next_sibling(this);
+            children.back()->parent = new_child_parent;
+            new_child_parent->children.push_front(children.back());
+            children.pop_back();
           }
         }
-        next_refill_lower_bound->idx += supply_max_size;
-        assert (next_refill_lower_bound->idx < next_refill_lower_bound->next()->idx);
-        next_refill_lower_bound = next_refill_lower_bound->prev();
+        else {
+          if (children.back()->supply_lower_bound->idx > supply_lower_bound->idx) {
+            node* new_child_parent = parent->require_next_sibling(this);
+            children.back()->parent = new_child_parent;
+            new_child_parent->children.push_front(children.back());
+            children.pop_back();
+          }
+        }
+      }
+      next_refill_lower_bound->idx += supply_desired_size;
+      assert (next_refill_lower_bound->idx < next_refill_lower_bound->next()->idx);
+      next_refill_lower_bound = next_refill_lower_bound->prev();
+    }
+    else {
+      if (next_refill_progress_emptying_supply != supply_desired_size) {
+        if (next_refill_progress_emptying_supply != -1) { assert (next_refill_progress_emptying_supply == progress_emptying_supply()); }
+        supply_lower_bound = supply_lower_bound->next();
+        const int64_t new_progress_emptying_supply = progress_emptying_supply();
+        if (new_progress_emptying_supply < next_refill_progress_emptying_supply) {
+          next_refill_progress_emptying_supply = supply_desired_size;
+        }
+        else {
+          next_refill_progress_emptying_supply = new_progress_emptying_supply;
+        }
+        
+        node* possible_new_child_parent = parent->next_sibling(this);
+        if (is_bottom_level()) {
+          if (possible_new_child_parent->children.front()->idx <= supply_lower_bound->idx) {
+            possible_new_child_parent->children.front()->parent = this;
+            children.push_back(possible_new_child_parent->children.front());
+            possible_new_child_parent->children.pop_front();
+          }
+        }
+        else {
+          if (children.front()->supply_lower_bound->idx <= supply_lower_bound->idx) {
+            possible_new_child_parent->children.front()->parent = this;
+            children.push_back(possible_new_child_parent->children.front());
+            possible_new_child_parent->children.pop_front();
+          }
+        }
+      }
+      next_refill_lower_bound = next_refill_lower_bound->next();
+      next_refill_lower_bound->idx -= supply_desired_size;
+      assert (next_refill_lower_bound->idx > next_refill_lower_bound->prev()->idx);
+    }
+  }
+  void reserve_one_from_supply(bool reserving = true) {
+    validate();
+    
+    if (reserving) {
+      if (children.size() >= desired_supplies_per_level) {
+        require_parent();
       }
       ++supply_reserved;
-      assert (supply_current_size >= supply_reserved);
+        
+      if (parent) {
+        parent->reserve_one_from_supply();
+        if (current_size < supply_reserved) {
+          join_refill_to_supply();
+        }
+        for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_supply >= 0); ++i) {
+          roll_refill_once();
+        }
+      }
     }
+    else {
+      --supply_reserved;
+      
+      if (parent) {
+        for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_lower_bound != parent->supply_lower_bound); ++i) {
+          roll_refill_once(false);
+        }
+        if (current_size-supply_reserved > supply_desired_size) {
+          join_refill_to_supply(false);
+        }
+        parent->reserve_one_from_supply(false);
+      
+        if (children.size() < desired_supplies_per_level) {
+          assert (parent->parent == nullptr);
+          assert (parent->children.size() == 1);
+          delete parent;
+          parent = nullptr;
+        }
+      }
+    }
+    
+    validate();
+  }
+  void validate() {
+    assert (supply_current_size >= supply_reserved);
+    assert (children.size() <= max_supplies_per_level);
+    if (parent) { assert (parent->supply_lower_bound >= supply_lower_bound); }
   }
 };
 
