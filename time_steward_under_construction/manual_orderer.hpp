@@ -22,7 +22,7 @@
 #ifndef LASERCAKE_MANUAL_ORDERER_HPP__
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
-
+#if 0
 template<typename ValueType> class manual_orderer;
 namespace manual_orderer_impl {
 typedef uint64_t idx_type;
@@ -288,9 +288,13 @@ namespace std {
     }
   };
 }
+#endif
 
+namespace manual_orderer_impl {
 // O(log n) amortized, maybe O(log^2 n) worst case?
 
+typedef uint64_t idx_type;
+typedef uint32_t num_bits_type;
 
 const num_bits_type level_size_shift = 4;
 const uint64_t level_size = 1 << level_size_shift;
@@ -301,52 +305,60 @@ const uint32_t max_supplies_per_level = level_size / supply_size;
 // In the time it takes us to use up a supply, move far enough to get all the way from its refill source
 // even if it's the first supply among the supplies_per_level supplies drawing from the same source.
 // max_gap_speed can be lenient
-const uint32_t max_gap_speed = divide(max_supplies_per_level * level_size, supply_size, rounding_strategy<round_up, negative_is_forbidden>);
+const uint32_t max_gap_speed = divide(max_supplies_per_level * level_size, supply_size, rounding_strategy<round_up, negative_is_forbidden>());
 
 typedef uint64_t ordered_category;
 ordered_category new_unique_ordered_category() {
   static ordered_category a = 0;
-  return ++ordered_category;
+  return ++a;
 }
 
-struct entry_base {
-  entry_base():idx(0),category(new_unique_ordered_category()),ref_count(0),parent(nullptr){}
+struct node;
+struct entry_or_node_base {
+  entry_or_node_base():parent(nullptr){}
+  node* parent;
+};
+
+struct entry_base : public entry_or_node_base {
+  entry_base():entry_or_node_base(),idx(0),category(new_unique_ordered_category()),ref_count(0){}
   idx_type idx;
   ordered_category category;
   size_t ref_count;
-  node* parent;
-  entry_base* prev() {
-    return parent->prev_sibling(this);
-  }
-  entry_base* next() {
-    return parent->next_sibling(this);
-  }
-  void put(entry_base* o, bool after) {
-    if (parent) {
-      parent->erase(this);
-    }
-    category = o->category;
-    o->parent->insert(a, o, after);
-  }
+  entry_base* prev();
+  entry_base* next();
+  void put(entry_base* o, bool after);
+  void erase_from_parent();
 };
 
-struct node {
+struct node : public entry_or_node_base {
+  node(entry_base* sole_child):
+    supply_desired_size(supply_size),
+    supply_current_size(supply_desired_size),
+    supply_reserved(0),
+    next_refill_progress_emptying_supply(supply_desired_size),
+    children(),
+    supply_lower_bound(sole_child),
+    next_refill_lower_bound(sole_child)
+  {
+    children.push_back(sole_child);
+  }
+  node(){}
   uint64_t supply_desired_size;
   uint64_t supply_current_size;
   uint64_t supply_reserved;
   int64_t next_refill_progress_emptying_supply;
-  node* parent;
-  typedef (node* or entry_base*) child;
-  std::deque<child> children;
+  std::deque<entry_or_node_base*> children;
   entry_base* supply_lower_bound;
   entry_base* next_refill_lower_bound;
   
+  bool is_bottom_level()const { return supply_desired_size == supply_size; }
   void erase(entry_base* a) {
     assert (is_bottom_level());
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ) {
-      if (found) { --i->idx; }
-      if (*i == a) {
+      entry_base* e = (entry_base*)*i;
+      if (found) { --e->idx; }
+      if (e == a) {
         children.erase(i++);
         found = true;
       }
@@ -362,19 +374,20 @@ struct node {
     reserve_one_from_supply();
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ++i) {
-      if (found) { ++i->idx; }
-      if (*i == existing_child) {
+      entry_base* e = (entry_base*)*i;
+      if (found) { ++e->idx; }
+      if (e == existing_child) {
         children.insert(after ? boost::next(i) : i, a);
         found = true;
-        if (!after) { ++i->idx; }
+        if (!after) { ++e->idx; }
       }
     }
   }
   
-  child prev_sibling(child existing_child) {
+  entry_or_node_base* prev_sibling(entry_or_node_base* existing_child) {
     if (children.front() == existing_child) {
       if (parent) {
-        return parent->prev_sibling(this)->children.back();
+        return ((node*)parent->prev_sibling(this))->children.back();
       }
       else {
         return nullptr;
@@ -389,10 +402,10 @@ struct node {
       assert (false);
     }
   }
-  child next_sibling(child existing_child) {
+  entry_or_node_base* next_sibling(entry_or_node_base* existing_child) {
     if (children.back() == existing_child) {
       if (parent) {
-        return parent->prev_sibling(this)->children.front();
+        return ((node*)parent->prev_sibling(this))->children.front();
       }
       else {
         return nullptr;
@@ -401,7 +414,7 @@ struct node {
     else {
       for (auto i = children.begin(); i != children.end(); ++i) {
         if (*i == existing_child) {
-          return *boost::next(i);
+          return (node*)*boost::next(i);
         }
       }
       assert (false);
@@ -422,7 +435,7 @@ struct node {
       assert (children.size() <= max_supplies_per_level);
       if (children.size() >= desired_supplies_per_level) {
         require_parent();
-        return parent->next_sibling(this)->children.front();
+        return (node*)parent->require_next_sibling(this)->children.front();
       }
       else {
         node* new_sibling = new node();
@@ -430,13 +443,14 @@ struct node {
         new_sibling->supply_desired_size = existing_child->supply_desired_size;
         new_sibling->supply_current_size = new_sibling->supply_desired_size;
         new_sibling->supply_reserved = 0;
-        children.push_back();
+        children.push_back(new_sibling);
+        return new_sibling;
       }
     }
     else {
       for (auto i = children.begin(); i != children.end(); ++i) {
         if (*i == existing_child) {
-          return *boost::next(i);
+          return (node*)*boost::next(i);
         }
       }
       assert (false);
@@ -444,13 +458,13 @@ struct node {
   }
   void claim_from_supply(uint64_t amount, bool reserving = true) {
     if (reserving) {
-      assert (reserved >= amount);
-      reserved -= amount;
-      current_size -= amount;
+      assert (supply_reserved >= amount);
+      supply_reserved -= amount;
+      supply_current_size -= amount;
     }
     else {
-      reserved += amount;
-      current_size += amount;
+      supply_reserved += amount;
+      supply_current_size += amount;
     }
   }
   void join_refill_to_supply(bool reserving = true) {
@@ -488,21 +502,13 @@ struct node {
           next_refill_progress_emptying_supply = new_progress_emptying_supply;
         }
         
-        if (is_bottom_level()) {
-          if (children.back()->idx > supply_lower_bound->idx) {
-            node* new_child_parent = parent->require_next_sibling(this);
-            children.back()->parent = new_child_parent;
-            new_child_parent->children.push_front(children.back());
-            children.pop_back();
-          }
-        }
-        else {
-          if (children.back()->supply_lower_bound->idx > supply_lower_bound->idx) {
-            node* new_child_parent = parent->require_next_sibling(this);
-            children.back()->parent = new_child_parent;
-            new_child_parent->children.push_front(children.back());
-            children.pop_back();
-          }
+        const idx_type last_child_boundary_idx = is_bottom_level() ?
+          ((entry_base*)children.back())->idx : ((node*)children.back())->supply_lower_bound->idx;
+        if (last_child_boundary_idx > supply_lower_bound->idx) {
+          node* new_child_parent = parent->require_next_sibling(this);
+          children.back()->parent = new_child_parent;
+          new_child_parent->children.push_front(children.back());
+          children.pop_back();
         }
       }
       next_refill_lower_bound->idx += supply_desired_size;
@@ -521,19 +527,21 @@ struct node {
           next_refill_progress_emptying_supply = new_progress_emptying_supply;
         }
         
-        node* possible_new_child_parent = parent->next_sibling(this);
-        if (is_bottom_level()) {
-          if (possible_new_child_parent->children.front()->idx <= supply_lower_bound->idx) {
+        node* possible_new_child_parent = (node*)parent->next_sibling(this);
+        if (possible_new_child_parent) {
+          const idx_type first_child_boundary_idx = is_bottom_level() ?
+            ((entry_base*)possible_new_child_parent->children.front())->idx : ((node*)possible_new_child_parent->children.front())->supply_lower_bound->idx;
+          if (first_child_boundary_idx <= supply_lower_bound->idx) {
             possible_new_child_parent->children.front()->parent = this;
             children.push_back(possible_new_child_parent->children.front());
             possible_new_child_parent->children.pop_front();
-          }
-        }
-        else {
-          if (children.front()->supply_lower_bound->idx <= supply_lower_bound->idx) {
-            possible_new_child_parent->children.front()->parent = this;
-            children.push_back(possible_new_child_parent->children.front());
-            possible_new_child_parent->children.pop_front();
+            if (possible_new_child_parent->children.empty()) {
+              assert (possible_new_child_parent == parent->children.back());
+              delete possible_new_child_parent;
+              parent->children.pop_back();
+              assert (this == parent->children.back());
+              assert (parent->children.size() < desired_supplies_per_level);
+            }
           }
         }
       }
@@ -553,7 +561,7 @@ struct node {
         
       if (parent) {
         parent->reserve_one_from_supply();
-        if (current_size < supply_reserved) {
+        if (supply_current_size < supply_reserved) {
           join_refill_to_supply();
         }
         for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_progress_emptying_supply >= 0); ++i) {
@@ -568,13 +576,12 @@ struct node {
         for (uint32_t i = 0; (i < max_gap_speed) && (next_refill_lower_bound != parent->supply_lower_bound); ++i) {
           roll_refill_once(false);
         }
-        if (current_size-supply_reserved > supply_desired_size) {
+        if (supply_current_size-supply_reserved > supply_desired_size) {
           join_refill_to_supply(false);
         }
         parent->reserve_one_from_supply(false);
       
-        if (children.size() < desired_supplies_per_level) {
-          assert (parent->parent == nullptr);
+        if ((children.size() < desired_supplies_per_level) && (parent->parent == nullptr) && (parent->children.front() == this)) {
           assert (parent->children.size() == 1);
           delete parent;
           parent = nullptr;
@@ -591,6 +598,31 @@ struct node {
   }
 };
 
+entry_base* entry_base::prev() {
+  return (entry_base*)parent->prev_sibling(this);
+}
+entry_base* entry_base::next() {
+  return (entry_base*)parent->next_sibling(this);
+}
+void entry_base::put(entry_base* o, bool after) {
+  erase_from_parent();
+  category = o->category;
+  if (!o->parent) {
+    o->parent = new node(this);
+  }
+  o->parent->insert(this, o, after);
+}
+void entry_base::erase_from_parent() {
+  if (parent) {
+    parent->erase(this);
+    if ((parent->children.size() == 1) && (parent->parent == nullptr)) {
+      parent->children.front()->parent = nullptr;
+      delete parent;
+      parent = nullptr;
+    }
+  }
+}
+  
 // a manually_orderable is a non-threadsafe reference-counted smart pointer
 // that is LessThanComparable by a idx it stores next to the contents,
 // and EqualityComparable by the pointer.
@@ -603,11 +635,12 @@ struct entry : public entry_base {
   ValueType contents;
 };
 
+struct construct {};
 template<typename ValueType>
 struct manually_orderable {
 public:
   template <class... Args>
-  manually_orderable(Args&&... args):data(new entry<ValueType>(std::forward<Args>(args)...)){}
+  manually_orderable(construct, Args&&... args):data(new entry<ValueType>(std::forward<Args>(args)...)){ inc_ref(); }
   manually_orderable():data(nullptr){}
   manually_orderable(manually_orderable const& o):data(o.data) { inc_ref(); }
   template<typename OtherValueType>
@@ -615,11 +648,11 @@ public:
   
   template<typename OtherValueType>
   void put_before(manually_orderable<OtherValueType> const& o) {
-    data->put_before(o.data);
+    data->put(o.data, false);
   }
   template<typename OtherValueType>
   void put_after(manually_orderable<OtherValueType> const& o) {
-    data->put_after(o.data);
+    data->put(o.data, true);
   }
   
   template<typename OtherValueType>
@@ -660,25 +693,61 @@ private:
   }
   void dec_ref() {
     if (data && (--data->ref_count == 0)) {
+      data->erase_from_parent();
       delete data;
       data = nullptr;
     }
   }
   explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
   entry<ValueType>* data;
-  friend class manual_orderer<ValueType>;
   friend struct std::hash<manually_orderable>;
 };
 
+} // end namespace manual_orderer_impl
+
 namespace std {
   template<typename ValueType>
-  struct hash<typename manually_orderable<ValueType>> {
+  struct hash<manual_orderer_impl::manually_orderable<ValueType>> {
     public:
-    size_t operator()(manually_orderable<ValueType> const& i)const {
+    size_t operator()(manual_orderer_impl::manually_orderable<ValueType> const& i)const {
       // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
       return std::hash<decltype(i.data)>()(i.data);
     }
   };
 }
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by manually_orderable instead of the object itself.
+template<typename ValueType>
+class manual_orderer {
+public:
+  typedef manual_orderer_impl::manually_orderable<ValueType> manually_orderable;
+  typedef manually_orderable entry_ref;
+
+  // create a ValueType in the heap and an manually_orderable refcounted pointer
+  // to it.  It's not in the ordering until you put it there using one of
+  // this manual_orderer's put_*() methods.
+  template <class... Args>
+  manually_orderable construct(Args&&... args) {
+    // TODO: better allocator
+    return manually_orderable(manual_orderer_impl::construct(), std::forward<Args>(args)...);
+  }
+
+  // put_only puts the first object in the ordering; you can't use it
+  // after it's been called once
+  void put_only(manually_orderable) {}
+
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just prior to relative_to.
+  void put_before(manually_orderable moving, manually_orderable relative_to) {
+    moving.put_before(relative_to);
+  }
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just after relative_to.
+  void put_after(manually_orderable moving, manually_orderable relative_to) {
+    moving.put_after(relative_to);
+  }
+};
 
 #endif
