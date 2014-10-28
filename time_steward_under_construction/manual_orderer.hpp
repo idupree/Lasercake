@@ -382,18 +382,20 @@ struct node : public entry_or_node_base {
     if (next_refill_lower_bound == a) {
       next_refill_lower_bound = (entry_base*)children.back();
     }
+    claim_from_supply(1, false);
     reserve_one_from_supply(false);
   }
   void insert(entry_base* a, entry_base* existing_child, bool after) {
     assert (is_bottom_level());
     a->idx = existing_child->idx;
-    a->parent = this;
     reserve_one_from_supply();
+    claim_from_supply(1);
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ++i) {
       entry_base* e = (entry_base*)*i;
       if (found) { ++e->idx; }
       if (e == existing_child) {
+        a->parent = this;
         children.insert(after ? boost::next(i) : i, a);
         found = true;
         if (!after) { ++e->idx; }
@@ -411,11 +413,12 @@ struct node : public entry_or_node_base {
   entry_or_node_base* prev_sibling(entry_or_node_base* existing_child) {
     if (children.front() == existing_child) {
       if (parent) {
-        return ((node*)parent->prev_sibling(this))->children.back();
+        entry_or_node_base* prev = parent->prev_sibling(this);
+        if (prev) {
+          return ((node*)prev)->children.back();
+        }
       }
-      else {
-        return nullptr;
-      }
+      return nullptr;
     }
     else {
       for (auto i = children.begin(); i != children.end(); ++i) {
@@ -429,11 +432,12 @@ struct node : public entry_or_node_base {
   entry_or_node_base* next_sibling(entry_or_node_base* existing_child) {
     if (children.back() == existing_child) {
       if (parent) {
-        return ((node*)parent->prev_sibling(this))->children.front();
+        entry_or_node_base* next = parent->next_sibling(this);
+        if (next) {
+          return ((node*)next)->children.front();
+        }
       }
-      else {
-        return nullptr;
-      }
+      return nullptr;
     }
     else {
       for (auto i = children.begin(); i != children.end(); ++i) {
@@ -461,7 +465,7 @@ struct node : public entry_or_node_base {
       }
       else {
         node* new_sibling = new node(existing_child->supply_desired_size, existing_child->supply_lower_bound);
-        new_sibling.parent = this;
+        new_sibling->parent = this;
         children.push_back(new_sibling);
         return new_sibling;
       }
@@ -506,6 +510,9 @@ struct node : public entry_or_node_base {
     }
   }
   int64_t progress_emptying_supply() {
+    if (supply_desired_size < (1ULL<<level_size_shift)) {
+      return supply_lower_bound->idx & (supply_desired_size - 1);
+    }
     return supply_lower_bound->idx & (supply_desired_size - 1) & ~((supply_desired_size>>level_size_shift) - 1);
   }
   void roll_refill_once(bool reserving = true) {
@@ -513,8 +520,10 @@ struct node : public entry_or_node_base {
       assert (next_refill_lower_bound->idx >= supply_lower_bound->idx);
       if (next_refill_lower_bound == supply_lower_bound) {
         if (next_refill_progress_emptying_supply != supply_desired_size) { assert (next_refill_progress_emptying_supply == progress_emptying_supply()); }
-        supply_lower_bound = supply_lower_bound->prev();
         assert (supply_lower_bound);
+        entry_base* prev =  supply_lower_bound->prev();
+        assert (prev);
+        supply_lower_bound = prev;
         const int64_t new_progress_emptying_supply = progress_emptying_supply();
         if (new_progress_emptying_supply > next_refill_progress_emptying_supply) {
           next_refill_progress_emptying_supply = -1;
@@ -535,6 +544,7 @@ struct node : public entry_or_node_base {
       next_refill_lower_bound->idx += supply_desired_size;
       entry_base* next = next_refill_lower_bound->next();
       if (next) { assert (next_refill_lower_bound->idx < next->idx); }
+      assert (next_refill_lower_bound);
       entry_base* prev =  next_refill_lower_bound->prev();
       assert (prev);
       next_refill_lower_bound = prev;
@@ -619,7 +629,7 @@ struct node : public entry_or_node_base {
   void validate() {
     assert (supply_current_size >= supply_reserved);
     assert (children.size() <= max_supplies_per_level);
-    if (parent) { assert (parent->supply_lower_bound >= supply_lower_bound); }
+    if (parent) { assert (parent->supply_lower_bound->idx >= supply_lower_bound->idx); }
   }
 };
 
