@@ -22,6 +22,8 @@
 #ifndef LASERCAKE_MANUAL_ORDERER_HPP__
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
+#include <list>
+
 #if 0
 template<typename ValueType> class manual_orderer;
 namespace manual_orderer_impl {
@@ -300,8 +302,8 @@ const num_bits_type level_size_shift = 4;
 const uint64_t level_size = 1 << level_size_shift;
 const num_bits_type supply_size_shift = 2;
 const uint64_t supply_size = 1 << supply_size_shift;
-const uint32_t desired_supplies_per_level = (level_size-supply_size) / supply_size;
-const uint32_t max_supplies_per_level = level_size / supply_size;
+const uint32_t desired_supplies_per_level = level_size - supply_size;
+const uint32_t max_supplies_per_level = level_size;
 // In the time it takes us to use up a supply, move far enough to get all the way from its refill source
 // even if it's the first supply among the supplies_per_level supplies drawing from the same source.
 // max_gap_speed can be lenient
@@ -333,21 +335,29 @@ struct entry_base : public entry_or_node_base {
 struct node : public entry_or_node_base {
   node(entry_base* sole_child):
     supply_desired_size(supply_size),
-    supply_current_size(supply_desired_size),
-    supply_reserved(0),
-    next_refill_progress_emptying_supply(supply_desired_size),
+    supply_current_size(uint64_t(-1)),
+    supply_reserved(supply_desired_size),
+    next_refill_progress_emptying_supply(-1),
     children(),
     supply_lower_bound(sole_child),
     next_refill_lower_bound(sole_child)
   {
     children.push_back(sole_child);
   }
-  node(){}
+  node(uint64_t size, entry_base* end):
+    supply_desired_size(size),
+    supply_current_size(uint64_t(-1)),
+    supply_reserved(supply_desired_size),
+    next_refill_progress_emptying_supply(-1),
+    children(),
+    supply_lower_bound(end),
+    next_refill_lower_bound(end)
+  {}
   uint64_t supply_desired_size;
   uint64_t supply_current_size;
   uint64_t supply_reserved;
   int64_t next_refill_progress_emptying_supply;
-  std::deque<entry_or_node_base*> children;
+  std::list<entry_or_node_base*> children; // TODO better data structure
   entry_base* supply_lower_bound;
   entry_base* next_refill_lower_bound;
   
@@ -366,11 +376,18 @@ struct node : public entry_or_node_base {
         ++i;
       }
     }
+    if (supply_lower_bound == a) {
+      supply_lower_bound = (entry_base*)children.back();
+    }
+    if (next_refill_lower_bound == a) {
+      next_refill_lower_bound = (entry_base*)children.back();
+    }
     reserve_one_from_supply(false);
   }
   void insert(entry_base* a, entry_base* existing_child, bool after) {
     assert (is_bottom_level());
     a->idx = existing_child->idx;
+    a->parent = this;
     reserve_one_from_supply();
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ++i) {
@@ -381,6 +398,13 @@ struct node : public entry_or_node_base {
         found = true;
         if (!after) { ++e->idx; }
       }
+    }
+    if (supply_lower_bound->idx < ((entry_base*)children.back())->idx) {
+      assert (children.back() == a);
+      if (next_refill_lower_bound == supply_lower_bound) {
+        next_refill_lower_bound = a;
+      }
+      supply_lower_bound = a;
     }
   }
   
@@ -422,12 +446,10 @@ struct node : public entry_or_node_base {
   }
   void require_parent() {
     if (!parent) {
-      parent = new node();
-      parent->supply_lower_bound = supply_lower_bound;
-      parent->supply_desired_size = supply_desired_size << level_size_shift;
-      parent->supply_current_size = parent->supply_desired_size;
-      parent->supply_reserved = 0;
+      parent = new node(supply_desired_size << level_size_shift, supply_lower_bound);
       parent->children.push_back(this);
+      supply_current_size = supply_desired_size;
+      supply_reserved = supply_desired_size;
     }
   }
   node* require_next_sibling(node* existing_child) {
@@ -438,11 +460,8 @@ struct node : public entry_or_node_base {
         return (node*)parent->require_next_sibling(this)->children.front();
       }
       else {
-        node* new_sibling = new node();
-        new_sibling->supply_lower_bound = existing_child->supply_lower_bound;
-        new_sibling->supply_desired_size = existing_child->supply_desired_size;
-        new_sibling->supply_current_size = new_sibling->supply_desired_size;
-        new_sibling->supply_reserved = 0;
+        node* new_sibling = new node(existing_child->supply_desired_size, existing_child->supply_lower_bound);
+        new_sibling.parent = this;
         children.push_back(new_sibling);
         return new_sibling;
       }
@@ -491,9 +510,11 @@ struct node : public entry_or_node_base {
   }
   void roll_refill_once(bool reserving = true) {
     if (reserving) {
+      assert (next_refill_lower_bound->idx >= supply_lower_bound->idx);
       if (next_refill_lower_bound == supply_lower_bound) {
         if (next_refill_progress_emptying_supply != supply_desired_size) { assert (next_refill_progress_emptying_supply == progress_emptying_supply()); }
         supply_lower_bound = supply_lower_bound->prev();
+        assert (supply_lower_bound);
         const int64_t new_progress_emptying_supply = progress_emptying_supply();
         if (new_progress_emptying_supply > next_refill_progress_emptying_supply) {
           next_refill_progress_emptying_supply = -1;
@@ -512,8 +533,12 @@ struct node : public entry_or_node_base {
         }
       }
       next_refill_lower_bound->idx += supply_desired_size;
-      assert (next_refill_lower_bound->idx < next_refill_lower_bound->next()->idx);
-      next_refill_lower_bound = next_refill_lower_bound->prev();
+      entry_base* next = next_refill_lower_bound->next();
+      if (next) { assert (next_refill_lower_bound->idx < next->idx); }
+      entry_base* prev =  next_refill_lower_bound->prev();
+      assert (prev);
+      next_refill_lower_bound = prev;
+      assert (next_refill_lower_bound->idx >= supply_lower_bound->idx);
     }
     else {
       if (next_refill_progress_emptying_supply != supply_desired_size) {
