@@ -344,6 +344,7 @@ struct node : public entry_or_node_base {
   {
     children.push_back(sole_child);
   }
+private:
   node(uint64_t size, entry_base* end):
     supply_desired_size(size),
     supply_current_size(uint64_t(-1)),
@@ -357,12 +358,15 @@ struct node : public entry_or_node_base {
   uint64_t supply_current_size;
   uint64_t supply_reserved;
   int64_t next_refill_progress_emptying_supply;
+public:
   std::list<entry_or_node_base*> children; // TODO better data structure
+private:
   entry_base* supply_lower_bound;
   entry_base* next_refill_lower_bound;
   
-  bool is_bottom_level()const { return supply_desired_size == supply_size; }
+public:
   void erase(entry_base* a) {
+    validate();
     assert (is_bottom_level());
     bool found = false;
     for (auto i = children.begin(); i != children.end(); ) {
@@ -376,6 +380,7 @@ struct node : public entry_or_node_base {
         ++i;
       }
     }
+    assert (found);
     if (supply_lower_bound == a) {
       supply_lower_bound = (entry_base*)children.back();
     }
@@ -384,8 +389,10 @@ struct node : public entry_or_node_base {
     }
     claim_from_supply(1, false);
     reserve_one_from_supply(false);
+    validate();
   }
   void insert(entry_base* a, entry_base* existing_child, bool after) {
+    validate();
     assert (is_bottom_level());
     a->idx = existing_child->idx;
     reserve_one_from_supply();
@@ -401,6 +408,7 @@ struct node : public entry_or_node_base {
         if (!after) { ++e->idx; }
       }
     }
+    assert (found);
     if (supply_lower_bound->idx < ((entry_base*)children.back())->idx) {
       assert (children.back() == a);
       if (next_refill_lower_bound == supply_lower_bound) {
@@ -408,8 +416,8 @@ struct node : public entry_or_node_base {
       }
       supply_lower_bound = a;
     }
+    validate();
   }
-  
   entry_or_node_base* prev_sibling(entry_or_node_base* existing_child) {
     if (children.front() == existing_child) {
       if (parent) {
@@ -448,6 +456,8 @@ struct node : public entry_or_node_base {
       assert (false);
     }
   }
+private:
+  bool is_bottom_level()const { return supply_desired_size == supply_size; }
   void require_parent() {
     if (!parent) {
       parent = new node(supply_desired_size << level_size_shift, supply_lower_bound);
@@ -537,8 +547,13 @@ struct node : public entry_or_node_base {
         if (last_child_boundary_idx > supply_lower_bound->idx) {
           node* new_child_parent = parent->require_next_sibling(this);
           children.back()->parent = new_child_parent;
+          if (new_child_parent->children.empty()) {
+            new_child_parent->supply_lower_bound = (entry_base*)children.back();
+            new_child_parent->next_refill_lower_bound = (entry_base*)children.back();
+          }
           new_child_parent->children.push_front(children.back());
           children.pop_back();
+          new_child_parent->validate();
         }
       }
       next_refill_lower_bound->idx += supply_desired_size;
@@ -564,6 +579,7 @@ struct node : public entry_or_node_base {
         
         node* possible_new_child_parent = (node*)parent->next_sibling(this);
         if (possible_new_child_parent) {
+          possible_new_child_parent->validate();
           const idx_type first_child_boundary_idx = is_bottom_level() ?
             ((entry_base*)possible_new_child_parent->children.front())->idx : ((node*)possible_new_child_parent->children.front())->supply_lower_bound->idx;
           if (first_child_boundary_idx <= supply_lower_bound->idx) {
@@ -576,6 +592,9 @@ struct node : public entry_or_node_base {
               parent->children.pop_back();
               assert (this == parent->children.back());
               assert (parent->children.size() < desired_supplies_per_level);
+            }
+            else {
+              possible_new_child_parent->validate();
             }
           }
         }
@@ -630,6 +649,17 @@ struct node : public entry_or_node_base {
     assert (supply_current_size >= supply_reserved);
     assert (children.size() <= max_supplies_per_level);
     if (parent) { assert (parent->supply_lower_bound->idx >= supply_lower_bound->idx); }
+    assert (supply_lower_bound->idx <= next_refill_lower_bound->idx);
+    for (auto child : children) { assert(child->parent == this); }
+    assert (!children.empty());
+    if (is_bottom_level()) {
+      idx_type i = 0;
+      for (auto child : children) {
+        assert(child == children.front() || ((entry_base*)child)->idx > i);
+        i = ((entry_base*)child)->idx;
+      }
+      assert (supply_lower_bound->idx >= i);
+    }
   }
 };
 
@@ -643,7 +673,7 @@ void entry_base::put(entry_base* o, bool after) {
   erase_from_parent();
   category = o->category;
   if (!o->parent) {
-    o->parent = new node(this);
+    o->parent = new node(o);
   }
   o->parent->insert(this, o, after);
 }
@@ -653,8 +683,8 @@ void entry_base::erase_from_parent() {
     if ((parent->children.size() == 1) && (parent->parent == nullptr)) {
       parent->children.front()->parent = nullptr;
       delete parent;
-      parent = nullptr;
     }
+    parent = nullptr;
   }
 }
   
