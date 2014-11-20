@@ -24,7 +24,7 @@
 
 #include <list>
 
-#if 0
+#ifndef WORST_CASE_MANUAL_ORDERER
 template<typename ValueType> class manual_orderer;
 namespace manual_orderer_impl {
 typedef uint64_t idx_type;
@@ -290,7 +290,7 @@ namespace std {
     }
   };
 }
-#endif
+#else
 
 namespace manual_orderer_impl {
 // O(log n) amortized, maybe O(log^2 n) worst case?
@@ -814,5 +814,6 @@ public:
     moving.put_after(relative_to);
   }
 };
+#endif
 
 #endif

@@ -209,6 +209,28 @@ in a rocket
  Some possibilities for improvement:
  - Have a way to discard some of the old data to save memory (at the price of needing extra processing time if/when we go back.)
  - Make time_steward itself a persistent data structure.
+ 
+ 
+ 
+ 
+ 
+ When an event happens:
+ 
+ A callback determines entity field accesses, entity field changes, and trigger changes.
+ Triggers watching the changed fields also trigger.
+ 
+ List of all past information contributing to this (we must catch every change in these things to update what happens):
+ The state of each accessed field
+ Whether each trigger was watching each modified field
+ If this is a trigger, what its event func is
+ 
+ List of all future information changed by this:
+ The state of each changed field
+ If this is a trigger, what fields it's watching
+ For each changed trigger, what its event func is
+ 
+ 
+ 
  */
 
 
@@ -721,6 +743,37 @@ private:
   };
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
+  template<typename FieldID, typename... Ext>
+  field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
+    return entities[id].fields.template get<FieldID>(ext...);
+  }
+  template<typename FieldID>
+  std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
+  get_field_throughout_time(entity_field_id const& id) {
+    return get_field_throughout_time<FieldID>(id.e            );
+  }
+  template<typename FieldID>
+  std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
+  get_field_throughout_time(entity_field_id const& id) {
+    return get_field_throughout_time<FieldID>(id.e, id.f.which);
+  }
+  field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
+    return field_metadata[id];
+  }
+  
+  typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
+  typedef std::unordered_map<entity_field_id, field_metadata_throughout_time> field_metadata_map;
+  // The events map doesn't need to be ordered (even though it has a meaningful order)
+  // because it's just for looking up events whose times we know.
+  typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
+  
+  entities_map entities;
+  field_metadata_map field_metadata;
+  event_piles_map event_piles;
+  std::set<extended_time> event_piles_needing_execution;
+  std::set<extended_time> event_piles_needing_unexecution;
+  std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
+  
   void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
     // with undoing==false: Either a trigger was created/replaced, or an entity a trigger-call accessed changed.
     //   We need to do two things:
@@ -882,36 +935,42 @@ private:
       f.erase(i);
     }
   };
-  std::pair<const extended_time, trigger_call_info>* next_executed_trigger_call(trigger_id tid, extended_time time) {
-    auto& trigger_info = triggers[tid];
+  std::pair<const extended_time, trigger_call_info> const* next_executed_trigger_call(trigger_id tid, extended_time time)const {
+    const auto trigger_info_iter = triggers.find(tid);
+    if (trigger_info_iter == triggers.end()) { return nullptr; }
+    auto& trigger_info = trigger_info_iter->second;
     auto next_call_iter = trigger_info.upper_bound(time);
     while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.has_been_executed) {++next_call_iter;} // TODO: asymptotics?
     if (next_call_iter == trigger_info.end()) { return nullptr; }
     return &*next_call_iter;
   }
-  std::pair<const extended_time, trigger_call_info>* last_executed_trigger_call(trigger_id tid, extended_time time) {
-    auto& trigger_info = triggers[tid];
+  std::pair<const extended_time, trigger_call_info> const* last_executed_trigger_call(trigger_id tid, extended_time time)const {
+    const auto trigger_info_iter = triggers.find(tid);
+    if (trigger_info_iter == triggers.end()) { return nullptr; }
+    auto& trigger_info = trigger_info_iter->second;
     auto last_call_iter = trigger_info.lower_bound(time);
-    if (last_call_iter != trigger_info.begin()) { --last_call_iter; }
-    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(last_call_iter->first)->second.has_been_executed) {--last_call_iter;} // TODO: asymptotics?
+    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.has_been_executed) {--last_call_iter;} // TODO: asymptotics?
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
-    return &*last_call_iter;
+    return &*boost::prior(last_call_iter);
   }
-  std::pair<const extended_time, trigger_call_info>* next_scheduled_trigger_call(trigger_id tid, extended_time time) {
-    auto& trigger_info = triggers[tid];
+  std::pair<const extended_time, trigger_call_info> const* next_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+    const auto trigger_info_iter = triggers.find(tid);
+    if (trigger_info_iter == triggers.end()) { return nullptr; }
+    auto& trigger_info = trigger_info_iter->second;
     auto next_call_iter = trigger_info.upper_bound(time);
     while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.instigating_event) {++next_call_iter;} // TODO: asymptotics?
     if (next_call_iter == trigger_info.end()) { return nullptr; }
     return &*next_call_iter;
     
   }
-  std::pair<const extended_time, trigger_call_info>* last_scheduled_trigger_call(trigger_id tid, extended_time time) {
-    auto& trigger_info = triggers[tid];
+  std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+    const auto trigger_info_iter = triggers.find(tid);
+    if (trigger_info_iter == triggers.end()) { return nullptr; }
+    auto& trigger_info = trigger_info_iter->second;
     auto last_call_iter = trigger_info.lower_bound(time);
-    if (last_call_iter != trigger_info.begin()) { --last_call_iter; }
-    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(last_call_iter->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
+    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
-    return &*last_call_iter;
+    return &*boost::prior(last_call_iter);
   }
   void delete_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid) {
     update_trigger_access_record(id, time, tid, bool(), true);
@@ -961,31 +1020,6 @@ private:
   /*static*/ const fields_list_impl::function_array<entity_fields, copy_field_change_from_accessor> copy_field_change_from_accessor_funcs;
   /*static*/ const fields_list_impl::function_array<entity_fields, undo_field_change> undo_field_change_funcs;
   /*static*/ const fields_list_impl::function_array<entity_fields, update_future_trigger_calls> update_future_trigger_calls_funcs;
-  
-  // The events map doesn't need to be ordered (even though it has a meaningful order)
-  // because it's just for looking up events whose times we know.
-  typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
-  typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
-  typedef std::unordered_map<entity_field_id, field_metadata_throughout_time> field_metadata_map;
-  entities_map entities;
-  field_metadata_map field_metadata;
-  template<typename FieldID, typename... Ext>
-  field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
-    return entities[id].fields.template get<FieldID>(ext...);
-  }
-  template<typename FieldID>
-  std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
-  get_field_throughout_time(entity_field_id const& id) {
-    return get_field_throughout_time<FieldID>(id.e            );
-  }
-  template<typename FieldID>
-  std::enable_if_t< fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
-  get_field_throughout_time(entity_field_id const& id) {
-    return get_field_throughout_time<FieldID>(id.e, id.f.which);
-  }
-  field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
-    return field_metadata[id];
-  }
 public:
   time_steward() {}
   
@@ -1072,10 +1106,68 @@ public:
 private:
   void debug__check_equivalence_one_sided(time_steward const& /*other*/)const {
   }
-  event_piles_map event_piles;
-  std::set<extended_time> event_piles_needing_execution;
-  std::set<extended_time> event_piles_needing_unexecution;
-  std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
+  void validate()const {
+//   entities_map entities;
+//   field_metadata_map field_metadata;
+    for (auto const& t : event_piles_needing_execution) {
+      assert (event_piles.find(t) != event_piles.end());
+    }
+    for (auto const& t : event_piles_needing_unexecution) {
+      assert (event_piles.find(t) != event_piles.end());
+    }
+    for (auto const& p : triggers) {
+      for (auto const& p2 : p.second) {
+        assert (event_piles.find(p2.first) != event_piles.end());
+      }
+    }
+    for (auto const& p : field_metadata) {
+      for (auto const& p2 : p.second.event_piles_which_accessed_this) {
+        const auto e = event_piles.find(p2);
+        assert (e != event_piles.end());
+        assert (e->second.entity_fields_pile_accessed.find(p.first) != e->second.entity_fields_pile_accessed.end());
+      }
+    }
+    for (auto const& p : event_piles) {
+      if (p.second.has_been_executed) {
+        if (!p.second.should_be_executed()) {
+          assert (event_piles_needing_unexecution.find(p.first) != event_piles_needing_unexecution.end());
+          assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
+        }
+      }
+      else {
+        assert (p.second.entity_fields_pile_accessed.empty());
+        assert (p.second.entity_fields_pile_modified.empty());
+        assert (p.second.triggers_changed.empty());
+        assert (p.second.anticipated_events.empty());
+        if (p.second.should_be_executed()) {
+          assert (event_piles_needing_execution.find(p.first) != event_piles_needing_execution.end());
+        }
+        else {
+          assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
+        }
+        assert (event_piles_needing_unexecution.find(p.first) == event_piles_needing_unexecution.end());
+//     std::shared_ptr<const event> instigating_event;
+//     trigger_id tid;
+//     std::unordered_set<entity_field_id> entity_fields_pile_accessed;
+//     std::vector<entity_field_id> entity_fields_pile_modified;
+//     std::vector<trigger_id> triggers_changed;
+//     std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
+//     bool creation_cut_off;
+//     bool has_been_executed;
+//     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
+      }
+      if (p.second.tid && p.second.instigating_event) {
+        auto const& trigger_info = triggers.find(p.second.tid)->second;
+        auto const& t = trigger_info.find(p.first);
+        assert (t != trigger_info.end());
+        assert (t->second.field_changes_andor_creations_triggering_this > 0); // otherwise !p.second.instigating_event
+      }
+      for (auto id : p.second.entity_fields_pile_accessed) {
+        auto const& f = field_metadata.find(id)->second;
+        assert (f.event_piles_which_accessed_this.find(p.first) != f.event_piles_which_accessed_this.end());
+      }
+    }
+  }
   
   void update_through_time(extended_time time) {
     while (!is_updated_through(time)) {
@@ -1142,6 +1234,7 @@ private:
   // If you execute a change that won't actually happen, it will just end
   // up getting invalidated later.
   void execute_event_pile(extended_time time) {
+    validate();
     const auto event_pile_iter = event_piles.find(time);
     assert(event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
@@ -1154,6 +1247,18 @@ private:
     //if (event_pile_deleted_for_being_out_of_date) return;
     assert (!pile_info.has_been_executed);
     assert (pile_info.should_be_executed());
+    
+    if (pile_info.tid) {
+      auto const& trigger_info = triggers.find(pile_info.tid)->second;
+      auto const& t = trigger_info.find(time);
+      assert (t != trigger_info.end());
+      if (!t->second.replaced) {
+        const auto c = last_scheduled_trigger_call(pile_info.tid, time);
+        assert (c);
+        const auto d = event_piles.find(c->first)->second;
+        assert (d.instigating_event == pile_info.instigating_event);
+      }
+    }
     
     if (pile_info.should_be_executed()) {
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
@@ -1216,6 +1321,7 @@ private:
     
     pile_info.has_been_executed = true;
     event_piles_needing_execution.erase(time);
+    validate();
   }
   
   // In essence, this just forgets the consequences of how a
@@ -1225,6 +1331,7 @@ private:
   // with bogus values will change us from valid to invalid),
   // because if you undo anything, it's slated to be redone.
   bool unexecute_event_pile(extended_time time) {
+    validate();
     const auto event_pile_iter = event_piles.find(time);
     assert (event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
@@ -1272,8 +1379,10 @@ private:
     }
     if (!pile_info.instigating_event) {
       event_piles.erase(event_pile_iter);
+      validate();
       return true;
     }
+    validate();
     return false;
   }
 };
