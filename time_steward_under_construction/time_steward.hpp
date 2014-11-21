@@ -787,7 +787,7 @@ private:
     // if we're IN a trigger call, we still want to trigger it again,
     // so it still needs to have its anticipated events cut off.
     const auto cut_off_call_ptr = (this_call_iter == trigger_info.end()) ? last_scheduled_trigger_call(tid, field_change_andor_creation_time) : &*this_call_iter;
-    const auto next_call_ptr = next_scheduled_trigger_call(tid, field_change_andor_creation_time);
+    auto next_call_ptr = next_scheduled_trigger_call(tid, field_change_andor_creation_time);
     const extended_time new_trigger_call_time = make_extended_time::trigger_call_time(tid, field_change_andor_creation_time);
     
     if (undoing) {
@@ -815,6 +815,7 @@ private:
       if (i->second.field_changes_andor_creations_triggering_this == 0) {
         trigger_info.erase(i);
         erase_instigating_event(new_trigger_call_time);
+        next_call_ptr = next_scheduled_trigger_call(tid, field_change_andor_creation_time);
       }
     }
     
@@ -1076,8 +1077,11 @@ public:
         if (next_iter == event_piles_needing_unexecution.end()) { break; }
         iter = next_iter;
       }
-      if (unexecute) { unexecute_event_pile(*iter); }
-      else           {   execute_event_pile(*iter); }
+      assert (iter != event_piles_needing_execution.end());
+      assert (iter != event_piles_needing_unexecution.end());
+      const extended_time t = *iter;
+      if (unexecute) { unexecute_event_pile(t); }
+      else           {   execute_event_pile(t); }
     }
   }
   void debug__check_equivalence(time_steward const& other)const {
@@ -1107,8 +1111,6 @@ private:
   void debug__check_equivalence_one_sided(time_steward const& /*other*/)const {
   }
   void validate()const {
-//   entities_map entities;
-//   field_metadata_map field_metadata;
     for (auto const& t : event_piles_needing_execution) {
       assert (event_piles.find(t) != event_piles.end());
     }
@@ -1117,7 +1119,9 @@ private:
     }
     for (auto const& p : triggers) {
       for (auto const& p2 : p.second) {
-        assert (event_piles.find(p2.first) != event_piles.end());
+        const auto e = event_piles.find(p2.first);
+        assert (e != event_piles.end());
+        assert (e->second.tid == p.first);
       }
     }
     for (auto const& p : field_metadata) {
@@ -1146,25 +1150,55 @@ private:
           assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
         }
         assert (event_piles_needing_unexecution.find(p.first) == event_piles_needing_unexecution.end());
-//     std::shared_ptr<const event> instigating_event;
-//     trigger_id tid;
-//     std::unordered_set<entity_field_id> entity_fields_pile_accessed;
-//     std::vector<entity_field_id> entity_fields_pile_modified;
-//     std::vector<trigger_id> triggers_changed;
-//     std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
-//     bool creation_cut_off;
-//     bool has_been_executed;
-//     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
       }
-      if (p.second.tid && p.second.instigating_event) {
-        auto const& trigger_info = triggers.find(p.second.tid)->second;
-        auto const& t = trigger_info.find(p.first);
-        assert (t != trigger_info.end());
-        assert (t->second.field_changes_andor_creations_triggering_this > 0); // otherwise !p.second.instigating_event
+      if (!p.second.tid) {
+        assert (p.second.anticipated_events.empty());
+      }
+      else {
+        if (p.second.instigating_event) {
+          auto const& trigger_info = triggers.find(p.second.tid)->second;
+          auto const& t = trigger_info.find(p.first);
+          assert (t != trigger_info.end());
+          assert (t->second.field_changes_andor_creations_triggering_this > 0); // otherwise !p.second.instigating_event
+          // TODO: check that t->second.field_changes_andor_creations_triggering_this
+          // is actually the same as the number of things triggering it
+          const auto next_call_ptr = next_scheduled_trigger_call(p.second.tid, p.first);
+          for (auto et : p.second.anticipated_events) {
+            const auto e = event_piles.find(et);
+            assert (e != event_piles.end());
+            if (next_call_ptr && (et > next_call_ptr->first)) {
+              assert (e->second.creation_cut_off);
+            }
+            else {
+              assert (!e->second.creation_cut_off);
+            }
+          }
+        }
       }
       for (auto id : p.second.entity_fields_pile_accessed) {
         auto const& f = field_metadata.find(id)->second;
         assert (f.event_piles_which_accessed_this.find(p.first) != f.event_piles_which_accessed_this.end());
+      }
+      for (auto id : p.second.entity_fields_pile_modified) {
+        auto const& f = field_metadata.find(id)->second;
+        for (auto v : f.triggers_pointing_at_this.range_containing(p.first)) {
+          // bidirectional_interval_map acts as if its intervals are closed intervals but we treat them as right-open ones.
+          // if a trigger checks a field and then changes it, it retriggers itself.
+          // if it changes the field without checking it, it doesn't, even if its previous iteration checked that field.
+          if (v.interval.bounds[1] > p.first) {
+            const auto when_trigger_called = make_extended_time::trigger_call_time(v.key, p.first);
+            const auto e = event_piles.find(when_trigger_called);
+            assert (e != event_piles.end());
+            assert (e->second.instigating_event);
+          }
+        }
+        // TODO that the change exists (need another template func)
+      }
+      for (auto tid : p.second.triggers_changed) {
+        const auto when_trigger_called = make_extended_time::trigger_call_time(tid, p.first);
+        const auto e = event_piles.find(when_trigger_called);
+        assert (e != event_piles.end());
+        assert (e->second.instigating_event);
       }
     }
   }
@@ -1200,11 +1234,11 @@ private:
   }
   
   void insert_instigating_event(extended_time time, event_pile_info const& e) {
-    if (event_piles_needing_unexecution.find(time) != event_piles_needing_unexecution.end()) {
+    /*if (event_piles_needing_unexecution.find(time) != event_piles_needing_unexecution.end()) {
       // TODO: is it safe to unexecute an event in the future during execute_event_pile?
       const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(time);
       assert (event_pile_deleted_for_being_out_of_date);
-    }
+    }*/
     
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
@@ -1264,6 +1298,25 @@ private:
       // Let's be very explicit about how long the accessor, which is a bit of a hack, is allowed to exist.
       accessor a(this, time, pile_info.tid);
       a.process_event(pile_info.instigating_event.get());
+      
+      // We might create events (triggers that trigger now, and anticipated_events).
+      // Out-of-date versions of those events need to be cleared before we start applying any of the new changes.
+      extended_time after_all_triggers = make_extended_time::max_child(time);
+      while ((!event_piles_needing_unexecution.empty()) && (*event_piles_needing_unexecution.begin() < after_all_triggers)) {
+        unexecute_event_pile(*event_piles_needing_unexecution.begin());
+      }
+      bool done = false;
+      while (!done) {
+        // TODO: more efficient?
+        done = true;
+        for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
+          if (event_piles_needing_unexecution.find(ev.first) != event_piles_needing_unexecution.end()) {
+            const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(ev.first);
+            assert (event_pile_deleted_for_being_out_of_date);
+            done = false;
+          }
+        }
+      }
       
       // Order is important: We must update a field's triggers_pointing_at_this record
       //   before calling update_triggers on it.

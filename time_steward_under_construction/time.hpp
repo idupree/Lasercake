@@ -109,17 +109,12 @@ public:
   static extended_time max_time() {
     return get_base_time_root(max_base_time);
   }
+  static extended_time max_child(extended_time t) {
+    return require_sentinel_child(t);
+  }
   static extended_time base_time_end(time_type t) {
     extended_time root = get_base_time_root(t);
-    if (!root->children) {
-      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
-      root->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
-      const extended_time sentinel = all_extended_times().construct(t, siphash_id::greatest());
-      all_extended_times().put_after(sentinel, root);
-      root->children->insert(sentinel);
-      return sentinel;
-    }
-    return *boost::prior(root->children->end());
+    return require_sentinel_child(root);
   }
 private:
   struct sort_extended_times_by_base_time {
@@ -133,11 +128,22 @@ private:
   static std::set<extended_time, sort_extended_times_by_base_time>& base_time_roots() {
     static std::set<extended_time, sort_extended_times_by_base_time> a; return a;
   }
+  static extended_time require_sentinel_child(extended_time t) {
+    if (!t->children) {
+      // create a sentinel with no children at the end
+      t->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
+      const extended_time sentinel = all_extended_times().construct(t->base_time, siphash_id::greatest());
+      all_extended_times().put_after(sentinel, t);
+      t->children->insert(sentinel);
+      return sentinel;
+    }
+    return *boost::prior(t->children->end());
+  }
   
   static extended_time get_base_time_root(time_type t) {
     if (base_time_roots().empty()) {
       // create a sentinel with no children at the end
-      // time_type() is a hack - without it, compiler tries to pass max_time as reference and gets undefined reference
+      // time_type() is a hack - without it, compiler tries to pass max_base_time as reference and gets undefined reference
       const extended_time sentinel = all_extended_times().construct(time_type(max_base_time));
       all_extended_times().put_only(sentinel);
       base_time_roots().insert(sentinel);
@@ -152,13 +158,7 @@ private:
   }
   template <class... Args>
   static extended_time make_extended_time_impl(extended_time parent, Args&&... args) {
-    if (!parent->children) {
-      // create a sentinel with no children at the end - TODO reduce duplicate code ID GszZcyzY/wwUQg
-      parent->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
-      const extended_time sentinel = all_extended_times().construct(parent->base_time, siphash_id::greatest());
-      all_extended_times().put_after(sentinel, parent);
-      parent->children->insert(sentinel);
-    }
+    require_sentinel_child(parent);
     const extended_time result = all_extended_times().construct(parent->base_time, std::forward<Args>(args)...);
     const auto i = parent->children->lower_bound(result);
     assert(i != parent->children->end());
