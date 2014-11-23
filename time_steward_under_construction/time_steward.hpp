@@ -588,7 +588,6 @@ public:
   inline field_data<entity_fields, FieldID>& set(entity_ref e, siphash_id which, field_data<entity_fields, FieldID> new_contents) { return set_impl<FieldID>(e, new_contents, which); }
   
   void anticipate_event(time_type when, std::shared_ptr<const event> e) {
-    caller_correct_if(bool(trigger_id_), "Only triggers can anticipate events");
     caller_correct_if(when >= time_->base_time, "You can't anticipate an event in the past");
     const extended_time ext_when = (when == time_->base_time) ?
       TimeSteward::make_extended_time::event_time(time_, create_id()) :
@@ -1159,10 +1158,14 @@ private:
         }
         assert (event_piles_needing_unexecution.find(p.first) == event_piles_needing_unexecution.end());
       }
-      if (!p.second.tid) {
-        assert (p.second.anticipated_events.empty());
+      for (auto et : p.second.anticipated_events) {
+        const auto e = event_piles.find(et);
+        assert (e != event_piles.end());
+        if (!p.second.tid) {
+          assert (!e->second.creation_cut_off);
+        }
       }
-      else {
+      if (p.second.tid) {
         if (p.second.instigating_event) {
           auto const& trigger_info = triggers.find(p.second.tid)->second;
           auto const& t = trigger_info.find(p.first);
@@ -1173,7 +1176,6 @@ private:
           const auto next_call_ptr = next_scheduled_trigger_call(p.second.tid, p.first);
           for (auto et : p.second.anticipated_events) {
             const auto e = event_piles.find(et);
-            assert (e != event_piles.end());
             if (next_call_ptr && (et > next_call_ptr->first)) {
               assert (e->second.creation_cut_off);
             }
@@ -1343,23 +1345,23 @@ private:
           update_trigger_access_record(id, time, pile_info.tid, false);
         }
       }
+      std::pair<const extended_time, trigger_call_info> const* next_call_ptr;
       if (pile_info.tid) {
-        auto const& trigger_info = triggers.find(pile_info.tid)->second;
-        const auto call_iter = trigger_info.find(time);
-        assert (call_iter != trigger_info.end());
-        auto next_call_ptr = next_scheduled_trigger_call(pile_info.tid, time);
-        for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
-          const auto p = pile_info.anticipated_events.insert(ev.first);
-          assert (p.second);
-          event_pile_info e(ev.second);
-          if (next_call_ptr) {
-            assert (ev.first != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
-            if (ev.first > next_call_ptr->first) {
-              e.creation_cut_off = true;
-            }
+        next_call_ptr = next_scheduled_trigger_call(pile_info.tid, time);
+      }
+      for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
+        const auto p = pile_info.anticipated_events.insert(ev.first);
+        assert (p.second);
+        event_pile_info e(ev.second);
+        if (next_call_ptr) {
+          assert (ev.first != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
+          if (ev.first > next_call_ptr->first) {
+            e.creation_cut_off = true;
           }
-          insert_instigating_event(ev.first, e);
         }
+        insert_instigating_event(ev.first, e);
+      }
+      if (pile_info.tid) {
         const auto last_call_ptr = last_executed_trigger_call(pile_info.tid, time);
         if (last_call_ptr) {
           const extended_time last_call_time = last_call_ptr->first;
@@ -1421,11 +1423,11 @@ private:
           }
         }
       }
-      for (extended_time t : pile_info.anticipated_events) {
-        erase_instigating_event(t);
-      }
-      pile_info.anticipated_events.clear();
     }
+    for (extended_time t : pile_info.anticipated_events) {
+      erase_instigating_event(t);
+    }
+    pile_info.anticipated_events.clear();
     for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
       auto& metadata = get_field_metadata_throughout_time(id);
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
