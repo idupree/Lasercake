@@ -1095,12 +1095,12 @@ public:
     std::unordered_set<siphash_id> time_ids0;
     std::unordered_set<siphash_id> time_ids1;
     for (auto const& p : event_piles) {
-      if (is_updated_through(p.first)) {
+      if (is_updated_through(p.first) && other.is_updated_through(p.first)) {
         time_ids0.insert(p.first->id);
       }
     }
     for (auto const& p : other.event_piles) {
-      if (other.is_updated_through(p.first)) {
+      if (is_updated_through(p.first) && other.is_updated_through(p.first)) {
         time_ids1.insert(p.first->id);
       }
     }
