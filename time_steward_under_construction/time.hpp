@@ -109,7 +109,8 @@ public:
   static extended_time max_time() {
     return get_base_time_root(max_base_time);
   }
-  static extended_time max_child(extended_time t) {
+  static extended_time after_all_calls_triggered_at(extended_time when_triggered) {
+    const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
     return require_sentinel_child(t);
   }
   static extended_time base_time_end(time_type t) {

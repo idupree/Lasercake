@@ -774,6 +774,44 @@ private:
   std::set<extended_time> event_piles_needing_unexecution;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
   
+  void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time new_trigger_call_time) {
+    const auto cut_off_call_ptr = last_scheduled_trigger_call(tid, new_trigger_call_time);
+    if (cut_off_call_ptr) {
+      const auto next_call_ptr = next_scheduled_trigger_call(tid, new_trigger_call_time);
+      const auto cut_off_pile_iter = event_piles.find(cut_off_call_ptr->first);
+      assert(cut_off_pile_iter != event_piles.end());
+      auto const& cut_off_pile_info = cut_off_pile_iter->second;
+      for (auto i = cut_off_pile_info.anticipated_events.upper_bound(new_trigger_call_time); // upper vs lower shouldn't matter: triggers are never anticipated events
+                i != cut_off_pile_info.anticipated_events.end(); ++i) {
+        const auto pile_iter = event_piles.find(*i);
+        assert(pile_iter != event_piles.end());
+        auto& pile_info = pile_iter->second;
+        if (next_call_ptr) {
+          assert (*i != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
+          if (*i > next_call_ptr->first) {
+            // We can skip these because they are cut off by the later trigger regardless.
+            assert (pile_info.creation_cut_off == true);
+            // TODO uncomment:
+            //break;
+            continue;
+          }
+        }
+        if (undoing) {
+          assert (pile_info.creation_cut_off == true);
+          pile_info.creation_cut_off = false;
+          assert (pile_info.should_be_executed());
+          if (pile_info.has_been_executed) { /*could've been invalidated, so no. event_piles_needing_unexecution.erase (*i);*/ }
+          else                             { event_piles_needing_execution  .insert(*i); }
+        }
+        else {
+          assert (pile_info.creation_cut_off == false);
+          pile_info.creation_cut_off = true;
+          if (pile_info.has_been_executed) { event_piles_needing_unexecution.insert(*i); }
+          else                             { event_piles_needing_execution  .erase (*i); }
+        }
+      }
+    }
+  }
   void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
     // with undoing==false: Either a trigger was created/replaced, or an entity a trigger-call accessed changed.
     //   We need to do two things:
@@ -782,85 +820,20 @@ private:
     // We do (2), then (1).
     // Note that with undoing==true, we need to do the parts in the opposite order (undo 1, then undo 2).
     trigger_throughout_time_info& trigger_info = triggers[tid];
-    std::shared_ptr<const trigger> old_trigger;
-    const auto this_call_iter = trigger_info.find(field_change_andor_creation_time);
-    // if we're IN a trigger call, we still want to trigger it again,
-    // so it still needs to have its anticipated events cut off.
-    const auto cut_off_call_ptr = (this_call_iter == trigger_info.end()) ? last_scheduled_trigger_call(tid, field_change_andor_creation_time) : &*this_call_iter;
-    auto next_call_ptr = next_scheduled_trigger_call(tid, field_change_andor_creation_time);
     const extended_time new_trigger_call_time = make_extended_time::trigger_call_time(tid, field_change_andor_creation_time);
     
-    if (undoing) {
-      const auto i = trigger_info.find(new_trigger_call_time);
-      assert(i != trigger_info.end());
-      assert(&*i == next_call_ptr);
-      const auto pile_iter = event_piles.find(i->first);
-      assert(pile_iter != event_piles.end());
-      new_trigger = pile_iter->second.instigating_event;
-      if (force_trigger_change) {
-        const auto cut_off_pile_iter = event_piles.find(cut_off_call_ptr->first);
-        assert(cut_off_pile_iter != event_piles.end());
-        old_trigger = cut_off_pile_iter->second.instigating_event;
-        if (new_trigger != old_trigger) {
-          for (auto j = boost::next(i); (j != trigger_info.end()) && (!j->second.replaced); ++j) {
-            const auto pile_iter = event_piles.find(j->first);
-            assert (pile_iter != event_piles.end());
-            assert (pile_iter->second.instigating_event == new_trigger);
-            pile_iter->second.instigating_event = old_trigger;
-            if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
-          }
-        }
-      }
-      --i->second.field_changes_andor_creations_triggering_this;
-      if (i->second.field_changes_andor_creations_triggering_this == 0) {
-        trigger_info.erase(i);
-        erase_instigating_event(new_trigger_call_time);
-        next_call_ptr = next_scheduled_trigger_call(tid, field_change_andor_creation_time);
-      }
-    }
-    
-    if (cut_off_call_ptr) {
-      const auto cut_off_pile_iter = event_piles.find(cut_off_call_ptr->first);
-      assert(cut_off_pile_iter != event_piles.end());
-      old_trigger = cut_off_pile_iter->second.instigating_event;
-      for (auto i = cut_off_pile_iter->second.anticipated_events.upper_bound(field_change_andor_creation_time); // upper_bound:
-           // if we're in one of its anticipated events, don't paradoxically cancel that event
-           i != cut_off_pile_iter->second.anticipated_events.end(); ++i) {
-        const auto pile_iter = event_piles.find(*i);
-        assert(pile_iter != event_piles.end());
-        if (next_call_ptr) {
-          assert (*i != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
-          if (*i > next_call_ptr->first) {
-            // We can skip these because they are cut off by the later trigger regardless.
-            assert (pile_iter->second.creation_cut_off == true);
-            // TODO uncomment:
-            //break;
-            continue;
-          }
-        }
-        if (undoing) {
-          assert (pile_iter->second.creation_cut_off == true);
-          pile_iter->second.creation_cut_off = false;
-          assert (pile_iter->second.should_be_executed());
-          if (pile_iter->second.has_been_executed) { /*could've been invalidated, so no. event_piles_needing_unexecution.erase (pile_iter->first);*/ }
-          else                                     { event_piles_needing_execution  .insert(pile_iter->first); }
-        }
-        else {
-          assert (pile_iter->second.creation_cut_off == false);
-          pile_iter->second.creation_cut_off = true;
-          if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
-          else                                     { event_piles_needing_execution  .erase (pile_iter->first); }
-        }
-      }
-    }
-    
     if (!undoing) {
-      if (!force_trigger_change) { new_trigger = old_trigger; }
+      const auto l = last_valid_trigger_call(tid, new_trigger_call_time);
+      std::shared_ptr<const trigger> old_trigger = l ? event_piles.find(l->first)->second.instigating_event : nullptr;
+      if (!force_trigger_change) { assert(l); assert(old_trigger); new_trigger = old_trigger; }
       if (!new_trigger) { new_trigger = nothing_happens_ptr(); }
       
       const auto p = trigger_info.insert(std::make_pair(new_trigger_call_time, trigger_call_info()));
       if (p.second && new_trigger) {
         insert_instigating_event(new_trigger_call_time, event_pile_info(new_trigger, tid));
+      }
+      if (p.second) {
+        cut_off_trigger_events(undoing, tid, new_trigger_call_time);
       }
       ++p.first->second.field_changes_andor_creations_triggering_this;
       if (force_trigger_change) {
@@ -875,6 +848,32 @@ private:
           pile_iter->second.instigating_event = new_trigger;
           if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
         }
+      }
+    }
+    else {
+      const auto i = trigger_info.find(new_trigger_call_time);
+      assert(i != trigger_info.end());
+      assert(&*i == next_scheduled_trigger_call(tid, field_change_andor_creation_time));
+      const auto pile_iter = event_piles.find(i->first);
+      assert(pile_iter != event_piles.end());
+      new_trigger = pile_iter->second.instigating_event;
+      if (force_trigger_change) {
+        std::shared_ptr<const trigger> old_trigger = event_piles.find(last_valid_trigger_call(tid, new_trigger_call_time)->first)->second.instigating_event;
+        if (new_trigger != old_trigger) {
+          for (auto j = boost::next(i); (j != trigger_info.end()) && (!j->second.replaced); ++j) {
+            const auto pile_iter = event_piles.find(j->first);
+            if (pile_iter->second.instigating_event) {
+              assert (pile_iter != event_piles.end());
+              assert (pile_iter->second.instigating_event == new_trigger);
+              pile_iter->second.instigating_event = old_trigger;
+              if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
+            }
+          }
+        }
+      }
+      --i->second.field_changes_andor_creations_triggering_this;
+      if (i->second.field_changes_andor_creations_triggering_this == 0) {
+        erase_instigating_event(new_trigger_call_time);
       }
     }
   }
@@ -959,12 +958,20 @@ private:
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
     auto next_call_iter = trigger_info.upper_bound(time);
-    while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.instigating_event) {++next_call_iter;} // TODO: asymptotics?
+    //while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.instigating_event) {++next_call_iter;} // TODO: asymptotics?
     if (next_call_iter == trigger_info.end()) { return nullptr; }
     return &*next_call_iter;
-    
   }
   std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+    const auto trigger_info_iter = triggers.find(tid);
+    if (trigger_info_iter == triggers.end()) { return nullptr; }
+    auto& trigger_info = trigger_info_iter->second;
+    auto last_call_iter = trigger_info.lower_bound(time);
+    //while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
+    if (last_call_iter == trigger_info.begin()) { return nullptr; }
+    return &*boost::prior(last_call_iter);
+  }
+  std::pair<const extended_time, trigger_call_info> const* last_valid_trigger_call(trigger_id tid, extended_time time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -1111,6 +1118,7 @@ private:
   void debug__check_equivalence_one_sided(time_steward const& /*other*/)const {
   }
   void validate()const {
+    return;
     for (auto const& t : event_piles_needing_execution) {
       assert (event_piles.find(t) != event_piles.end());
     }
@@ -1258,6 +1266,11 @@ private:
         event_piles_needing_unexecution.insert(time);
       }
       else {
+        if (pile_info.tid) {
+          cut_off_trigger_events(true, pile_info.tid, time);
+          auto& trigger_info = triggers.find(pile_info.tid)->second;
+          trigger_info.erase(time);
+        }
         event_piles_needing_execution.erase(time);
         event_piles.erase(event_pile_iter);
       }
@@ -1301,7 +1314,7 @@ private:
       
       // We might create events (triggers that trigger now, and anticipated_events).
       // Out-of-date versions of those events need to be cleared before we start applying any of the new changes.
-      extended_time after_all_triggers = make_extended_time::max_child(time);
+      extended_time after_all_triggers = make_extended_time::after_all_calls_triggered_at(time);
       while ((!event_piles_needing_unexecution.empty()) && (*event_piles_needing_unexecution.begin() < after_all_triggers)) {
         unexecute_event_pile(*event_piles_needing_unexecution.begin());
       }
@@ -1431,6 +1444,11 @@ private:
       event_piles_needing_execution.insert(time);
     }
     if (!pile_info.instigating_event) {
+      if (pile_info.tid) {
+        cut_off_trigger_events(true, pile_info.tid, time);
+        auto& trigger_info = triggers.find(pile_info.tid)->second;
+        trigger_info.erase(time);
+      }
       event_piles.erase(event_pile_iter);
       validate();
       return true;
