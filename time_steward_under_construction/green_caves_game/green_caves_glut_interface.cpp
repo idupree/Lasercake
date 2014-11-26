@@ -44,7 +44,7 @@ struct draw_funcs {
         0,
         green_color));
     }
-    push_wireframe_polygon(triangles, r/5, polygon);
+    push_wireframe_polygon(triangles, r*2/3, polygon);
   }
   void rect(double x0, double y0, double x1, double y1) {
     gl_polygon polygon;

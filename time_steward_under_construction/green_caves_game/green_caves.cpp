@@ -112,7 +112,7 @@ typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, space_coordinate> fd_vector;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, poly> poly_fd_vector;
 
-const int view_rad = 8;
+const int view_rad = 10;
 const int tile_size_shift = 20;
 const space_coordinate tile_size = 1 << tile_size_shift;
 const time_type second_time = 1 << 10;
@@ -133,10 +133,17 @@ struct player_shape {
   space_coordinate radius;
 };
 enum wall_state {
-  UNDETERMINED = 0,
+  UNDETERMINED,
   WALL,
   EMPTY,
 };
+struct wall_state_traits {
+  static inline wall_state null() { return UNDETERMINED; }
+};
+struct cave_state_traits {
+  static inline space_coordinate null() { return 0; }
+};
+
 
 
 using time_steward_system::field;
@@ -147,8 +154,8 @@ typedef time_steward_system::fields_list<
   field<shot_trajectory, optional<poly_fd_vector>>,
   field<shot_tile, fd_vector>,
   field<tile_shots, persistent_siphash_id_set>,
-  wall_state,
-  field<cave_state, space_coordinate>
+  field<wall_state, wall_state, wall_state_traits>,
+  field<cave_state, space_coordinate, cave_state_traits>
 > fields;
 typedef time_steward_system::time_steward<fields> time_steward;
 typedef time_steward::accessor accessor;
@@ -209,30 +216,38 @@ void require_wall_state(time_steward::accessor* accessor, entity_ref e, fd_vecto
   if (w == UNDETERMINED) {
     for (tile_coordinate x = tile(0) - max_cave_radius_in_tiles; x <= tile(0) + max_cave_radius_in_tiles; ++x) {
       for (tile_coordinate y = tile(1) - max_cave_radius_in_tiles; y <= tile(1) + max_cave_radius_in_tiles; ++y) {
-        auto ce = tile_entity(accessor, tile, false, true);
+        auto ce = tile_entity(accessor, fd_vector(x,y), false, true);
         auto c = accessor->get<cave_state>(ce);
         if ((c > 0) && ((x - tile(0))*(x - tile(0)) + (y - tile(1))*(y - tile(1)))*tile_size*tile_size <= c*c) {
           accessor->set<wall_state>(e, EMPTY);
+    std::cerr << "b";
           return;
         }
       }
     }
     accessor->set<wall_state>(e, WALL);
+    std::cerr << "a";
   }
 }
 void require_cave_state(time_steward::accessor* accessor, entity_ref e, fd_vector tile) {
   auto c = accessor->get<cave_state>(e);
-  if (c == UNDETERMINED) {
+  if (c == 0) {
     bool any_cave_here = ((e.id().data()[0] & 255) == 0) || ((tile(0) == 0) && (tile(1) == 0));
     if (any_cave_here) {
-      c = tile_size*2 + (e.id().data()[1] & ((tile_size * 8)-1));
+    std::cerr << "q";
+      accessor->set<cave_state>(e, tile_size*2 + (e.id().data()[1] & ((tile_size * 8)-1)));
+    }
+    else {
+    std::cerr << "n";
+      accessor->set<cave_state>(e, -1);
     }
   }
 }
 void require_view_area(time_steward::accessor* accessor, fd_vector tile) {
   for (tile_coordinate tx = tile(0)-view_rad; tx <= tile(0)+view_rad; ++tx) {
     for (tile_coordinate ty = tile(1)-view_rad; ty <= tile(1)+view_rad; ++ty) {
-      require_cave_state(accessor, accessor->get(tile_entity_id(tile)), fd_vector(tx,ty));
+    std::cerr << "r";
+      require_wall_state(accessor, accessor->get(tile_entity_id(fd_vector(tx,ty))), fd_vector(tx,ty));
     }
   }
 }
