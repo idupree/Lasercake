@@ -34,6 +34,7 @@
 #include <limits>
 #include <iostream>
 #include <boost/next_prior.hpp>
+#include <boost/optional.hpp>
 #include <memory>
 #include "siphash_id.hpp"
 #include "time.hpp"
@@ -502,6 +503,7 @@ private:
   typedef typename TimeSteward::time_type time_type;
   typedef typename TimeSteward::event event;
   typedef typename TimeSteward::trigger trigger;
+  static const time_type never = TimeSteward::never;
   
   struct field_metadata {
     bool accessed_preexisting_state;
@@ -588,6 +590,7 @@ public:
   inline field_data<entity_fields, FieldID>& set(entity_ref e, siphash_id which, field_data<entity_fields, FieldID> new_contents) { return set_impl<FieldID>(e, new_contents, which); }
   
   void anticipate_event(time_type when, std::shared_ptr<const event> e) {
+    if (when == never) { return; }
     caller_correct_if(when >= time_->base_time, "You can't anticipate an event in the past");
     const extended_time ext_when = (when == time_->base_time) ?
       TimeSteward::make_extended_time::event_time(time_, create_id()) :

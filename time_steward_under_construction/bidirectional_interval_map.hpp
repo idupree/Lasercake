@@ -24,6 +24,7 @@
 
 #include <array>
 #include <vector>
+#include <queue>
 
 namespace impl {
   struct unsorted {};

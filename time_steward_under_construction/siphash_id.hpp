@@ -22,6 +22,7 @@
 #ifndef LASERCAKE_SIPHASH_ID_HPP__
 #define LASERCAKE_SIPHASH_ID_HPP__
 
+#include <boost/integer.hpp>
 
 uint64_t siphash24(const void *src,
                    unsigned long src_sz,
