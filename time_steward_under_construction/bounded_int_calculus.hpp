@@ -50,15 +50,14 @@ IntType binomial_coefficient(IntType n, IntType k) {
   return result;
 }
 
-class sign {
-public:
-  template<typename Signable> sign(Signable n):val((n > 0)-(n < 0)){}
-  operator int()const { return val; }
-private:
-  int val;
-};
-
-
+// arrayvector<std::vector<float>, 3> is a sequence container
+// that stores 3 floats directly in the arrayvector object
+// and any floats after the third in a conditionally-present
+// std::vector<float> object.  If size() is always <= ArraySize
+// then arrayvector never allocates.
+//
+// value_type must be DefaultConstructible and Assignable (this is
+// a conceptual bug).
 template<typename VectorType, size_t ArraySize> class arrayvector {
 public:
   typedef typename VectorType::value_type value_type;
@@ -455,8 +454,8 @@ public:
     return result;
   }
   
-  sign neginf_sign()const { if (num_terms == 0) return 0; else return back() * ((num_terms & 1) ? 1 : -1); }
-  sign posinf_sign()const { if (num_terms == 0) return 0; else return back(); }
+  value_type neginf_sign()const { if (num_terms == 0) return 0; else return sign(back() * ((num_terms & 1) ? 1 : -1)); }
+  value_type posinf_sign()const { if (num_terms == 0) return 0; else return sign(back()); }
   
   class sign_interval_boundary_iterator {
   private:
@@ -586,12 +585,12 @@ public:
           if (!derivative_iterator_->p_) {
             // TODO improve (overflow? efficiency?)
             max = (input_ > 0) ? (input_+1) : 1;
-            const sign ps = p_->posinf_sign();
+            const value_type ps = p_->posinf_sign();
             while(sign((*p_)(max)) != ps) { max <<= 1; }
           }
           assert(max > min);
-          const sign sign_min((*p_)(min));
-          const sign sign_max((*p_)(max));
+          const value_type sign_min = sign((*p_)(min));
+          const value_type sign_max = sign((*p_)(max));
           if (sign_min == sign_max) {
             if (derivative_iterator_->p_) {
               advance_to(derivative_iterator_->input_);
@@ -607,7 +606,7 @@ public:
             else {
               while(min + 1 < max) {
                 const domain_type mid = (min>>1)+(max>>1)+(min&max&1);
-                const sign sign_mid((*p_)(mid));
+                const value_type sign_mid = sign((*p_)(mid));
                 if (sign_mid == 0) {
                   future[future_size++] = mid + 1;
                   future[future_size++] = mid;
