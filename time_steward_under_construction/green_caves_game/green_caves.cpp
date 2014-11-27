@@ -165,10 +165,17 @@ typedef accessor::entity_ref entity_ref;
 
 
 
-time_type when_crosses(time_steward::accessor* accessor, poly p, space_coordinate c) {
-  auto comp = (p - c);
-  auto i = comp.sign_interval_boundaries_upper_bound(accessor->now());
-  return (i != comp.sign_interval_boundaries_end()) ? *i : never;
+time_type when_nonpos(time_type start, poly p) {
+  if (p(start) <= 0) { return start; }
+  auto i = p.sign_interval_boundaries_upper_bound(start);
+  while ((i != p.sign_interval_boundaries_end()) && (sign(p(*i)) == 1)) { ++i; }
+  return (i != p.sign_interval_boundaries_end()) ? *i : never;
+}
+time_type when_nonneg(time_type start, poly p) {
+  if (p(start) >= 0) { return start; }
+  auto i = p.sign_interval_boundaries_upper_bound(start);
+  while ((i != p.sign_interval_boundaries_end()) && (sign(p(*i)) == -1)) { ++i; }
+  return (i != p.sign_interval_boundaries_end()) ? *i : never;
 }
 
 void anticipate_shot_moving(time_steward::accessor* accessor, entity_ref e, fd_vector tile);
@@ -220,13 +227,13 @@ void require_wall_state(time_steward::accessor* accessor, entity_ref e, fd_vecto
         auto c = accessor->get<cave_state>(ce);
         if ((c > 0) && ((x - tile(0))*(x - tile(0)) + (y - tile(1))*(y - tile(1)))*tile_size*tile_size <= c*c) {
           accessor->set<wall_state>(e, EMPTY);
-    std::cerr << "b";
+    //std::cerr << "b";
           return;
         }
       }
     }
     accessor->set<wall_state>(e, WALL);
-    std::cerr << "a";
+    //std::cerr << "a";
   }
 }
 void require_cave_state(time_steward::accessor* accessor, entity_ref e, fd_vector tile) {
@@ -234,11 +241,11 @@ void require_cave_state(time_steward::accessor* accessor, entity_ref e, fd_vecto
   if (c == 0) {
     bool any_cave_here = ((e.id().data()[0] & 255) == 0) || ((tile(0) == 0) && (tile(1) == 0));
     if (any_cave_here) {
-    std::cerr << "q";
+    //std::cerr << "q";
       accessor->set<cave_state>(e, tile_size*2 + (e.id().data()[1] & ((tile_size * 8)-1)));
     }
     else {
-    std::cerr << "n";
+    //std::cerr << "n";
       accessor->set<cave_state>(e, -1);
     }
   }
@@ -246,7 +253,7 @@ void require_cave_state(time_steward::accessor* accessor, entity_ref e, fd_vecto
 void require_view_area(time_steward::accessor* accessor, fd_vector tile) {
   for (tile_coordinate tx = tile(0)-view_rad; tx <= tile(0)+view_rad; ++tx) {
     for (tile_coordinate ty = tile(1)-view_rad; ty <= tile(1)+view_rad; ++ty) {
-    std::cerr << "r";
+    //std::cerr << "r";
       require_wall_state(accessor, accessor->get(tile_entity_id(fd_vector(tx,ty))), fd_vector(tx,ty));
     }
   }
@@ -262,12 +269,12 @@ void anticipate_shot_moving(time_steward::accessor* accessor, entity_ref e, fd_v
     fd_vector where = tile;
     if (t.get_term(accessor->now(), 1) > 0) {
       ++where[dim];
-      when = when_crosses(accessor, t, tile_to_space_max(tile(dim)));
+      when = when_nonneg(accessor->now(), t - tile_to_space_max(tile(dim)));
       assert (when != never);
     }
     if (t.get_term(accessor->now(), 1) < 0) {
       --where[dim];
-      when = when_crosses(accessor, t, tile_to_space_min(tile(dim)));
+      when = when_nonpos(accessor->now(), t - tile_to_space_min(tile(dim)));
       assert (when != never);
     }
     if (when != never) {
@@ -338,7 +345,7 @@ public:
   fd_vector tile;
 
   void operator()(time_steward::accessor* accessor)const override {
-    std::cerr << "player_strikes_tile\n";
+    //std::cerr << "player_strikes_tile\n";
     auto e = accessor->get(id);
     player_shape& p = *accessor->get_mut<player_shape>(e);
     auto c = p.center.get_term<space_coordinate>(accessor->now(), 0);
@@ -365,7 +372,7 @@ public:
   entity_id id;
 
   void operator()(time_steward::accessor* accessor)const override {
-    std::cerr << "player_could_hit_walls\n";
+    //std::cerr << "player_could_hit_walls\n";
     auto e = accessor->get(id);
     fd_vector ct = accessor->get<player_center_reference_tile>(e);
     player_shape const& p = *accessor->get<player_shape>(e);
@@ -401,7 +408,7 @@ public:
   fd_vector tile;
 
   void operator()(time_steward::accessor* accessor)const override {
-    std::cerr << "player_enters_new_tile\n";
+    //std::cerr << "player_enters_new_tile\n";
     accessor->set<player_center_reference_tile>(accessor->get(id), tile);
     require_view_area(accessor, tile);
   }
@@ -413,7 +420,7 @@ public:
   entity_id id;
 
   void operator()(time_steward::accessor* accessor)const override {
-    std::cerr << "player_moves_around\n";
+    //std::cerr << "player_moves_around\n";
     auto e = accessor->get(id);
     fd_vector ct = accessor->get<player_center_reference_tile>(e);
     player_shape const& p = *accessor->get<player_shape>(e);
@@ -421,16 +428,16 @@ public:
     for (num_coordinates_type dim = 0; dim < num_dimensions; ++dim) {
       fd_vector where = ct;
       auto t = p.center(dim);
-      std::cerr << accessor->now() << ": " << tile_to_space_min(ct(dim)) << ", " << t << ", " << tile_to_space_max(ct(dim)) << "\n";
+      //std::cerr << accessor->now() << ": " << tile_to_space_min(ct(dim)) << ", " << t << ", " << tile_to_space_max(ct(dim)) << "\n";
       if (t.get_term(accessor->now(), 1) > 0) {
         ++where[dim];
-        accessor->anticipate_event(when_crosses(accessor, t, tile_to_space_max(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
-        std::cerr << when_crosses(accessor, t, tile_to_space_max(ct(dim))) << "\n";
+        accessor->anticipate_event(when_nonneg(accessor->now(), t - tile_to_space_max(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
+        //std::cerr << "c " << when_nonneg(accessor->now(), t - tile_to_space_max(ct(dim))) << "\n";
       }
       if (t.get_term(accessor->now(), 1) < 0) {
         --where[dim];
-        accessor->anticipate_event(when_crosses(accessor, t, tile_to_space_min(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
-        std::cerr << when_crosses(accessor, t, tile_to_space_min(ct(dim))) << "\n";
+        accessor->anticipate_event(when_nonpos(accessor->now(), t - tile_to_space_min(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
+        //std::cerr << "d " << when_nonpos(accessor->now(), t - tile_to_space_min(ct(dim))) << "\n";
       }
     }
   }
