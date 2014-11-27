@@ -360,9 +360,17 @@ public:
       p.center[1].set_term(accessor->now(), 1, 0);
     }
     else {
-      // TODO
-      p.center[0].set_term(accessor->now(), 1, 0);
-      p.center[1].set_term(accessor->now(), 1, 0);
+      space_coordinate mid_x = (tile_to_space_min(tile(0)) + tile_to_space_max(tile(0))) / 2;
+      space_coordinate corner_x = (c(0) < mid_x) ? tile_to_space_min(tile(0)) : tile_to_space_max(tile(0));
+      space_coordinate mid_y = (tile_to_space_min(tile(1)) + tile_to_space_max(tile(1))) / 2;
+      space_coordinate corner_y = (c(1) < mid_y) ? tile_to_space_min(tile(1)) : tile_to_space_max(tile(1));
+      fd_vector d = c - fd_vector(corner_x, corner_y);
+      auto v = p.center.get_term<space_coordinate>(accessor->now(), 1);
+      auto dmagsq = d(0)*d(0)+d(1)*d(1);
+      auto removed = d * v.dot(d);
+      removed[0] = divide(removed[0], dmagsq, rounding_strategy<round_up, negative_mirrors_positive>());
+      removed[1] = divide(removed[1], dmagsq, rounding_strategy<round_up, negative_mirrors_positive>());
+      p.center.set_term(accessor->now(), 1, v-removed);
     }
   }
 };

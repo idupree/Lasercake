@@ -816,6 +816,12 @@ public:
     finite_dimensional_vector result(*this); result -= other; return result; }
   finite_dimensional_vector operator-()const {
     finite_dimensional_vector result(*this); for(auto &i : result.data) { i = -i; } return result; }
+  template<typename Scalar>
+  void operator*=(Scalar const& other) {
+    for (int i = 0; i < num_dimensions; ++i) data[i] *= other; }
+  template<typename Scalar>
+  finite_dimensional_vector operator*(Scalar const& other)const {
+    finite_dimensional_vector result(*this); result *= other; return result; }
     
   bool operator==(finite_dimensional_vector const& other)const {
     for (int i = 0; i < num_dimensions; ++i) { if (data[i] != other.data[i]) { return false; }} return true; }
