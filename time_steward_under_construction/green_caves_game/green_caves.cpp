@@ -475,6 +475,7 @@ public:
       }
       else {
         time = boost::prior(h.back()->events.end())->first;
+        if (time < 1) { time = 1; }
       }
     }
     bool operator<(queue_entry const& other)const { return time > other.time; }
@@ -520,12 +521,15 @@ public:
         q.push(queue_entry(t.h, false));
       }
       else {
-        double inc = double(1) / double(current.size());
+        double inc = double(1) / double(current.size() + 1);
         double height = 0;
         for (size_t i = 0; i < current.size(); ++i) {
-          if (current[i].back() != t.h.back()) {
-            height += inc;
-            col.entries.push_back(spatial_representation_entry(height, current[i]));
+          height += inc;
+          col.entries.push_back(spatial_representation_entry(height, current[i]));
+        }
+        for (size_t i = 0; i < current.size(); ++i) {
+          if (current[i].back() == t.h.back()) {
+            current.erase(current.begin()+i);
           }
         }
       }
@@ -551,7 +555,7 @@ public:
       cur_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
     }
     else {
-      while (current_history.size() >= place_in_current_history) { current_history.pop_back(); }
+      while (place_in_current_history+1 < current_history.size()) { current_history.pop_back(); }
       auto p = cur_node->children.insert(std::make_pair(time, node(time)));
       node* new_node = &p->second;
       current_history.push_back(new_node);
@@ -654,13 +658,14 @@ public:
 
 time_type shot_tail_delay = second_time/10;
 template<class DrawFuncsType>
-void draw_green_caves(time_steward::accessor const* accessor, DrawFuncsType& draw) {
+void draw_green_caves(history_tree& w, time_type time, DrawFuncsType& draw) {
+  std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
   auto player = accessor->get(time_steward_system::global_object_id);
   fd_vector ct = accessor->get<player_center_reference_tile>(player);
   player_shape const& p = *accessor->get<player_shape>(player);
   
-  space_coordinate cx = p.center(0)(accessor->now());
-  space_coordinate cy = p.center(1)(accessor->now());
+  const space_coordinate cx = p.center(0)(accessor->now());
+  const space_coordinate cy = p.center(1)(accessor->now());
   draw.circle(0, 0, p.radius);
   
   for (tile_coordinate tx = ct(0)-view_rad; tx <= ct(0)+view_rad; ++tx) {
@@ -685,6 +690,26 @@ void draw_green_caves(time_steward::accessor const* accessor, DrawFuncsType& dra
           trajectory(0)(accessor->now() - shot_tail_delay) - cx,
           trajectory(1)(accessor->now() - shot_tail_delay) - cy
         );
+      }
+    }
+  }
+  
+  history_tree::spatial_representation sprep = w.spatialize();
+  const double max = sprep.columns.back().time;
+  const double vqqq = tile_size*view_rad;
+  for (size_t i = 1; i < sprep.columns.size(); ++i) {
+    auto& cur = sprep.columns[i];
+    auto& prev = sprep.columns[i-1];
+    for (auto e : cur.entries) {
+      for (auto f : prev.entries) {
+        if (f.h.back() == e.h.back()) {
+          draw.segment(
+            (double(prev.time * vqqq * 2) / max) - vqqq,
+            f.height * vqqq * 0.3 + vqqq * 0.7,
+            (double(cur.time * vqqq * 2) / max) - vqqq,
+            e.height * vqqq * 0.3 + vqqq * 0.7
+          );
+        }
       }
     }
   }

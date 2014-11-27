@@ -74,7 +74,7 @@ gl_triangles display(history_tree& w, time_type time) {
   gl_triangles triangles;
   draw_funcs draw(triangles);
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
-  draw_green_caves(accessor.get(), draw);
+  draw_green_caves(w, time, draw);
   
   return triangles;
 }
@@ -235,7 +235,9 @@ static void keydown(unsigned char key, int /*x*/, int /*y*/) {
   keys[key] = true;
   switch (key) {
   case 27:
-    exit(0); break;/*
+    exit(0); break;
+  case 'q':
+    gtime = gtime * (rand()&1023) / 1023; break;/*
   case 'q':
           if(sdle.key.keysym.sym == SDLK_q) { time -= 100; if (time < 0) time = 0; }
   case 'w':
