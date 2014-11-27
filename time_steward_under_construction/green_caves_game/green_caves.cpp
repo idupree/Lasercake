@@ -168,7 +168,7 @@ typedef accessor::entity_ref entity_ref;
 time_type when_crosses(time_steward::accessor* accessor, poly p, space_coordinate c) {
   auto comp = (p - c);
   auto i = comp.sign_interval_boundaries_upper_bound(accessor->now());
-  return (i == comp.sign_interval_boundaries_end()) ? *i : never;
+  return (i != comp.sign_interval_boundaries_end()) ? *i : never;
 }
 
 void anticipate_shot_moving(time_steward::accessor* accessor, entity_ref e, fd_vector tile);
@@ -260,12 +260,12 @@ void anticipate_shot_moving(time_steward::accessor* accessor, entity_ref e, fd_v
     auto t = trajectory(dim);
     time_type when = never;
     fd_vector where = tile;
-    if (t(1) > 0) {
+    if (t.get_term(accessor->now(), 1) > 0) {
       ++where[dim];
       when = when_crosses(accessor, t, tile_to_space_max(tile(dim)));
       assert (when != never);
     }
-    if (t(1) < 0) {
+    if (t.get_term(accessor->now(), 1) < 0) {
       --where[dim];
       when = when_crosses(accessor, t, tile_to_space_min(tile(dim)));
       assert (when != never);
@@ -338,6 +338,7 @@ public:
   fd_vector tile;
 
   void operator()(time_steward::accessor* accessor)const override {
+    std::cerr << "player_strikes_tile\n";
     auto e = accessor->get(id);
     player_shape& p = *accessor->get_mut<player_shape>(e);
     auto c = p.center.get_term<space_coordinate>(accessor->now(), 0);
@@ -364,6 +365,7 @@ public:
   entity_id id;
 
   void operator()(time_steward::accessor* accessor)const override {
+    std::cerr << "player_could_hit_walls\n";
     auto e = accessor->get(id);
     fd_vector ct = accessor->get<player_center_reference_tile>(e);
     player_shape const& p = *accessor->get<player_shape>(e);
@@ -399,6 +401,7 @@ public:
   fd_vector tile;
 
   void operator()(time_steward::accessor* accessor)const override {
+    std::cerr << "player_enters_new_tile\n";
     accessor->set<player_center_reference_tile>(accessor->get(id), tile);
     require_view_area(accessor, tile);
   }
@@ -410,6 +413,7 @@ public:
   entity_id id;
 
   void operator()(time_steward::accessor* accessor)const override {
+    std::cerr << "player_moves_around\n";
     auto e = accessor->get(id);
     fd_vector ct = accessor->get<player_center_reference_tile>(e);
     player_shape const& p = *accessor->get<player_shape>(e);
@@ -417,12 +421,16 @@ public:
     for (num_coordinates_type dim = 0; dim < num_dimensions; ++dim) {
       fd_vector where = ct;
       auto t = p.center(dim);
-      if (t(dim) > 0) {
+      std::cerr << accessor->now() << ": " << tile_to_space_min(ct(dim)) << ", " << t << ", " << tile_to_space_max(ct(dim)) << "\n";
+      if (t.get_term(accessor->now(), 1) > 0) {
         ++where[dim];
         accessor->anticipate_event(when_crosses(accessor, t, tile_to_space_max(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
+        std::cerr << when_crosses(accessor, t, tile_to_space_max(ct(dim))) << "\n";
       }
-      if (t(dim) < 0) {
+      if (t.get_term(accessor->now(), 1) < 0) {
+        --where[dim];
         accessor->anticipate_event(when_crosses(accessor, t, tile_to_space_min(ct(dim))), std::shared_ptr<event>(new player_enters_new_tile(e.id(), where)));
+        std::cerr << when_crosses(accessor, t, tile_to_space_min(ct(dim))) << "\n";
       }
     }
   }

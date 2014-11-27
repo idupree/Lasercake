@@ -226,8 +226,10 @@ void do_gl(time_steward& w, time_type time) {
 
 time_steward steward;
 time_type gtime = 0;
+bool keys[255];
 
-static void Key(unsigned char key, int /*x*/, int /*y*/) {
+static void keydown(unsigned char key, int /*x*/, int /*y*/) {
+  keys[key] = true;
   switch (key) {
   case 27:
     exit(0); break;/*
@@ -244,11 +246,18 @@ static void Key(unsigned char key, int /*x*/, int /*y*/) {
   case 'd':
     height_angle -= 0.2; break;*/
   }
-  glutPostRedisplay();
+}
+static void keyup(unsigned char key, int /*x*/, int /*y*/) {
+  keys[key] = false;
 }
 
+const space_coordinate acc = tile_size*500/(second_time*second_time);
 static void Idle(void) {
-  gtime = gtime + 1;
+  gtime = gtime + (second_time>>10);
+  if (keys['w'] && !keys['s']) { steward.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
+  if (keys['s'] && !keys['w']) { steward.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
+  if (keys['a'] && !keys['d']) { steward.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
+  if (keys['d'] && !keys['a']) { steward.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
   glutPostRedisplay();
 }
 
@@ -267,7 +276,8 @@ int main(int argc, char **argv)
   glutCreateWindow("green caves");
   const GLenum glew_init_err = glewInit();
   if(glew_init_err != GLEW_OK) { throw "glew failed"; }
-  glutKeyboardFunc(Key);
+  glutKeyboardFunc(keydown);
+  glutKeyboardUpFunc(keyup);
   glutDisplayFunc(Draw);
   glutIdleFunc(Idle);
   glutReshapeWindow(800,800);
