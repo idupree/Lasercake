@@ -253,7 +253,7 @@ static void keyup(unsigned char key, int /*x*/, int /*y*/) {
 
 const space_coordinate acc = tile_size*500/(second_time*second_time);
 static void Idle(void) {
-  gtime = gtime + (second_time>>10);
+  gtime = gtime + (second_time>>8);
   if (keys['w'] && !keys['s']) { steward.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
   if (keys['s'] && !keys['w']) { steward.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
   if (keys['a'] && !keys['d']) { steward.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }

@@ -164,14 +164,15 @@ typedef time_steward::trigger trigger;
 typedef accessor::entity_ref entity_ref;
 
 
-
-time_type when_nonpos(time_type start, poly p) {
+template<class Poly>
+time_type when_nonpos(time_type start, Poly p) {
   if (p(start) <= 0) { return start; }
   auto i = p.sign_interval_boundaries_upper_bound(start);
   while ((i != p.sign_interval_boundaries_end()) && (sign(p(*i)) == 1)) { ++i; }
   return (i != p.sign_interval_boundaries_end()) ? *i : never;
 }
-time_type when_nonneg(time_type start, poly p) {
+template<class Poly>
+time_type when_nonneg(time_type start, Poly p) {
   if (p(start) >= 0) { return start; }
   auto i = p.sign_interval_boundaries_upper_bound(start);
   while ((i != p.sign_interval_boundaries_end()) && (sign(p(*i)) == -1)) { ++i; }
@@ -382,19 +383,37 @@ public:
         auto tile = fd_vector(tx,ty);
         auto te = tile_entity(accessor, tile);
         if (accessor->get<wall_state>(te) == WALL) {
-          time_type best_time = never;
           for (space_coordinate corner_x = tile_to_space_min(tx); corner_x <= tile_to_space_max(tx); corner_x += tile_size) {
             for (space_coordinate corner_y = tile_to_space_min(ty); corner_y <= tile_to_space_max(ty); corner_y += tile_size) {
               poly3 distish = (p.center(0)-corner_x)*(p.center(0)-corner_x) + (p.center(1)-corner_y)*(p.center(1)-corner_y) - p.radius*p.radius;
               assert(distish.get_term(accessor->now(), 0) > 0);
-              auto i = distish.sign_interval_boundaries_upper_bound(accessor->now());
-              if ((i != distish.sign_interval_boundaries_end()) && ((best_time == never) || *i <= best_time)) {
-                best_time = *i - 1;
+              time_type when = when_nonpos(accessor->now(), distish);
+              if (when != never) {
+                assert (when > accessor->now());
+                accessor->anticipate_event(when-1, std::shared_ptr<event>(new player_strikes_tile(e.id(), tile)));
               }
             }
           }
-          //TODO
-          accessor->anticipate_event(best_time, std::shared_ptr<event>(new player_strikes_tile(e.id(), tile)));
+          for (num_coordinates_type dim0 = 0; dim0 < num_dimensions; ++dim0) {
+            num_coordinates_type dim1 = !dim0;
+            tile_coordinate t0 = dim0 ? ty : tx;
+            tile_coordinate t1 = dim0 ? tx : ty;
+            time_type when = never;
+            if (p.center(dim0).get_term(accessor->now(), 1) > 0) {
+              when = when_nonneg(accessor->now(), p.center(dim0)+p.radius - tile_to_space_min(t0));
+            }
+            if (p.center(dim0).get_term(accessor->now(), 1) < 0) {
+              when = when_nonpos(accessor->now(), p.center(dim0)-p.radius - tile_to_space_max(t0));
+            }
+            if (when != never) {
+              if (when > accessor->now()) {
+                space_coordinate s = p.center(dim1)(when);
+                if (s >= tile_to_space_min(t1) && s <= tile_to_space_max(t1)) {
+                  accessor->anticipate_event(when-1, std::shared_ptr<event>(new player_strikes_tile(e.id(), tile)));
+                }
+              }
+            }
+          }
         }
       }
     }
