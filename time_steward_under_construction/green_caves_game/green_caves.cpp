@@ -31,6 +31,7 @@ typedef ptrdiff_t num_coordinates_type;
 typedef time_steward_system::time_steward<time_steward_system::fields_list<int>> hack_time_steward;
 typedef hack_time_steward::time_type time_type;
 const time_type never = hack_time_steward::never;
+const time_type min_time = hack_time_steward::min_time;
 typedef time_steward_system::entity_id entity_id;
 
 typedef int64_t space_coordinate;
@@ -424,8 +425,8 @@ class history_tree {
 public:
   struct fiat_event {
     fiat_event(uint64_t distinguisher, std::shared_ptr<event> e):distinguisher(distinguisher),e(e){}
-    std::shared_ptr<event> e;
     uint64_t distinguisher;
+    std::shared_ptr<event> e;
   };
   struct node {
     //node* parent;
@@ -443,13 +444,14 @@ public:
   
   history_tree():
     history_root(0),
-    current_time(0),
+    current_time(min_time),
     place_in_current_history(0)
   {
     current_history.push_back(&history_root);
   }
   
   struct spatial_representation_entry {
+    spatial_representation_entry(double height, history h):height(height),h(h){}
     double height;
     history h;
   };
@@ -459,10 +461,6 @@ public:
   };
   struct spatial_representation {
     std::vector<spatial_representation_column> columns;
-    
-  };
-  struct sort_nodes_desc {
-    bool operator<(node const* a, node const* b)const { return b->start_time < a->start_time; }
   };
   struct queue_entry {
     time_type time;
@@ -476,7 +474,7 @@ public:
         time = 1;
       }
       else {
-        time = h.back()->events.back()->first;
+        time = boost::prior(h.back()->events.end())->first;
       }
     }
     bool operator<(queue_entry const& other)const { return time > other.time; }
@@ -495,7 +493,7 @@ public:
       spatial_representation_column col;
       col.time = t.time;
       
-      if (queue_entry.starting) {
+      if (t.starting) {
         if (current.empty()) {
           current.push_back(t.h);
           col.entries.push_back(spatial_representation_entry(0.5, t.h));
@@ -514,9 +512,9 @@ public:
           }
         }
         
-        for (node& n : t.h.back()->children) {
+        for (auto& p : t.h.back()->children) {
           history h = t.h;
-          h.push_back(&n);
+          h.push_back(&p.second);
           q.push(queue_entry(h, true));
         }
         q.push(queue_entry(t.h, false));
@@ -533,10 +531,11 @@ public:
       }
       result.columns.push_back(col);
     }
+    assert (current.empty());
     return result;
   }
   
-  void accessor_after(time_type time) {
+  std::unique_ptr<accessor> accessor_after(time_type time) {
     if (time > current_time) {
       set_time(time);
     }
@@ -544,14 +543,17 @@ public:
   }
   
   void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
+    if (time-1 < current_time) {
+      set_time(time-1);
+    }
     node* cur_node = current_history[place_in_current_history];
-    if ((place_in_current_history+1 >= current_history.size()) && (cur_node->events.empty() || cur_node->events.back()->first <= time)) {
+    if ((place_in_current_history+1 >= current_history.size()) && (cur_node->events.empty() || boost::prior(cur_node->events.end())->first <= time)) {
       cur_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
     }
     else {
       while (current_history.size() >= place_in_current_history) { current_history.pop_back(); }
       auto p = cur_node->children.insert(std::make_pair(time, node(time)));
-      node* new_node = &p.first->second;
+      node* new_node = &p->second;
       current_history.push_back(new_node);
       new_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
     }
@@ -563,7 +565,7 @@ public:
       while (true) {
         node* cur_node = current_history[place_in_current_history];
         node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
-        for (i = cur_node->events.upper_bound(current_time);
+        for (auto i = cur_node->events.upper_bound(current_time);
             i != cur_node->events.end() && (i->first <= new_time) &&
             ((!next_node) || (i->first <= next_node->start_time)); ++i) {
           steward.insert_fiat_event(i->first, i->second.distinguisher, i->second.e);
@@ -580,7 +582,7 @@ public:
       while (true) {
         node* cur_node = current_history[place_in_current_history];
         node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
-        for (i = cur_node->events.upper_bound(new_time);
+        for (auto i = cur_node->events.upper_bound(new_time);
             i != cur_node->events.end() && (i->first <= current_time) &&
             ((!next_node) || (i->first <= next_node->start_time)); ++i) {
           steward.erase_fiat_event(i->first, i->second.distinguisher);

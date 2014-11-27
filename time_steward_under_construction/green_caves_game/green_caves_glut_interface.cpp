@@ -70,7 +70,7 @@ struct draw_funcs {
   }
 };
 
-gl_triangles display(time_steward& w, time_type time) {
+gl_triangles display(history_tree& w, time_type time) {
   gl_triangles triangles;
   draw_funcs draw(triangles);
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
@@ -173,7 +173,7 @@ void add_shaders() {
   shader_program_name = p;
 }
 
-void do_gl(time_steward& w, time_type time) {
+void do_gl(history_tree& w, time_type time) {
   static bool first_time = true;//hack
   if(first_time) {
     add_shaders();
@@ -227,7 +227,7 @@ void do_gl(time_steward& w, time_type time) {
 }
 
 
-time_steward steward;
+history_tree hist;
 time_type gtime = 0;
 bool keys[255];
 
@@ -272,25 +272,25 @@ static void mouse2(int x, int y) {
 const space_coordinate acc = tile_size*500/(second_time*second_time);
 static void Idle(void) {
   gtime = gtime + (second_time>>6);
-  std::unique_ptr<time_steward::accessor> accessor = steward.accessor_after(gtime);
-  if (keys['w'] && !keys['s']) { steward.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
-  if (keys['s'] && !keys['w']) { steward.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
-  if (keys['a'] && !keys['d']) { steward.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
-  if (keys['d'] && !keys['a']) { steward.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
+  std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(gtime);
+  if (keys['w'] && !keys['s']) { hist.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
+  if (keys['s'] && !keys['w']) { hist.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
+  if (keys['a'] && !keys['d']) { hist.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
+  if (keys['d'] && !keys['a']) { hist.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
   if (lmb && accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id)) <= gtime) {
     fd_vector v(mouse_x-400, 400-mouse_y);
     space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
     if (mag > 0) {
       v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
       v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
-      steward.insert_fiat_event(gtime, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
+      hist.insert_fiat_event(gtime, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
     }
   }
   glutPostRedisplay();
 }
 
 static void Draw(void) {
-  do_gl(steward, gtime);
+  do_gl(hist, gtime);
   glutSwapBuffers();
 }
 
@@ -298,7 +298,7 @@ int main(int argc, char **argv)
 {
   srand(0);
   bounded_int_calculus::test();
-  steward.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
+  hist.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
   glutCreateWindow("green caves");
