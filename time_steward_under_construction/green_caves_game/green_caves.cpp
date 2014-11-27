@@ -32,75 +32,6 @@ typedef time_steward_system::time_steward<time_steward_system::fields_list<int>>
 typedef hack_time_steward::time_type time_type;
 const time_type never = hack_time_steward::never;
 typedef time_steward_system::entity_id entity_id;
-/*
-class history_tree {
-  time_steward steward;
-  std::unique_ptr<history_tree_node> history_root;
-  history_tree_node* current_history;
-  time_type current_time;
-  
-  void accessor() {
-  }
-  void set_time(time_type new_time) {
-  }
-  void set_history(history_tree_node* new_history) {
-    std:: new_history_path = ;
-    const time_type branch_point = ;
-    time_type cleared_after = current_time;
-    // TODO: review < vs <=
-    while (current_history->start_time >= branch_point) {
-      for (i = current_history->events.upper_bound(branch_point); (i != current_history->events.end()) && (i->first <= cleared_after); ++i) {
-        steward.erase_fiat_event(i->second);
-      }
-      if (current_history->start_time < cleared_after) { cleared_after = current_history->start_time; }
-      current_history = current_history->parent;
-    }
-    for (i = current_history->events.upper_bound(branch_point); (i != current_history->events.end()) && (i->first <= cleared_after); ++i) {
-      steward.erase_fiat_event(i->second);
-    }
-    
-    while (current_history != new_history) {
-      history_tree_node* next_history = ;
-      for (i = current_history->events.upper_bound(branch_point); i != current_history->events.end() && (i->first <= next_history->start_time) && (i->first <= current_time); ++i) {
-        steward.insert_fiat_event(i->second);
-      }
-      current_history = next_history;
-    }
-    for (i = current_history->events.upper_bound(branch_point); i != current_history->events.end() && (i->first <= current_time); ++i) {
-      steward.insert_fiat_event(i->second);
-    }
-  }
-  
-  history_tree_node* inc_sibling(history_tree_node* old_history, bool direction)const {
-    if (!old_history->parent) { return nullptr; }
-    auto i = old_history->parent->children.find(old_history);
-    assert (i != old_history->parent->children.end());
-    if (direction) {
-      ++i;
-      if (i == old_history->parent->children.end()) { return nullptr; }
-      return *i;
-    }
-    else {
-      if (i == old_history->parent->children.begin()) { return nullptr; }
-      --i;
-      return *i;
-    }
-  }
-  history_tree_node* inc_history(history_tree_node* old_history, time_type switch_time, bool direction)const {
-    history_tree_node* new_history = old_history;
-    while (new_history->start_time >= switch_time) {
-      new_history = new_history->parent;
-    }
-    while (true) {
-      history_tree_node* next_history = inc_sibling(new_history, direction);
-      if (next_history) { return next_history; }
-      new_history = new_history->parent;
-      if (!new_history) { return old_history; }
-    }
-  }
-};
-
-green_caves_game*/
 
 typedef int64_t space_coordinate;
 typedef int64_t tile_coordinate;
@@ -487,6 +418,236 @@ public:
     accessor->set_trigger(player.id(), std::shared_ptr<trigger>(new player_could_hit_walls(player.id())));
     accessor->set_trigger(siphash_id::combining(player.id(), 2), std::shared_ptr<trigger>(new player_moves_around(player.id())));
   }
+};
+
+class history_tree {
+public:
+  struct fiat_event {
+    fiat_event(uint64_t distinguisher, std::shared_ptr<event> e):distinguisher(distinguisher),e(e){}
+    std::shared_ptr<event> e;
+    uint64_t distinguisher;
+  };
+  struct node {
+    //node* parent;
+    node(time_type start_time):start_time(start_time){}
+    time_type start_time;
+    std::multimap<time_type, fiat_event> events;
+    std::multimap<time_type, node> children;
+  };
+  time_steward steward;
+  node history_root;
+  typedef std::vector<node*> history;
+  history current_history;
+  time_type current_time;
+  size_t place_in_current_history;
+  
+  history_tree():
+    history_root(0),
+    current_time(0),
+    place_in_current_history(0)
+  {
+    current_history.push_back(&history_root);
+  }
+  
+  struct spatial_representation_entry {
+    double height;
+    history h;
+  };
+  struct spatial_representation_column {
+    time_type time;
+    std::vector<spatial_representation_entry> entries;
+  };
+  struct spatial_representation {
+    std::vector<spatial_representation_column> columns;
+    
+  };
+  struct sort_nodes_desc {
+    bool operator<(node const* a, node const* b)const { return b->start_time < a->start_time; }
+  };
+  struct queue_entry {
+    time_type time;
+    bool starting;
+    history h;
+    queue_entry(history h, bool starting):starting(starting),h(h){
+      if (starting) {
+        time = h.back()->start_time;
+      }
+      else if (h.back()->events.empty()) {
+        time = 1;
+      }
+      else {
+        time = h.back()->events.back()->first;
+      }
+    }
+    bool operator<(queue_entry const& other)const { return time > other.time; }
+  };
+  spatial_representation spatialize() {
+    spatial_representation result;
+    std::priority_queue<queue_entry> q; //node*, std::vector<node*>, sort_nodes_desc
+    std::vector<history> current;
+    history bh;
+    bh.push_back(&history_root);
+    q.push(queue_entry(bh, true));
+      
+    while (!q.empty()) {
+      queue_entry t = q.top(); q.pop();
+      
+      spatial_representation_column col;
+      col.time = t.time;
+      
+      if (queue_entry.starting) {
+        if (current.empty()) {
+          current.push_back(t.h);
+          col.entries.push_back(spatial_representation_entry(0.5, t.h));
+        }
+        else {
+          double inc = double(1) / double(current.size() + 1);
+          double height = 0;
+          for (size_t i = 0; i < current.size(); ++i) {
+            if (current[i].back() == t.h[t.h.size()-2]) {
+              current.insert(current.begin()+i+1, t.h);
+            }
+            if (current[i].back() != t.h.back()) {
+              height += inc;
+            }
+            col.entries.push_back(spatial_representation_entry(height, current[i]));
+          }
+        }
+        
+        for (node& n : t.h.back()->children) {
+          history h = t.h;
+          h.push_back(&n);
+          q.push(queue_entry(h, true));
+        }
+        q.push(queue_entry(t.h, false));
+      }
+      else {
+        double inc = double(1) / double(current.size());
+        double height = 0;
+        for (size_t i = 0; i < current.size(); ++i) {
+          if (current[i].back() != t.h.back()) {
+            height += inc;
+            col.entries.push_back(spatial_representation_entry(height, current[i]));
+          }
+        }
+      }
+      result.columns.push_back(col);
+    }
+    return result;
+  }
+  
+  void accessor_after(time_type time) {
+    if (time > current_time) {
+      set_time(time);
+    }
+    return steward.accessor_after(time);
+  }
+  
+  void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
+    node* cur_node = current_history[place_in_current_history];
+    if ((place_in_current_history+1 >= current_history.size()) && (cur_node->events.empty() || cur_node->events.back()->first <= time)) {
+      cur_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
+    }
+    else {
+      while (current_history.size() >= place_in_current_history) { current_history.pop_back(); }
+      auto p = cur_node->children.insert(std::make_pair(time, node(time)));
+      node* new_node = &p.first->second;
+      current_history.push_back(new_node);
+      new_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
+    }
+  }
+  
+  
+  void set_time(time_type new_time) {
+    if (new_time > current_time) {
+      while (true) {
+        node* cur_node = current_history[place_in_current_history];
+        node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
+        for (i = cur_node->events.upper_bound(current_time);
+            i != cur_node->events.end() && (i->first <= new_time) &&
+            ((!next_node) || (i->first <= next_node->start_time)); ++i) {
+          steward.insert_fiat_event(i->first, i->second.distinguisher, i->second.e);
+        }
+        if (next_node && new_time >= next_node->start_time) {
+          ++place_in_current_history;
+        }
+        else {
+          break;
+        }
+      }
+    }
+    if (new_time < current_time) {
+      while (true) {
+        node* cur_node = current_history[place_in_current_history];
+        node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
+        for (i = cur_node->events.upper_bound(new_time);
+            i != cur_node->events.end() && (i->first <= current_time) &&
+            ((!next_node) || (i->first <= next_node->start_time)); ++i) {
+          steward.erase_fiat_event(i->first, i->second.distinguisher);
+        }
+        if (place_in_current_history > 0 && new_time < cur_node->start_time) {
+          --place_in_current_history;
+        }
+        else {
+          break;
+        }
+      }
+    }
+    current_time = new_time;
+  }
+  void set_history(history const& new_history) {
+    size_t first_difference = 0;
+    while (current_history.size() < first_difference ||
+               new_history.size() < first_difference ||
+               current_history[first_difference+1] == new_history[first_difference+1]) {
+      ++first_difference;
+    }
+    if (current_history.size() < first_difference &&
+            new_history.size() < first_difference) { return; }
+    const time_type s0 = (current_history.size() < first_difference) ? min_time : current_history[first_difference]->start_time;
+    const time_type s1 = (    new_history.size() < first_difference) ? min_time :     new_history[first_difference]->start_time;
+    const time_type branch_point = std::max(s0, s1);
+    if (branch_point-1 < current_time) {
+      set_time(branch_point-1);
+    }
+    /*while (current_history->start_time >= branch_point) {
+      current_history.pop_back();
+    }
+    
+    size_t next_difference = first_difference;
+    while (new_history.size() < next_difference) {
+      current_history.push_back(new_history[next_difference++]);
+    }*/
+    current_history = new_history;
+  }
+  
+  /*history_tree_node* inc_sibling(history_tree_node* old_history, bool direction)const {
+    if (!old_history->parent) { return nullptr; }
+    auto i = old_history->parent->children.find(old_history);
+    assert (i != old_history->parent->children.end());
+    if (direction) {
+      ++i;
+      if (i == old_history->parent->children.end()) { return nullptr; }
+      return *i;
+    }
+    else {
+      if (i == old_history->parent->children.begin()) { return nullptr; }
+      --i;
+      return *i;
+    }
+  }
+  history inc_history(history_tree_node* old_history, time_type switch_time, bool direction)const {
+    history_tree_node* new_history = old_history;
+    while (new_history->start_time >= switch_time) {
+      new_history = new_history->parent;
+    }
+    while (true) {
+      history_tree_node* next_history = inc_sibling(new_history, direction);
+      if (next_history) { return next_history; }
+      new_history = new_history->parent;
+      if (!new_history) { return old_history; }
+    }
+  }*/
 };
 
 time_type shot_tail_delay = second_time/10;
