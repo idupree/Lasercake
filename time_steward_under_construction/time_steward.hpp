@@ -1040,6 +1040,10 @@ public:
     // TODO
     const extended_time t = make_extended_time::event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
+    if (event_piles_needing_unexecution.find(t) != event_piles_needing_unexecution.end()) {
+      const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(t);
+      assert (event_pile_deleted_for_being_out_of_date);
+    }
     insert_instigating_event(t, event_pile_info(e));
   }
   void erase_fiat_event(time_type time, uint64_t distinguisher) {

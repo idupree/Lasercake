@@ -443,11 +443,12 @@ public:
   size_t place_in_current_history;
   
   history_tree():
-    history_root(0),
-    current_time(min_time),
+    history_root(-1),
+    current_time(-1),
     place_in_current_history(0)
   {
     current_history.push_back(&history_root);
+    validate();
   }
   
   struct spatial_representation_entry {
@@ -563,8 +564,30 @@ public:
     }
   }
   
+  void validate_node(node const& n) {
+    for (auto const& p : n.events) {
+      assert (p.first >= n.start_time);
+    }
+    for (auto const& p : n.children) {
+      assert (p.first > n.start_time);
+      assert (p.second.start_time == p.first);
+      validate_node(p.second);
+    }
+  }
+  void validate() {
+    assert (place_in_current_history < current_history.size());
+    assert (current_history[place_in_current_history]->start_time <= current_time);
+    assert ((place_in_current_history+1 >= current_history.size()) || current_history[place_in_current_history+1]->start_time > current_time);
+    node* n = &history_root;
+    for (size_t i = 1; i < current_history.size(); ++i) {
+      assert(n->children.find(current_history[i]->start_time) != n->children.end());
+      n = current_history[i];
+    }
+    validate_node(history_root);
+  }
   
   void set_time(time_type new_time) {
+    validate();
     if (new_time > current_time) {
       while (true) {
         node* cur_node = current_history[place_in_current_history];
@@ -600,8 +623,10 @@ public:
       }
     }
     current_time = new_time;
+    validate();
   }
   void set_history(history const& new_history) {
+    validate();
     size_t first_difference = 0;
     while (current_history.size() < first_difference ||
                new_history.size() < first_difference ||
@@ -625,6 +650,7 @@ public:
       current_history.push_back(new_history[next_difference++]);
     }*/
     current_history = new_history;
+    validate();
   }
   
   /*history_tree_node* inc_sibling(history_tree_node* old_history, bool direction)const {
@@ -697,18 +723,30 @@ void draw_green_caves(history_tree& w, time_type time, DrawFuncsType& draw) {
   history_tree::spatial_representation sprep = w.spatialize();
   const double max = sprep.columns.back().time;
   const double vqqq = tile_size*view_rad;
+  size_t place_in_current_history = 0;
   for (size_t i = 1; i < sprep.columns.size(); ++i) {
     auto& cur = sprep.columns[i];
     auto& prev = sprep.columns[i-1];
     for (auto e : cur.entries) {
       for (auto f : prev.entries) {
         if (f.h.back() == e.h.back()) {
-          draw.segment(
-            (double(prev.time * vqqq * 2) / max) - vqqq,
-            f.height * vqqq * 0.3 + vqqq * 0.7,
-            (double(cur.time * vqqq * 2) / max) - vqqq,
-            e.height * vqqq * 0.3 + vqqq * 0.7
-          );
+          double x0 = (double(prev.time * vqqq * 2) / max) - vqqq;
+          double y0 = f.height * vqqq * 0.3 + vqqq * 0.7;
+          double x1 = (double(cur.time * vqqq * 2) / max) - vqqq;
+          double y1 = e.height * vqqq * 0.3 + vqqq * 0.7;
+          draw.segment(x0, y0, x1, y1);
+          if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
+            ++place_in_current_history;
+          }
+          if (w.current_history[place_in_current_history] == e.h.back()) {
+            draw.segment(x1, y1, x0, y0);
+            if (prev.time <= time && time < cur.time) {
+              draw.circle(
+                x0 + (x1-x0)*double(time-prev.time)/double(cur.time-prev.time),
+                y0 + (y1-y0)*double(time-prev.time)/double(cur.time-prev.time),
+                vqqq * 0.02);
+            }
+          }
         }
       }
     }
