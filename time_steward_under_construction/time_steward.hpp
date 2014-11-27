@@ -1348,7 +1348,7 @@ private:
           update_trigger_access_record(id, time, pile_info.tid, false);
         }
       }
-      std::pair<const extended_time, trigger_call_info> const* next_call_ptr;
+      std::pair<const extended_time, trigger_call_info> const* next_call_ptr = nullptr;
       if (pile_info.tid) {
         next_call_ptr = next_scheduled_trigger_call(pile_info.tid, time);
       }

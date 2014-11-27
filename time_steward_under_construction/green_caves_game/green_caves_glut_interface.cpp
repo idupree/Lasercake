@@ -49,21 +49,24 @@ struct draw_funcs {
   void rect(double x0, double y0, double x1, double y1) {
     gl_polygon polygon;
     polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x0, y0, 0,
-      gl_data_format::color(green_color)));
+        x0, y0, 0, green_color));
     polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x1, y0, 0,
-      gl_data_format::color(green_color)));
+        x1, y0, 0, green_color));
     polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x1, y1, 0,
-      gl_data_format::color(green_color)));
+        x1, y1, 0, green_color));
     polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x0, y1, 0,
-      gl_data_format::color(green_color)));
+        x0, y1, 0, green_color));
     push_wireframe_polygon(triangles, tile_size/3, polygon);
   }
   void segment(double x0, double y0, double x1, double y1) {
-    
+    triangles.push_back(gl_triangle{{{
+      gl_data_format::vertex_with_color(x0+tile_size/10, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0-tile_size/10, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+    triangles.push_back(gl_triangle{{{
+      gl_data_format::vertex_with_color(x0, y0+tile_size/10, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y0-tile_size/10, 0, green_color),
+      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
   }
 };
 
@@ -251,13 +254,38 @@ static void keyup(unsigned char key, int /*x*/, int /*y*/) {
   keys[key] = false;
 }
 
+bool lmb = false;
+int mouse_x;
+int mouse_y;
+static void mouse(int button, int state, int x, int y) {
+  mouse_x = x;
+  mouse_y = y;
+  if (button == GLUT_LEFT_BUTTON) {
+    lmb = (state == GLUT_DOWN);
+  }
+}
+static void mouse2(int x, int y) {
+  mouse_x = x;
+  mouse_y = y;
+}
+
 const space_coordinate acc = tile_size*500/(second_time*second_time);
 static void Idle(void) {
-  gtime = gtime + (second_time>>8);
+  gtime = gtime + (second_time>>6);
+  std::unique_ptr<time_steward::accessor> accessor = steward.accessor_after(gtime);
   if (keys['w'] && !keys['s']) { steward.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
   if (keys['s'] && !keys['w']) { steward.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
   if (keys['a'] && !keys['d']) { steward.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
   if (keys['d'] && !keys['a']) { steward.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
+  if (lmb && accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id)) <= gtime) {
+    fd_vector v(mouse_x-400, 400-mouse_y);
+    space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
+    if (mag > 0) {
+      v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+      v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+      steward.insert_fiat_event(gtime, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
+    }
+  }
   glutPostRedisplay();
 }
 
@@ -278,6 +306,9 @@ int main(int argc, char **argv)
   if(glew_init_err != GLEW_OK) { throw "glew failed"; }
   glutKeyboardFunc(keydown);
   glutKeyboardUpFunc(keyup);
+  glutMouseFunc(mouse);
+  glutMotionFunc(mouse2);
+  glutPassiveMotionFunc(mouse2);
   glutDisplayFunc(Draw);
   glutIdleFunc(Idle);
   glutReshapeWindow(800,800);

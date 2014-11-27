@@ -191,7 +191,7 @@ public:
     auto e = accessor->get(id);
     auto old_te = tile_entity(accessor, accessor->get<shot_tile>(e));
     auto new_te = tile_entity(accessor, tile);
-    auto s = accessor->get_mut<tile_shots>(old_te);
+    auto& s = accessor->get_mut<tile_shots>(old_te);
     s = s.erase(id);
     if (accessor->get<wall_state>(new_te) == WALL) {
       accessor->set<shot_trajectory>(e, none);
@@ -199,7 +199,8 @@ public:
     }
     else {
       anticipate_shot_moving(accessor, e, tile);
-      auto s = accessor->get_mut<tile_shots>(new_te);
+      accessor->set<shot_tile>(e, tile);
+      auto& s = accessor->get_mut<tile_shots>(new_te);
       s = s.insert(id);
     }
   }
@@ -300,12 +301,13 @@ public:
     player_shape const& p = *accessor->get<player_shape>(player);
     auto shot = accessor->create_entity();
     accessor->set<shot_trajectory>(shot, poly_fd_vector(
-          poly(0, poly::without_origin_t(p.center(0)(accessor->now()),v(0))),
-          poly(0, poly::without_origin_t(p.center(1)(accessor->now()),v(1)))));
+          poly(accessor->now(), poly::without_origin_t(p.center(0)(accessor->now()),v(0))),
+          poly(accessor->now(), poly::without_origin_t(p.center(1)(accessor->now()),v(1)))));
     fd_vector tile = accessor->get<player_center_reference_tile>(player);
     auto te = tile_entity(accessor, tile);
-    auto s = accessor->get_mut<tile_shots>(te);
+    auto& s = accessor->get_mut<tile_shots>(te);
     s = s.insert(shot.id());
+    accessor->set<shot_tile>(shot, tile);
     anticipate_shot_moving(accessor, shot, tile);
     accessor->set<player_next_shot_time>(player, accessor->now() + (second_time/4));
   }
@@ -512,12 +514,13 @@ void draw_green_caves(time_steward::accessor const* accessor, DrawFuncsType& dra
         );
       }
       for (entity_id shot : accessor->get<tile_shots>(te)) {
+        assert(accessor->get<shot_tile>(accessor->get(shot)) == tile);
         auto trajectory = *accessor->get<shot_trajectory>(accessor->get(shot));
         draw.segment(
           trajectory(0)(accessor->now()) - cx,
-          trajectory(0)(accessor->now()) - cy,
+          trajectory(1)(accessor->now()) - cy,
           trajectory(0)(accessor->now() - shot_tail_delay) - cx,
-          trajectory(0)(accessor->now() - shot_tail_delay) - cy
+          trajectory(1)(accessor->now() - shot_tail_delay) - cy
         );
       }
     }
