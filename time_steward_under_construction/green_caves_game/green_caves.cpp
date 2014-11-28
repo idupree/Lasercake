@@ -42,6 +42,7 @@ using time_steward_system::none;
 typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate, 2> poly;
 typedef bounded_int_calculus::polynomial_with_origin<time_type, space_coordinate, 3> poly3;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, space_coordinate> fd_vector;
+typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, double> double_vector;
 typedef bounded_int_calculus::finite_dimensional_vector<num_dimensions, poly> poly_fd_vector;
 
 const int view_rad = 10;
@@ -628,15 +629,17 @@ public:
   void set_history(history const& new_history) {
     validate();
     size_t first_difference = 0;
-    while (current_history.size() < first_difference ||
-               new_history.size() < first_difference ||
-               current_history[first_difference+1] == new_history[first_difference+1]) {
+    while (first_difference+1 >= current_history.size() ||
+           first_difference+1 >=     new_history.size() ||
+           current_history[first_difference+1] == new_history[first_difference+1]) {
       ++first_difference;
+      if (first_difference >= current_history.size() ||
+          first_difference >=     new_history.size()) { break; }
     }
-    if (current_history.size() < first_difference &&
-            new_history.size() < first_difference) { return; }
-    const time_type s0 = (current_history.size() < first_difference) ? min_time : current_history[first_difference]->start_time;
-    const time_type s1 = (    new_history.size() < first_difference) ? min_time :     new_history[first_difference]->start_time;
+    if (first_difference >= current_history.size() &&
+        first_difference >=     new_history.size()) { return; }
+    const time_type s0 = (first_difference >= current_history.size()) ? min_time : current_history[first_difference]->start_time;
+    const time_type s1 = (first_difference >=     new_history.size()) ? min_time :     new_history[first_difference]->start_time;
     const time_type branch_point = std::max(s0, s1);
     if (branch_point-1 < current_time) {
       set_time(branch_point-1);
@@ -682,9 +685,94 @@ public:
   }*/
 };
 
+struct view_rect {
+  fd_vector screen_min;
+  fd_vector screen_size;
+  double_vector to_screen(double_vector loc) {
+    double_vector r(double(screen_min(0)), double(screen_min(1)));
+    r[0] += screen_size(0) * loc(0);
+    r[1] += screen_size(1) * loc(1);
+    return r;
+  }
+  double_vector from_screen(fd_vector loc) {
+    fd_vector r0 = loc - screen_min;
+    double_vector r(double(r0(0)), double(r0(1)));
+    r[0] /= screen_size(0);
+    r[1] /= screen_size(1);
+    return r;
+  }
+};
+const double vqqq = tile_size*view_rad*2;
+
+struct draw_green_caves_metadata {
+  history_tree::spatial_representation sprep;
+  view_rect main_view;
+  view_rect hist_view;
+  num_coordinates_type hist_time_dim;
+  double hist_max_time() {
+    return double(sprep.columns.back().time);
+  }
+  double_vector main_to_screen(space_coordinate x, space_coordinate y) {
+    double_vector r;
+    r[0] = 0.5 + double(x) / vqqq;
+    r[1] = 0.5 + double(y) / vqqq;
+    return main_view.to_screen(r);
+  }
+  double_vector hist_to_screen(time_type time, double height) {
+    double_vector r;
+    r[hist_time_dim] = double(time) / hist_max_time();
+    r[!hist_time_dim] = height;
+    return hist_view.to_screen(r);
+  }
+  std::pair<time_type, history_tree::history> hist_from_screen(fd_vector loc) {
+    history_tree::history best;
+    if (sprep.columns.empty()) return std::pair<time_type, history_tree::history>(never, best);
+    double_vector r = hist_view.from_screen(loc);
+    if (r(!hist_time_dim) < 0) return std::pair<time_type, history_tree::history>(never, best);
+    
+    const time_type time = r(hist_time_dim) * hist_max_time();
+    const double height = r(!hist_time_dim);
+    double best_dist = 2;
+    for (size_t i = 1; i < sprep.columns.size(); ++i) {
+      auto& cur = sprep.columns[i];
+      auto& prev = sprep.columns[i-1];
+      if (prev.time <= time && time < cur.time) {
+        double frac = double(time-prev.time)/double(cur.time-prev.time);
+        for (auto e : cur.entries) {
+          for (auto f : prev.entries) {
+            if (f.h.back() == e.h.back()) {
+              const double efh = f.height + (e.height-f.height)*frac;
+              const double dist = std::abs(efh - height);
+              if (dist < best_dist) {
+                best_dist = dist;
+                best = e.h;
+              }
+            }
+          }
+        }
+      }
+    }
+    return std::pair<time_type, history_tree::history>(time, best);
+  }
+  draw_green_caves_metadata() {}
+  draw_green_caves_metadata(fd_vector screen_size) {
+    hist_time_dim = (screen_size(1) > screen_size(0)) ? 0 : 1;
+    main_view.screen_min = fd_vector(0,0);
+    hist_view.screen_size[hist_time_dim] = screen_size(hist_time_dim);
+    hist_view.screen_size[!hist_time_dim] = screen_size(hist_time_dim) / 3;
+    hist_view.screen_min[hist_time_dim] = 0;
+    int64_t remaining = screen_size(!hist_time_dim) - hist_view.screen_size(!hist_time_dim);
+    hist_view.screen_min[!hist_time_dim] = remaining;
+    int64_t mss = std::min(remaining, screen_size(hist_time_dim));
+    main_view.screen_size = fd_vector(mss,mss);
+  }
+};
+
 time_type shot_tail_delay = second_time/10;
 template<class DrawFuncsType>
-void draw_green_caves(history_tree& w, time_type time, DrawFuncsType& draw) {
+draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& w, time_type time, DrawFuncsType& draw) {
+  draw_green_caves_metadata metadata(screen_size);
+  metadata.sprep = w.spatialize();
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
   auto player = accessor->get(time_steward_system::global_object_id);
   fd_vector ct = accessor->get<player_center_reference_tile>(player);
@@ -692,7 +780,8 @@ void draw_green_caves(history_tree& w, time_type time, DrawFuncsType& draw) {
   
   const space_coordinate cx = p.center(0)(accessor->now());
   const space_coordinate cy = p.center(1)(accessor->now());
-  draw.circle(0, 0, p.radius);
+  double_vector pv = metadata.main_to_screen(0, 0);
+  draw.circle(pv(0), pv(1), 20 /*double(p.radius) / vqqq*/);
   
   for (tile_coordinate tx = ct(0)-view_rad; tx <= ct(0)+view_rad; ++tx) {
     for (tile_coordinate ty = ct(1)-view_rad; ty <= ct(1)+view_rad; ++ty) {
@@ -700,55 +789,45 @@ void draw_green_caves(history_tree& w, time_type time, DrawFuncsType& draw) {
       auto te = accessor->get(tile_entity_id(tile));
       
       if (accessor->get<wall_state>(te) == WALL) {
-        draw.rect(
-          tile_to_space_min(tx) - cx,
-          tile_to_space_min(ty) - cy,
-          tile_to_space_max(tx) - cx,
-          tile_to_space_max(ty) - cy
-        );
+        double_vector v0 = metadata.main_to_screen(tile_to_space_min(tx) - cx, tile_to_space_min(ty) - cy);
+        double_vector v1 = metadata.main_to_screen(tile_to_space_max(tx) - cx, tile_to_space_max(ty) - cy);
+        draw.rect(v0(0), v0(1), v1(0), v1(1));
       }
       for (entity_id shot : accessor->get<tile_shots>(te)) {
         assert(accessor->get<shot_tile>(accessor->get(shot)) == tile);
         auto trajectory = *accessor->get<shot_trajectory>(accessor->get(shot));
-        draw.segment(
-          trajectory(0)(accessor->now()) - cx,
-          trajectory(1)(accessor->now()) - cy,
-          trajectory(0)(accessor->now() - shot_tail_delay) - cx,
-          trajectory(1)(accessor->now() - shot_tail_delay) - cy
-        );
+        double_vector v0 = metadata.main_to_screen(trajectory(0)(accessor->now()) - cx, trajectory(1)(accessor->now()) - cy);
+        double_vector v1 = metadata.main_to_screen(trajectory(0)(accessor->now() - shot_tail_delay) - cx, trajectory(1)(accessor->now() - shot_tail_delay) - cy);
+        draw.segment(v0(0), v0(1), v1(0), v1(1));
       }
     }
   }
   
-  history_tree::spatial_representation sprep = w.spatialize();
-  const double max = sprep.columns.back().time;
-  const double vqqq = tile_size*view_rad;
   size_t place_in_current_history = 0;
-  for (size_t i = 1; i < sprep.columns.size(); ++i) {
-    auto& cur = sprep.columns[i];
-    auto& prev = sprep.columns[i-1];
+  for (size_t i = 1; i < metadata.sprep.columns.size(); ++i) {
+    auto& cur = metadata.sprep.columns[i];
+    auto& prev = metadata.sprep.columns[i-1];
     for (auto e : cur.entries) {
       for (auto f : prev.entries) {
         if (f.h.back() == e.h.back()) {
-          double x0 = (double(prev.time * vqqq * 2) / max) - vqqq;
-          double y0 = f.height * vqqq * 0.3 + vqqq * 0.7;
-          double x1 = (double(cur.time * vqqq * 2) / max) - vqqq;
-          double y1 = e.height * vqqq * 0.3 + vqqq * 0.7;
-          draw.segment(x0, y0, x1, y1);
+          double_vector v0 = metadata.hist_to_screen(prev.time, f.height);
+          double_vector v1 = metadata.hist_to_screen(cur.time, e.height);
+          draw.segment(v0(0), v0(1), v1(0), v1(1));
           if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
             ++place_in_current_history;
           }
           if (w.current_history[place_in_current_history] == e.h.back()) {
-            draw.segment(x1, y1, x0, y0);
+            draw.segment(v1(0), v1(1), v0(0), v0(1));
             if (prev.time <= time && time < cur.time) {
               draw.circle(
-                x0 + (x1-x0)*double(time-prev.time)/double(cur.time-prev.time),
-                y0 + (y1-y0)*double(time-prev.time)/double(cur.time-prev.time),
-                vqqq * 0.02);
+                v0(0) + (v1(0)-v0(0))*double(time-prev.time)/double(cur.time-prev.time),
+                v0(1) + (v1(1)-v0(1))*double(time-prev.time)/double(cur.time-prev.time),
+                20);
             }
           }
         }
       }
     }
   }
+  return metadata;
 }

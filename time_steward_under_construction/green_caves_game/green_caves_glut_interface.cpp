@@ -31,6 +31,8 @@
 #include <GL/glut.h>
 
 gl_data_format::color green_color(0x00ff00ff);
+fd_vector gscreen_size;
+draw_green_caves_metadata last_metadata;
 
 struct draw_funcs {
   draw_funcs(gl_triangles& triangles) : triangles(triangles){}
@@ -56,16 +58,16 @@ struct draw_funcs {
         x1, y1, 0, green_color));
     polygon.vertices_.push_back(gl_data_format::vertex_with_color(
         x0, y1, 0, green_color));
-    push_wireframe_polygon(triangles, tile_size/3, polygon);
+    push_wireframe_polygon(triangles, 5, polygon);
   }
   void segment(double x0, double y0, double x1, double y1) {
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0+tile_size/10, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x0-tile_size/10, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0+2, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0-2, y0, 0, green_color),
       gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0, y0+tile_size/10, 0, green_color),
-      gl_data_format::vertex_with_color(x0, y0-tile_size/10, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y0+2, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y0-2, 0, green_color),
       gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
   }
 };
@@ -73,8 +75,7 @@ struct draw_funcs {
 gl_triangles display(history_tree& w, time_type time) {
   gl_triangles triangles;
   draw_funcs draw(triangles);
-  std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
-  draw_green_caves(w, time, draw);
+  last_metadata = draw_green_caves(gscreen_size, w, time, draw);
   
   return triangles;
 }
@@ -184,11 +185,6 @@ void do_gl(history_tree& w, time_type time) {
   glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
   glClearColor(0.0, 0.0, 0.0, 1.0);
   glClear(GL_COLOR_BUFFER_BIT);
-  glLoadIdentity();
-  //gluPerspective(90, 1, 1, 1000);
-  //gluLookAt(20,20,20,0,0,0,0,0,1);
-  //gluLookAt(0,0,0,1,1,1,0,0,1);
-  gluOrtho2D(-tile_size*view_rad, tile_size*view_rad, -tile_size*view_rad, tile_size*view_rad);
 
   gl_triangles data = display(w, time);
   if(const size_t count = data.size()*3) {
@@ -200,7 +196,7 @@ void do_gl(history_tree& w, time_type time) {
     auto position_attrib_location = glGetAttribLocation(shader_program_name, "position");
     auto color_attrib_location = glGetAttribLocation(shader_program_name, "color");
         if(GLEW_VERSION_2_0) {
-          std::cerr << "GLEW_VERSION_2_0\n";
+          //std::cerr << "GLEW_VERSION_2_0\n";
 #define BUFFER_OFFSET(i) ((void*)(i))
           glVertexAttribPointer(color_attrib_location, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(gl_data_format::vertex_with_color), BUFFER_OFFSET(0+offsetof(gl_data_format::vertex_with_color, c)));
           glVertexAttribPointer(position_attrib_location, 3, GL_FLOAT, GL_FALSE, sizeof(gl_data_format::vertex_with_color), BUFFER_OFFSET(0+offsetof(gl_data_format::vertex_with_color, v)));
@@ -263,12 +259,28 @@ static void mouse(int button, int state, int x, int y) {
   mouse_x = x;
   mouse_y = y;
   if (button == GLUT_LEFT_BUTTON) {
-    lmb = (state == GLUT_DOWN);
+    auto h = last_metadata.hist_from_screen(fd_vector(mouse_x,gscreen_size(1)-mouse_y));
+    if ((state == GLUT_DOWN) && !h.second.empty()) {
+      hist.set_history(h.second);
+      gtime = h.first;
+      lmb = false;
+      std::cerr << gtime << "!\n";
+    }
+    else {
+      lmb = (state == GLUT_DOWN);
+    }
   }
 }
 static void mouse2(int x, int y) {
   mouse_x = x;
   mouse_y = y;
+}
+void reshape(int width, int height) {
+  gscreen_size[0] = width;
+  gscreen_size[1] = height;
+  glViewport(0,0,width,height);
+  glLoadIdentity();
+  gluOrtho2D(0, GLdouble(width), 0, GLdouble(height));
 }
 
 const space_coordinate acc = tile_size*500/(second_time*second_time);
@@ -280,7 +292,8 @@ static void Idle(void) {
   if (keys['a'] && !keys['d']) { hist.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
   if (keys['d'] && !keys['a']) { hist.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
   if (lmb && accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id)) <= gtime) {
-    fd_vector v(mouse_x-400, 400-mouse_y);
+    double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, gscreen_size(1)-mouse_y)) - double_vector(-0.5,-0.5);
+    fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
     space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
     if (mag > 0) {
       v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
@@ -310,6 +323,7 @@ int main(int argc, char **argv)
   glutKeyboardUpFunc(keyup);
   glutMouseFunc(mouse);
   glutMotionFunc(mouse2);
+  glutReshapeFunc(reshape);
   glutPassiveMotionFunc(mouse2);
   glutDisplayFunc(Draw);
   glutIdleFunc(Idle);
