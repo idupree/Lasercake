@@ -32,6 +32,7 @@ typedef time_steward_system::time_steward<time_steward_system::fields_list<int>>
 typedef hack_time_steward::time_type time_type;
 const time_type never = hack_time_steward::never;
 const time_type min_time = hack_time_steward::min_time;
+const time_type max_time = hack_time_steward::max_time;
 typedef time_steward_system::entity_id entity_id;
 
 typedef int64_t space_coordinate;
@@ -629,18 +630,16 @@ public:
   void set_history(history const& new_history) {
     validate();
     size_t first_difference = 0;
-    while (first_difference+1 >= current_history.size() ||
-           first_difference+1 >=     new_history.size() ||
-           current_history[first_difference+1] == new_history[first_difference+1]) {
+    while (current_history[first_difference] == new_history[first_difference]) {
       ++first_difference;
       if (first_difference >= current_history.size() ||
           first_difference >=     new_history.size()) { break; }
     }
     if (first_difference >= current_history.size() &&
         first_difference >=     new_history.size()) { return; }
-    const time_type s0 = (first_difference >= current_history.size()) ? min_time : current_history[first_difference]->start_time;
-    const time_type s1 = (first_difference >=     new_history.size()) ? min_time :     new_history[first_difference]->start_time;
-    const time_type branch_point = std::max(s0, s1);
+    const time_type s0 = (first_difference >= current_history.size()) ? max_time : current_history[first_difference]->start_time;
+    const time_type s1 = (first_difference >=     new_history.size()) ? max_time :     new_history[first_difference]->start_time;
+    const time_type branch_point = std::min(s0, s1);
     if (branch_point-1 < current_time) {
       set_time(branch_point-1);
     }
@@ -781,7 +780,7 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
   const space_coordinate cx = p.center(0)(accessor->now());
   const space_coordinate cy = p.center(1)(accessor->now());
   double_vector pv = metadata.main_to_screen(0, 0);
-  draw.circle(pv(0), pv(1), 20 /*double(p.radius) / vqqq*/);
+  draw.circle(pv(0), pv(1), double(p.radius) * double(metadata.main_view.screen_size(0)) / vqqq);
   
   for (tile_coordinate tx = ct(0)-view_rad; tx <= ct(0)+view_rad; ++tx) {
     for (tile_coordinate ty = ct(1)-view_rad; ty <= ct(1)+view_rad; ++ty) {

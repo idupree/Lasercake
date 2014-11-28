@@ -292,7 +292,8 @@ static void Idle(void) {
   if (keys['a'] && !keys['d']) { hist.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
   if (keys['d'] && !keys['a']) { hist.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
   if (lmb && accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id)) <= gtime) {
-    double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, gscreen_size(1)-mouse_y)) - double_vector(-0.5,-0.5);
+    double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, gscreen_size(1)-mouse_y)) - double_vector(0.5, 0.5);
+    std::cerr << v0;
     fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
     space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
     if (mag > 0) {
