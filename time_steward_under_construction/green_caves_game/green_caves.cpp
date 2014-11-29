@@ -890,7 +890,18 @@ struct green_caves_ui_backend {
     mouse_y = y;
     auto h = last_metadata.hist_from_screen(fd_vector(mouse_x,screen_size(1)-mouse_y));
     if (!h.second.empty()) {
-      hist.set_history(h.second);
+      bool dif = true;
+      for (size_t i = 1; i < hist.current_history.size(); ++i) {
+        if (hist.current_history[i]->start_time > h.first) {
+          if (hist.current_history[i-1] == h.second.back()) {
+            dif = false;
+          }
+          break;
+        }
+      }
+      if (dif) {
+        hist.set_history(h.second);
+      }
       current_time = h.first;
       shooting = false;
     }
