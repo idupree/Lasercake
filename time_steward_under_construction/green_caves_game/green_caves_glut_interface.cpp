@@ -61,14 +61,14 @@ struct draw_funcs {
         x0, y1, 0, green_color));
     push_wireframe_polygon(triangles, 5, polygon);
   }
-  void segment(double x0, double y0, double x1, double y1) {
+  void segment(double x0, double y0, double x1, double y1, double width) {
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0+2, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x0-2, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0+width, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0-width, y0, 0, green_color),
       gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0, y0+2, 0, green_color),
-      gl_data_format::vertex_with_color(x0, y0-2, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y0+width, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y0-width, 0, green_color),
       gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
   }
 };

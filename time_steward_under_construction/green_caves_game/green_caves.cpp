@@ -797,7 +797,7 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
         auto trajectory = *accessor->get<shot_trajectory>(accessor->get(shot));
         double_vector v0 = metadata.main_to_screen(trajectory(0)(accessor->now()) - cx, trajectory(1)(accessor->now()) - cy);
         double_vector v1 = metadata.main_to_screen(trajectory(0)(accessor->now() - shot_tail_delay) - cx, trajectory(1)(accessor->now() - shot_tail_delay) - cy);
-        draw.segment(v0(0), v0(1), v1(0), v1(1));
+        draw.segment(v0(0), v0(1), v1(0), v1(1), 1.5);
       }
     }
   }
@@ -811,17 +811,17 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
         if (f.h.back() == e.h.back()) {
           double_vector v0 = metadata.hist_to_screen(prev.time, f.height);
           double_vector v1 = metadata.hist_to_screen(cur.time, e.height);
-          draw.segment(v0(0), v0(1), v1(0), v1(1));
+          bool in_current_history = (w.current_history[place_in_current_history] == e.h.back());
+          draw.segment(v0(0), v0(1), v1(0), v1(1), in_current_history ? 4 : 1.5);
           if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
             ++place_in_current_history;
           }
-          if (w.current_history[place_in_current_history] == e.h.back()) {
-            draw.segment(v1(0), v1(1), v0(0), v0(1));
+          if (in_current_history) {
             if (prev.time <= time && time < cur.time) {
               draw.circle(
                 v0(0) + (v1(0)-v0(0))*double(time-prev.time)/double(cur.time-prev.time),
                 v0(1) + (v1(1)-v0(1))*double(time-prev.time)/double(cur.time-prev.time),
-                20);
+                15);
             }
           }
         }
