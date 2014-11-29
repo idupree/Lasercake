@@ -830,3 +830,86 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
   }
   return metadata;
 }
+
+const int64_t acc_updates_per_second = 50;
+const space_coordinate acc = tile_size*30/(second_time*acc_updates_per_second);
+
+struct green_caves_ui_backend {
+  fd_vector screen_size;
+  draw_green_caves_metadata last_metadata;
+
+  history_tree hist;
+  time_type current_time = 0;
+  int64_t last_milliseconds = 0;
+  bool shooting = false;
+  int mouse_x;
+  int mouse_y;
+  bool left = false;
+  bool right = false;
+  bool up = false;
+  bool down = false;
+  green_caves_ui_backend() {
+    hist.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
+  }
+  void update_to_real_time(int64_t milliseconds) {
+    const int64_t dur = milliseconds-last_milliseconds;
+    last_milliseconds = milliseconds;
+    if (dur > 0 && dur < 400) {
+      const time_type new_time = current_time + second_time * dur / 1000;
+      for (int64_t i = current_time*acc_updates_per_second/second_time; i < new_time*acc_updates_per_second/second_time; ++i) {
+        const time_type ut = i * second_time / acc_updates_per_second;
+        if (   up && ! down) { hist.insert_fiat_event(ut, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
+        if ( down && !   up) { hist.insert_fiat_event(ut, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
+        if ( left && !right) { hist.insert_fiat_event(ut, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
+        if (right && ! left) { hist.insert_fiat_event(ut, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
+      }
+      while (shooting) {
+        std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(new_time);
+        time_type st = accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id));
+        if (st < current_time) { st = current_time; }
+        if (st <= new_time) {
+          double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, screen_size(1)-mouse_y)) - double_vector(0.5, 0.5);
+          //std::cerr << v0;
+          fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
+          space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
+          if (mag > 0) {
+            v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+            v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+            hist.insert_fiat_event(st, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
+          }
+        }
+        else {
+          break;
+        }
+      }
+      current_time = new_time;
+    }
+  }
+  void mouse_down(int x, int y) {
+    mouse_x = x;
+    mouse_y = y;
+    auto h = last_metadata.hist_from_screen(fd_vector(mouse_x,screen_size(1)-mouse_y));
+    if (!h.second.empty()) {
+      hist.set_history(h.second);
+      current_time = h.first;
+      shooting = false;
+    }
+    else {
+      shooting = true;
+    }
+  }
+  void mouse_up(int x, int y) {
+    mouse_x = x;
+    mouse_y = y;
+    shooting = false;
+  }
+  void mouse_moves(int x, int y) {
+    mouse_x = x;
+    mouse_y = y;
+  }
+  template<class DrawFuncsType>
+  void draw(DrawFuncsType& draw) {
+    last_metadata = draw_green_caves(screen_size, hist, current_time, draw);
+  }
+};
+

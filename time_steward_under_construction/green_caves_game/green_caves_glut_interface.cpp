@@ -25,14 +25,15 @@
 
 #include <iostream>
 #include <cstddef>
+#include "boost/date_time/posix_time/posix_time.hpp"
 
 #include "green_caves.cpp"
 #include "../testcase_draw.cpp"
 #include <GL/glut.h>
 
+green_caves_ui_backend backend;
+
 gl_data_format::color green_color(0x00ff00ff);
-fd_vector gscreen_size;
-draw_green_caves_metadata last_metadata;
 
 struct draw_funcs {
   draw_funcs(gl_triangles& triangles) : triangles(triangles){}
@@ -72,10 +73,10 @@ struct draw_funcs {
   }
 };
 
-gl_triangles display(history_tree& w, time_type time) {
+gl_triangles display() {
   gl_triangles triangles;
   draw_funcs draw(triangles);
-  last_metadata = draw_green_caves(gscreen_size, w, time, draw);
+  backend.draw(draw);
   
   return triangles;
 }
@@ -174,7 +175,7 @@ void add_shaders() {
   shader_program_name = p;
 }
 
-void do_gl(history_tree& w, time_type time) {
+void do_gl() {
   static bool first_time = true;//hack
   if(first_time) {
     add_shaders();
@@ -186,7 +187,7 @@ void do_gl(history_tree& w, time_type time) {
   glClearColor(0.0, 0.0, 0.0, 1.0);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  gl_triangles data = display(w, time);
+  gl_triangles data = display();
   if(const size_t count = data.size()*3) {
     GLuint triangles_VBO_name;
     glGenBuffers(1, &triangles_VBO_name);
@@ -222,18 +223,20 @@ void do_gl(history_tree& w, time_type time) {
   }
 }
 
-
-history_tree hist;
-time_type gtime = 0;
 bool keys[255];
 
+boost::posix_time::ptime ptmin(boost::posix_time::min_date_time);
+void update() {
+  backend.update_to_real_time((boost::posix_time::microsec_clock::universal_time() - ptmin).total_milliseconds());
+}
+
+
 static void keydown(unsigned char key, int /*x*/, int /*y*/) {
+  update();
   keys[key] = true;
   switch (key) {
   case 27:
-    exit(0); break;
-  case 'q':
-    gtime = gtime * (rand()&1023) / 1023; break;/*
+    exit(0); break;/*
   case 'q':
           if(sdle.key.keysym.sym == SDLK_q) { time -= 100; if (time < 0) time = 0; }
   case 'w':
@@ -247,74 +250,58 @@ static void keydown(unsigned char key, int /*x*/, int /*y*/) {
   case 'd':
     height_angle -= 0.2; break;*/
   }
+  backend.up    = keys['w'];
+  backend.left  = keys['a'];
+  backend.down  = keys['s'];
+  backend.right = keys['d'];
 }
 static void keyup(unsigned char key, int /*x*/, int /*y*/) {
+  update();
   keys[key] = false;
+  backend.up    = keys['w'];
+  backend.left  = keys['a'];
+  backend.down  = keys['s'];
+  backend.right = keys['d'];
 }
 
-bool lmb = false;
-int mouse_x;
-int mouse_y;
 static void mouse(int button, int state, int x, int y) {
-  mouse_x = x;
-  mouse_y = y;
+  update();
   if (button == GLUT_LEFT_BUTTON) {
-    auto h = last_metadata.hist_from_screen(fd_vector(mouse_x,gscreen_size(1)-mouse_y));
-    if ((state == GLUT_DOWN) && !h.second.empty()) {
-      hist.set_history(h.second);
-      gtime = h.first;
-      lmb = false;
-      std::cerr << gtime << "!\n";
+    if (state == GLUT_DOWN) {
+      backend.mouse_down(x, y);
     }
     else {
-      lmb = (state == GLUT_DOWN);
+      backend.mouse_up(x, y);
     }
   }
 }
 static void mouse2(int x, int y) {
-  mouse_x = x;
-  mouse_y = y;
+  update();
+  backend.mouse_moves(x, y);
 }
 void reshape(int width, int height) {
-  gscreen_size[0] = width;
-  gscreen_size[1] = height;
+  update();
+  backend.screen_size[0] = width;
+  backend.screen_size[1] = height;
   glViewport(0,0,width,height);
   glLoadIdentity();
   gluOrtho2D(0, GLdouble(width), 0, GLdouble(height));
 }
 
-const space_coordinate acc = tile_size*500/(second_time*second_time);
 static void Idle(void) {
-  gtime = gtime + (second_time>>6);
-  std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(gtime);
-  if (keys['w'] && !keys['s']) { hist.insert_fiat_event(gtime, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
-  if (keys['s'] && !keys['w']) { hist.insert_fiat_event(gtime, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
-  if (keys['a'] && !keys['d']) { hist.insert_fiat_event(gtime, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
-  if (keys['d'] && !keys['a']) { hist.insert_fiat_event(gtime, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
-  if (lmb && accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id)) <= gtime) {
-    double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, gscreen_size(1)-mouse_y)) - double_vector(0.5, 0.5);
-    std::cerr << v0;
-    fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
-    space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
-    if (mag > 0) {
-      v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
-      v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
-      hist.insert_fiat_event(gtime, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
-    }
-  }
+  update();
   glutPostRedisplay();
 }
 
 static void Draw(void) {
-  do_gl(hist, gtime);
+  update();
+  do_gl();
   glutSwapBuffers();
 }
 
 int main(int argc, char **argv)
 {
   srand(0);
-  bounded_int_calculus::test();
-  hist.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
   glutCreateWindow("green caves");
