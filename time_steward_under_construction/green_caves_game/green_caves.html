@@ -1,0 +1,133 @@
+<!--
+
+    Copyright Eli Dupree and Isaac Dupree, 2014
+
+    This file is part of Lasercake.
+
+    Lasercake is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as
+    published by the Free Software Foundation, either version 3 of the
+    License, or (at your option) any later version.
+
+    Lasercake is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with Lasercake.  If not, see <http://www.gnu.org/licenses/>.
+
+-->
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Enter the green caves</title>
+    <style type="text/css">
+html,body { height: 100%; margin: 0; padding: 0; background-color: #50d050 }
+div,canvas { margin: 0; padding: 0; }
+    </style>
+    <script type="text/javascript" src="../jquery-1.6.2.min.js"></script>
+    <!--<script type="text/javascript" src="jquery.mousewheel.js"></script>-->
+    <!--<script type="text/javascript" src="underscore.js"></script>-->
+    <script type="text/javascript" src="green_caves.js"></script>
+    <!--<script type="text/javascript" src="new_collision_detection.js"></script>-->
+    <script type="text/javascript">/*jshint newcap: false*/
+    
+(function(){
+"use strict";
+
+
+$(function(){
+  (function(window){
+    var green_caves = {
+      canvas_context: document.getElementById("game_canvas").getContext("2d"),
+    };
+    window.green_caves = green_caves;
+  })(window);
+  
+  var mouse_x = (function(x){
+    var offs = $('#game_canvas').offset();
+    return = x - offs.left;
+  });
+  var mouse_y = (function(y){
+    var offs = $('#game_canvas').offset();
+    return = y - offs.top;
+  });
+  var update = (function(){
+    var now = new Date();
+    _update_to_real_time(now.getTime());
+  });
+  window.green_caves_canvas_context = document.getElementById("game_canvas").getContext("2d");
+
+  $(document).mousedown(function(){
+    update();
+    _mouse_down(mouse_x(), mouse_y());
+    return false;
+  });
+  $(document).mouseup(function(){
+    update();
+    _mouse_up(mouse_x(), mouse_y());
+    return false;
+  });
+  $(document).mousemove(function(e){
+    update();
+    _mouse_moves(mouse_x(), mouse_y());
+    return false;
+  });
+  $(document).keydown(function(e){
+    update();
+    var keycode = (e.keyCode ? e.keyCode : e.which);
+    var keystr = String.fromCharCode(keycode);
+    if (keycode === 37 || keystr === "A") { _set_left(true); }
+    if (keycode === 38 || keystr === "W") { _set_up(true); }
+    if (keycode === 39 || keystr === "D") { _set_right(true); }
+    if (keycode === 40 || keystr === "S") { _set_down(true); }
+    return false;
+  });
+  $(document).keyup(function(e){
+    update();
+    var keycode = (e.keyCode ? e.keyCode : e.which);
+    var keystr = String.fromCharCode(keycode);
+    if (keycode === 37 || keystr === "A") { _set_left(false); }
+    if (keycode === 38 || keystr === "W") { _set_up(false); }
+    if (keycode === 39 || keystr === "D") { _set_right(false); }
+    if (keycode === 40 || keystr === "S") { _set_down(false); }
+    return false;
+  });
+  
+  var draw = (function(){
+    green_caves_canvas_context.fillStyle = "black";
+    green_caves_canvas_context.fillRect(0,0,640,640);
+    _draw();
+  });
+  
+  var tick_finished = true;
+  (function tickloop(){
+    setTimeout(tickloop, 10);
+    if (tick_finished) {
+      tick_finished = false;
+      _update_to_real_time();
+      draw();
+      tick_finished = true;
+    }
+  }());
+});
+
+}());
+    </script>
+  </head>
+  <body>
+    <div style="min-height: 50%;"><div style="min-height: 390px"></div></div><div style=" margin-top:-390px; text-align: center;">
+      <p>You are surrounded by endless caves.</p>
+      <p>Will you explore peacefully, doing as little damage as possible? Or will you destroy everything in sight?</p>
+      <p>Arrow keys or WASD to move. Point and click to shoot.</p>
+    </div>
+    <div style="margin: 0 auto; width:640px; cursor: crosshair"><canvas id="game_canvas" width="640" height="640">
+Your browser does not support the canvas element.
+    </canvas></div>
+    <!--<p id="info"></p>-->
+  </body>
+</html>
