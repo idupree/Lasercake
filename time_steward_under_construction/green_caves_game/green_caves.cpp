@@ -52,7 +52,7 @@ const space_coordinate tile_size = 1 << tile_size_shift;
 const time_type second_time = 1 << 10;
 constexpr inline tile_coordinate space_to_tile_min(space_coordinate c) { return c >> tile_size_shift; }
 constexpr inline tile_coordinate space_to_tile_max(space_coordinate c) { return (c + 1) >> tile_size_shift; }
-constexpr inline space_coordinate tile_to_space_min(tile_coordinate c) { return c << tile_size_shift; }
+constexpr inline space_coordinate tile_to_space_min(tile_coordinate c) { return c * tile_size; }
 constexpr inline space_coordinate tile_to_space_max(tile_coordinate c) { return tile_to_space_min(c + 1); }
 class shot_trajectory {};
 class shot_tile {};

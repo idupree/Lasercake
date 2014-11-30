@@ -120,11 +120,10 @@ namespace impl {
     static inline void enter_arg(char[]){}
   };
   template<typename... Tail> struct combining_helper<siphash_id, Tail...> {
-    static const size_t next_idx = combining_helper<Tail...>::next_idx + 2*sizeof(uint64_t);
+    static const size_t next_idx = combining_helper<Tail...>::next_idx + sizeof(siphash_id);
     static inline void enter_arg(char in[], siphash_id head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
-      *(uint64_t*)(&in[combining_helper<Tail...>::next_idx                   ]) = head.data()[0];
-      *(uint64_t*)(&in[combining_helper<Tail...>::next_idx + sizeof(uint64_t)]) = head.data()[1];
+      memcpy(in + combining_helper<Tail...>::next_idx, &head.data(), sizeof(siphash_id));
     }
   };
   template<typename Head, typename... Tail> struct combining_helper<Head, Tail...> {
@@ -132,7 +131,7 @@ namespace impl {
     static const size_t next_idx = combining_helper<Tail...>::next_idx + sizeof(Head);
     static inline void enter_arg(char in[], Head head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
-      *(Head*)(&in[combining_helper<Tail...>::next_idx]) = head;
+      memcpy(in + combining_helper<Tail...>::next_idx, &head, sizeof(Head));
     }
   };
   template<typename Head, typename... Tail> struct combining_helper<Head&, Tail...> : public combining_helper<Head, Tail...> {};
@@ -257,7 +256,8 @@ private:
   child_ptr root;
   
   static inline num_bits_type which_child(siphash_id id, num_bits_type which_bits) {
-    return (id.data()[which_bits>=64]>>which_bits) & ((1<<bits_per_level)-1);
+    assert(which_bits < 128);
+    return (id.data()[which_bits>=64]>>(which_bits&63)) & ((1<<bits_per_level)-1);
   }
   
   persistent_siphash_id_trie(child_ptr root):root(root){ root.inc_ref(); }
