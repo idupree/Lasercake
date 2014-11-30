@@ -29,11 +29,6 @@
 html,body { height: 100%; margin: 0; padding: 0; background-color: #50d050 }
 div,canvas { margin: 0; padding: 0; }
     </style>
-    <!--<script type="text/javascript" src="../jquery-1.6.2.min.js"></script>-->
-    <!--<script type="text/javascript" src="jquery.mousewheel.js"></script>-->
-    <!--<script type="text/javascript" src="underscore.js"></script>-->
-    <script type="text/javascript" src="green_caves.js"></script>
-    <!--<script type="text/javascript" src="new_collision_detection.js"></script>-->
   </head>
   <body>
     <div style="min-height: 50%;"><div style="min-height: 390px"></div></div><div style=" margin-top:-390px; text-align: center;">
@@ -46,11 +41,18 @@ Your browser does not support the canvas element.
     </canvas></div>
     <!--<p id="info"></p>-->
 
+    <!--<script type="text/javascript" src="../jquery-1.6.2.min.js"></script>-->
+    <!--<script type="text/javascript" src="jquery.mousewheel.js"></script>-->
+    <!--<script type="text/javascript" src="underscore.js"></script>-->
+    <script type="text/javascript" src="green_caves.js"></script>
+    <!--<script type="text/javascript" src="new_collision_detection.js"></script>-->
 <script type="text/javascript">/*jshint newcap: false*/
     
 (function(){
 "use strict";
 
+document.addEventListener('DOMContentLoaded', function(){
+setTimeout(function(){
 
 var game_canvas = document.getElementById("game_canvas");
 var canvas_context = game_canvas.getContext("2d");
@@ -63,33 +65,40 @@ window.green_caves.canvas_context = canvas_context;
     };
     window.green_caves = green_caves;
   })(window);*/
+
+  function mouse_xy_relative_to_top_left_of_canvas(mouseevent) {
+    var mouse_screen_x = mouseevent.screenX;
+    var mouse_screen_y = mouseevent.screenY;
+    // compute this every time in case the window resizes/scrolls
+    var rect = game_canvas.getBoundingClientRect();
+    var canvas_screen_top  = rect.top  + window.pageYOffset - document.documentElement.clientTop;
+    var canvas_screen_left = rect.left + window.pageXOffset - document.documentElement.clientLeft;
+    var mouse_canvas_x = mouse_screen_x - canvas_screen_left;
+    var mouse_canvas_y = mouse_screen_y - canvas_screen_top;
+    return { x: mouse_canvas_x, y: mouse_canvas_y };
+  }
   
-  var mouse_x = (function(x){
-    var offs = game_canvas.offset();
-    return x - offs.left;
-  });
-  var mouse_y = (function(y){
-    var offs = game_canvas.offset();
-    return y - offs.top;
-  });
   var update = (function(){
     var now = new Date();
     window._update_to_real_time(now.getTime());
   });
 
-  document.addEventListener('mousedown', function(){
+  document.addEventListener('mousedown', function(e){
     update();
-    _mouse_down(mouse_x(), mouse_y());
+    var pos = mouse_xy_relative_to_top_left_of_canvas(e);
+    window._mouse_down(pos.x, pos.y);
   }, false);
-  document.addEventListener('mouseup', function(){
+  document.addEventListener('mouseup', function(e){
     update();
-    _mouse_up(mouse_x(), mouse_y());
+    var pos = mouse_xy_relative_to_top_left_of_canvas(e);
+    window._mouse_up(pos.x, pos.y);
   }, false);
-  document.addEventListener('mousemove', function(){
-    update();
-    _mouse_moves(mouse_x(), mouse_y());
-  }, false);
-  document.addEventListener('keydown', function(target, e){
+  //document.addEventListener('mousemove', function(e){
+  //  update();
+  //  var pos = mouse_xy_relative_to_top_left_of_canvas(e);
+  //  window._mouse_moves(pos.x, pos.y);
+  //}, false);
+  document.addEventListener('keydown', function(e){
     update();
     var keycode = (e.keyCode ? e.keyCode : e.which);
     var keystr = String.fromCharCode(keycode);
@@ -98,7 +107,7 @@ window.green_caves.canvas_context = canvas_context;
     if (keycode === 39 || keystr === "D") { _set_right(true); e.preventDefault(); }
     if (keycode === 40 || keystr === "S") { _set_down(true); e.preventDefault(); }
   }, false);
-  document.addEventListener('keyup', function(target, e){
+  document.addEventListener('keyup', function(e){
     update();
     var keycode = (e.keyCode ? e.keyCode : e.which);
     var keystr = String.fromCharCode(keycode);
@@ -124,6 +133,9 @@ window.green_caves.canvas_context = canvas_context;
       tick_finished = true;
     }
   }());
+
+}, 3000);
+}, false);
 
 }());
     </script>
