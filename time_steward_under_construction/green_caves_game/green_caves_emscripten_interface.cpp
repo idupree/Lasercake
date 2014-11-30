@@ -45,9 +45,12 @@ struct draw_funcs {
 };
 
 extern "C" {
-  
+
+// when you add something here, you need to also add to the EXPORTED_FUNCTIONS
+// in the build script  
+
 void draw() { draw_funcs draw; backend.draw(draw); }
-void update(int64_t milliseconds) { backend.update_to_real_time(milliseconds); }
+void update_to_real_time(int64_t milliseconds) { backend.update_to_real_time(milliseconds); }
 void mouse_down(int x, int y) { backend.mouse_down(x, y); }
 void mouse_up(int x, int y) { backend.mouse_up(x, y); }
 void mouse_moves(int x, int y) { backend.mouse_moves(x, y); }

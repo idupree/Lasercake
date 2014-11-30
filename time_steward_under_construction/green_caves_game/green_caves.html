@@ -29,95 +29,11 @@
 html,body { height: 100%; margin: 0; padding: 0; background-color: #50d050 }
 div,canvas { margin: 0; padding: 0; }
     </style>
-    <script type="text/javascript" src="../jquery-1.6.2.min.js"></script>
+    <!--<script type="text/javascript" src="../jquery-1.6.2.min.js"></script>-->
     <!--<script type="text/javascript" src="jquery.mousewheel.js"></script>-->
     <!--<script type="text/javascript" src="underscore.js"></script>-->
     <script type="text/javascript" src="green_caves.js"></script>
     <!--<script type="text/javascript" src="new_collision_detection.js"></script>-->
-    <script type="text/javascript">/*jshint newcap: false*/
-    
-(function(){
-"use strict";
-
-
-$(function(){
-  (function(window){
-    var green_caves = {
-      canvas_context: document.getElementById("game_canvas").getContext("2d"),
-    };
-    window.green_caves = green_caves;
-  })(window);
-  
-  var mouse_x = (function(x){
-    var offs = $('#game_canvas').offset();
-    return = x - offs.left;
-  });
-  var mouse_y = (function(y){
-    var offs = $('#game_canvas').offset();
-    return = y - offs.top;
-  });
-  var update = (function(){
-    var now = new Date();
-    _update_to_real_time(now.getTime());
-  });
-  window.green_caves_canvas_context = document.getElementById("game_canvas").getContext("2d");
-
-  $(document).mousedown(function(){
-    update();
-    _mouse_down(mouse_x(), mouse_y());
-    return false;
-  });
-  $(document).mouseup(function(){
-    update();
-    _mouse_up(mouse_x(), mouse_y());
-    return false;
-  });
-  $(document).mousemove(function(e){
-    update();
-    _mouse_moves(mouse_x(), mouse_y());
-    return false;
-  });
-  $(document).keydown(function(e){
-    update();
-    var keycode = (e.keyCode ? e.keyCode : e.which);
-    var keystr = String.fromCharCode(keycode);
-    if (keycode === 37 || keystr === "A") { _set_left(true); }
-    if (keycode === 38 || keystr === "W") { _set_up(true); }
-    if (keycode === 39 || keystr === "D") { _set_right(true); }
-    if (keycode === 40 || keystr === "S") { _set_down(true); }
-    return false;
-  });
-  $(document).keyup(function(e){
-    update();
-    var keycode = (e.keyCode ? e.keyCode : e.which);
-    var keystr = String.fromCharCode(keycode);
-    if (keycode === 37 || keystr === "A") { _set_left(false); }
-    if (keycode === 38 || keystr === "W") { _set_up(false); }
-    if (keycode === 39 || keystr === "D") { _set_right(false); }
-    if (keycode === 40 || keystr === "S") { _set_down(false); }
-    return false;
-  });
-  
-  var draw = (function(){
-    green_caves_canvas_context.fillStyle = "black";
-    green_caves_canvas_context.fillRect(0,0,640,640);
-    _draw();
-  });
-  
-  var tick_finished = true;
-  (function tickloop(){
-    setTimeout(tickloop, 10);
-    if (tick_finished) {
-      tick_finished = false;
-      _update_to_real_time();
-      draw();
-      tick_finished = true;
-    }
-  }());
-});
-
-}());
-    </script>
   </head>
   <body>
     <div style="min-height: 50%;"><div style="min-height: 390px"></div></div><div style=" margin-top:-390px; text-align: center;">
@@ -129,5 +45,87 @@ $(function(){
 Your browser does not support the canvas element.
     </canvas></div>
     <!--<p id="info"></p>-->
+
+<script type="text/javascript">/*jshint newcap: false*/
+    
+(function(){
+"use strict";
+
+
+var game_canvas = document.getElementById("game_canvas");
+var canvas_context = game_canvas.getContext("2d");
+window.green_caves = {};
+window.green_caves.canvas_context = canvas_context;
+
+/*  (function(window){
+    var green_caves = {
+      canvas_context: game_canvas.getContext("2d"),
+    };
+    window.green_caves = green_caves;
+  })(window);*/
+  
+  var mouse_x = (function(x){
+    var offs = game_canvas.offset();
+    return x - offs.left;
+  });
+  var mouse_y = (function(y){
+    var offs = game_canvas.offset();
+    return y - offs.top;
+  });
+  var update = (function(){
+    var now = new Date();
+    window._update_to_real_time(now.getTime());
+  });
+
+  document.addEventListener('mousedown', function(){
+    update();
+    _mouse_down(mouse_x(), mouse_y());
+  }, false);
+  document.addEventListener('mouseup', function(){
+    update();
+    _mouse_up(mouse_x(), mouse_y());
+  }, false);
+  document.addEventListener('mousemove', function(){
+    update();
+    _mouse_moves(mouse_x(), mouse_y());
+  }, false);
+  document.addEventListener('keydown', function(target, e){
+    update();
+    var keycode = (e.keyCode ? e.keyCode : e.which);
+    var keystr = String.fromCharCode(keycode);
+    if (keycode === 37 || keystr === "A") { _set_left(true); e.preventDefault(); }
+    if (keycode === 38 || keystr === "W") { _set_up(true); e.preventDefault(); }
+    if (keycode === 39 || keystr === "D") { _set_right(true); e.preventDefault(); }
+    if (keycode === 40 || keystr === "S") { _set_down(true); e.preventDefault(); }
+  }, false);
+  document.addEventListener('keyup', function(target, e){
+    update();
+    var keycode = (e.keyCode ? e.keyCode : e.which);
+    var keystr = String.fromCharCode(keycode);
+    if (keycode === 37 || keystr === "A") { _set_left(false); e.preventDefault(); }
+    if (keycode === 38 || keystr === "W") { _set_up(false); e.preventDefault(); }
+    if (keycode === 39 || keystr === "D") { _set_right(false); e.preventDefault(); }
+    if (keycode === 40 || keystr === "S") { _set_down(false); e.preventDefault(); }
+  }, false);
+  
+  var draw = (function(){
+    canvas_context.fillStyle = "black";
+    canvas_context.fillRect(0,0,640,640);
+    window._draw();
+  });
+  
+  var tick_finished = true;
+  (function tickloop(){
+    setTimeout(tickloop, 10);
+    if (tick_finished) {
+      tick_finished = false;
+      update();
+      draw();
+      tick_finished = true;
+    }
+  }());
+
+}());
+    </script>
   </body>
 </html>
