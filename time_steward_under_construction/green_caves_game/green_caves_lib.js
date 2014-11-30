@@ -20,6 +20,7 @@
 */
 
 (function(){
+  "use strict";
   mergeInto(LibraryManager.library, {
     draw_rect: function(x,y,w,h) {
       green_caves.canvas_context.fillStyle = "#00ff00";
