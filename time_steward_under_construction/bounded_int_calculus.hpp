@@ -790,7 +790,7 @@ public:
   template<typename T1>
   explicit finite_dimensional_vector(T1 data):data{ std::move(data) }{}
   template<typename T1, typename T2, typename ...T>
-  finite_dimensional_vector(T1&& data1, T2&& data2, T&&...data):data{ std::forward<T1>(data1), std::forward<T2>(data2), std::forward<T>(data)... }{}
+  finite_dimensional_vector(T1&& data1, T2&& data2, T&&...data):data{{ std::forward<T1>(data1), std::forward<T2>(data2), std::forward<T>(data)... }}{}
   // This is chosen in overload resolution in preference to the
   // copy-constructor so we can't use it:
   //template<typename ...T>
