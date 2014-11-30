@@ -49,7 +49,7 @@ extern "C" {
 void draw() { draw_funcs draw; backend.draw(draw); }
 void update(int64_t milliseconds) { backend.update_to_real_time(milliseconds); }
 void mouse_down(int x, int y) { backend.mouse_down(x, y); }
-void mouse_down(int x, int y) { backend.mouse_down(x, y); }
+void mouse_up(int x, int y) { backend.mouse_up(x, y); }
 void mouse_moves(int x, int y) { backend.mouse_moves(x, y); }
 void set_left(bool b) { backend.left = b; }
 void set_right(bool b) { backend.right = b; }

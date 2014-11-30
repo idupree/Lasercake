@@ -24,6 +24,7 @@
 
 
 #include <memory>
+#include <array>
 
 #include <boost/type_traits.hpp>
 #include <boost/range/iterator_range.hpp>

@@ -31,7 +31,7 @@ namespace impl {
   template<typename QueueEntry, typename ComesAfter>
   struct iterator_queue {
     std::priority_queue<QueueEntry, std::vector<QueueEntry>, ComesAfter> data;
-    iterator_queue(ComesAfter const& comes_after):data(comes_after){}
+    explicit iterator_queue(ComesAfter const& comes_after):data(comes_after){}
     QueueEntry const& front()const { return data.top(); }
     void pop() { return data.pop(); }
     void push(QueueEntry const& e) { return data.push(e); }
@@ -40,6 +40,7 @@ namespace impl {
   template<typename QueueEntry>
   struct iterator_queue<QueueEntry, unsorted> {
     std::queue<QueueEntry> data;
+    explicit iterator_queue(unsorted){}
     QueueEntry const& front()const { return data.front(); }
     void pop() { return data.pop(); }
     void push(QueueEntry const& e) { return data.push(e); }
@@ -125,10 +126,7 @@ public:
   class iterator {
   private:
     struct contents {
-      contents(impl::unsorted = impl::unsorted()):queue(),
-        bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}){}
-      template<typename Hack = std::enable_if_t<!std::is_same<ComesAfter, impl::unsorted>::value>>
-      contents(ComesAfter const& comes_after):comes_after(comes_after),queue(comes_after),
+      explicit contents(ComesAfter const& comes_after):comes_after(comes_after),queue(comes_after),
         bound_minima_exist({{false,false}}),bound_maxima_exist({{false,false}}){}
       
       ComesAfter comes_after;
@@ -142,7 +140,7 @@ public:
     std::shared_ptr<contents> c_;
   public:
     iterator():c_(nullptr){}
-    iterator(ComesAfter comes_after):c_(new contents(comes_after)){}
+    explicit iterator(ComesAfter comes_after):c_(new contents(comes_after)){}
     
     value_type const& operator*() const {
       caller_error_if(queue().empty(), "can't dereference an empty iterator");
