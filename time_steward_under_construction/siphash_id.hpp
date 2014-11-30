@@ -117,11 +117,11 @@ namespace impl {
   template<typename... Args> struct combining_helper;
   template<> struct combining_helper<> {
     static const size_t next_idx = 0;
-    static inline void enter_arg(char[]){}
+    static inline void enter_arg(unsigned char*){}
   };
   template<typename... Tail> struct combining_helper<siphash_id, Tail...> {
     static const size_t next_idx = combining_helper<Tail...>::next_idx + sizeof(siphash_id);
-    static inline void enter_arg(char in[], siphash_id head, Tail... tail) {
+    static inline void enter_arg(unsigned char* in, siphash_id head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
       memcpy(in + combining_helper<Tail...>::next_idx, &head.data(), sizeof(siphash_id));
     }
@@ -129,7 +129,7 @@ namespace impl {
   template<typename Head, typename... Tail> struct combining_helper<Head, Tail...> {
     static_assert(std::is_integral<Head>::value, "siphash_id::combining only accepts siphash_ids and integral types");
     static const size_t next_idx = combining_helper<Tail...>::next_idx + sizeof(Head);
-    static inline void enter_arg(char in[], Head head, Tail... tail) {
+    static inline void enter_arg(unsigned char* in, Head head, Tail... tail) {
       combining_helper<Tail...>::enter_arg(in, tail...);
       memcpy(in + combining_helper<Tail...>::next_idx, &head, sizeof(Head));
     }
@@ -139,10 +139,16 @@ namespace impl {
 template<typename... Args>
 siphash_id siphash_id::combining(Args... args) {
   siphash_id result;
-  char in[impl::combining_helper<Args...>::next_idx];
+  // Tell the buffer to be aligned so that hopefully the optimizer can
+  // emit aligned copies wherever it's allowed to, rather than
+  // byte-by-byte/unaligned copies, for speed.  Some SSE operations
+  // use 16-byte alignment, but it's unlikely that more alignment
+  // will be useful here, and many ABIs only align the stack to 16 bytes
+  // so it might take runtime to align to a 32+ alignment.
+  alignas(16) unsigned char in[impl::combining_helper<Args...>::next_idx];
   impl::combining_helper<Args...>::enter_arg(in, args...);
   result.data_[0] = siphash24((void*)in, sizeof(in), siphash_key);
-  ++in[0];
+  in[0] ^= 1; // make a change, any change
   result.data_[1] = siphash24((void*)in, sizeof(in), siphash_key);
   return result;
 }
