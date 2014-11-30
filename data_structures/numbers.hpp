@@ -1141,6 +1141,32 @@ struct uint128 {
   uint64_t low;
   uint64_t high;
 
+
+  uint128() = default;
+  // sign-extension happens before unsignedification; try uint64_t(-1)
+  constexpr uint128(  long long a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr uint128(       long a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr uint128(        int a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr uint128(      short a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr uint128(signed char a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr uint128(unsigned long long a):low(a),high(0){}
+  constexpr uint128(unsigned      long a):low(a),high(0){}
+  constexpr uint128(unsigned       int a):low(a),high(0){}
+  constexpr uint128(unsigned     short a):low(a),high(0){}
+  constexpr uint128(unsigned      char a):low(a),high(0){}
+  explicit constexpr operator   long long()const { return low; }
+  explicit constexpr operator        long()const { return low; }
+  explicit constexpr operator         int()const { return low; }
+  explicit constexpr operator       short()const { return low; }
+  explicit constexpr operator signed char()const { return low; }
+  explicit constexpr operator unsigned long long()const { return low; }
+  explicit constexpr operator unsigned      long()const { return low; }
+  explicit constexpr operator unsigned       int()const { return low; }
+  explicit constexpr operator unsigned     short()const { return low; }
+  explicit constexpr operator unsigned      char()const { return low; }
+  explicit constexpr operator char()const { return low; }
+  explicit constexpr operator bool()const { return low || high; }
+
   constexpr bool operator==(uint128 other)const {
     return high == other.high && low == other.low;
   }
@@ -1160,6 +1186,29 @@ struct uint128 {
     return other <= *this;
   }
 };
+inline uint128 operator+(uint128 a, uint128 b) {
+  uint128 result;
+  result.low = a.low + b.low;
+  uint32_t carry = result.low < a.low;
+  result.high = a.high + b.high + carry;
+  return result;
+}
+inline uint128 operator-(uint128 a) {
+  a.low = -a.low;
+  uint32_t carry = !a.low;
+  a.high = ~a.high + carry;
+  return a;
+}
+inline uint128 operator-(uint128 a, uint128 b) {
+  uint128 result;
+  result.low = a.low - b.low;
+  uint32_t borrow = b.low > a.low;
+  result.high = a.high - b.high - borrow;
+  return result;
+}
+inline uint128& operator+=(uint128& a, uint128 b) { return a = a + b; }
+inline uint128& operator-=(uint128& a, uint128 b) { return a = a - b; }
+
 #endif
 
 #ifdef DETECTED_int128_t
@@ -1169,6 +1218,32 @@ struct int128 {
   //store these in the same bit-pattern as a real int128 would be
   uint64_t low;
   uint64_t high;
+
+  int128() = default;
+  explicit constexpr int128(uint128 a):low(a.low),high(a.high){}
+  constexpr int128(  long long a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr int128(       long a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr int128(        int a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr int128(      short a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr int128(signed char a):low(int64_t(a)),high(-int64_t(a<0)){}
+  constexpr int128(unsigned long long a):low(a),high(0){}
+  constexpr int128(unsigned      long a):low(a),high(0){}
+  constexpr int128(unsigned       int a):low(a),high(0){}
+  constexpr int128(unsigned     short a):low(a),high(0){}
+  constexpr int128(unsigned      char a):low(a),high(0){}
+  explicit operator uint128()const{uint128 result; result.low = low; result.high = high; return result;}
+  explicit constexpr operator   long long()const { return low; }
+  explicit constexpr operator        long()const { return low; }
+  explicit constexpr operator         int()const { return low; }
+  explicit constexpr operator       short()const { return low; }
+  explicit constexpr operator signed char()const { return low; }
+  explicit constexpr operator unsigned long long()const { return low; }
+  explicit constexpr operator unsigned      long()const { return low; }
+  explicit constexpr operator unsigned       int()const { return low; }
+  explicit constexpr operator unsigned     short()const { return low; }
+  explicit constexpr operator unsigned      char()const { return low; }
+  explicit constexpr operator char()const { return low; }
+  explicit constexpr operator bool()const { return low || high; }
 
   constexpr bool operator==(int128 other)const {
     return high == other.high && low == other.low;
@@ -1192,6 +1267,22 @@ struct int128 {
     return other <= *this;
   }
 };
+// signed addition and subtraction is the same as unsigned
+// in our twos-complement arithmetic (yes, I know, overflow
+// *could* be undefined for the signed ones, but making the
+// code more complex just to make more undefined behavior
+// doesn't seem worth the bother).
+inline int128 operator+(int128 a, int128 b) {
+  return int128(uint128(a) + uint128(b));
+}
+inline int128 operator-(int128 a, int128 b) {
+  return int128(uint128(a) - uint128(b));
+}
+inline int128 operator-(int128 a) {
+  return int128(-uint128(a));
+}
+inline int128& operator+=(int128& a, int128 b) { return a = a + b; }
+inline int128& operator-=(int128& a, int128 b) { return a = a - b; }
 #endif
 
 

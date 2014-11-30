@@ -515,7 +515,9 @@ public:
         value_type const& a = p_->terms[2];
         value_type const& b = p_->terms[1];
         value_type const& c = p_->terms[0];
-        const bigger_int_t discriminant_ = lossless_multiply(b,b) - 4*lossless_multiply(a,c);
+        // "a" probably won't overflow with "4*" because if it did, most normal uses
+        // of the quadratic would also overflow.
+        const bigger_int_t discriminant_ = lossless_multiply(b,b) - lossless_multiply(4*a,c);
         const value_type discriminant = value_type(discriminant_);
         if (discriminant_ >= 0) {
           if (discriminant_ != discriminant) {

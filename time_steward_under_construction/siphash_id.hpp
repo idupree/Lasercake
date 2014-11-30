@@ -182,7 +182,9 @@ public:
 private:  
   typedef typename boost::uint_t<(1<<bits_per_level)>::fast one_bit_per_child_t;
   typedef size_t ref_count_t;
-  static const ref_count_t is_leaf_bit = 1ULL<<63;
+  // the ref count won't be as much as half the entire number of bytes in
+  // your address space, so the high bit will be free to store other info.
+  static const ref_count_t is_leaf_bit = ref_count_t(1) << (std::numeric_limits<ref_count_t>::digits - 1);
   static const ref_count_t ref_count_mask = is_leaf_bit-1;
   struct child_header {
     child_header(ref_count_t r):ref_count_and_is_leaf(r){}
