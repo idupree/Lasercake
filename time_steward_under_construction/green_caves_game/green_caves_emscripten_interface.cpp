@@ -34,12 +34,17 @@ extern void draw_segment(double x0, double y0, double x1, double y1, double widt
 
 struct draw_funcs {
   void circle(double cx, double cy, double r) {
+    cy = backend.screen_size(1)-cy;
     draw_circle(cx, cy, r);
   }
   void rect(double x0, double y0, double x1, double y1) {
-    draw_rect(x0, y0, x1, y1);
+    y0 = backend.screen_size(1)-y0;
+    y1 = backend.screen_size(1)-y1;
+    draw_rect(x0, y0, x1-x0, y0-y1);
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
+    y0 = backend.screen_size(1)-y0;
+    y1 = backend.screen_size(1)-y1;
     draw_segment(x0, y0, x1, y1, width);
   }
 };
@@ -54,6 +59,7 @@ void update_to_real_time(double milliseconds) { backend.update_to_real_time(int6
 void mouse_down(int x, int y) { backend.mouse_down(x, y); }
 void mouse_up(int x, int y) { backend.mouse_up(x, y); }
 void mouse_moves(int x, int y) { backend.mouse_moves(x, y); }
+void set_display_size(int x, int y) { backend.screen_size = fd_vector(x, y); }
 void set_left(bool b) { backend.left = b; }
 void set_right(bool b) { backend.right = b; }
 void set_up(bool b) { backend.up = b; }

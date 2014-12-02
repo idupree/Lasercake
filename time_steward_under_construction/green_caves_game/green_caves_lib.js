@@ -24,10 +24,11 @@
   mergeInto(LibraryManager.library, {
     draw_rect: function(x,y,w,h) {
       green_caves.canvas_context.fillStyle = "#00ff00";
-      green_caves.canvas_context.fillRect(x,y,w,h);
+      green_caves.canvas_context.fillRect(x-1,y-1,w+2,h+2); // expand to avoid leaving tiny gaps
     },
     draw_circle: function(x,y,r) {
       green_caves.canvas_context.fillStyle = "#00ff00";
+      green_caves.canvas_context.beginPath();
       green_caves.canvas_context.arc(x, y, r, 0, 2 * Math.PI);
       green_caves.canvas_context.fill();
     },

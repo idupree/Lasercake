@@ -52,6 +52,7 @@ Your browser does not support the canvas element.
 "use strict";
 
 document.addEventListener('DOMContentLoaded', function(){
+//document.addEventListener('load', function(){
 setTimeout(function(){
 
 var game_canvas = document.getElementById("game_canvas");
@@ -66,13 +67,19 @@ window.green_caves.canvas_context = canvas_context;
     window.green_caves = green_caves;
   })(window);*/
 
+  var canvas_rect = game_canvas.getBoundingClientRect();
+  function update_canvas_rect() {
+    canvas_rect = game_canvas.getBoundingClientRect();
+    window._set_display_size(canvas_rect.right - canvas_rect.left, canvas_rect.bottom - canvas_rect.top);
+  }
+  update_canvas_rect();
+  
   function mouse_xy_relative_to_top_left_of_canvas(mouseevent) {
     var mouse_screen_x = mouseevent.screenX;
     var mouse_screen_y = mouseevent.screenY;
     // compute this every time in case the window resizes/scrolls
-    var rect = game_canvas.getBoundingClientRect();
-    var canvas_screen_top  = rect.top  + window.pageYOffset - document.documentElement.clientTop;
-    var canvas_screen_left = rect.left + window.pageXOffset - document.documentElement.clientLeft;
+    var canvas_screen_top  = canvas_rect.top  + window.pageYOffset - document.documentElement.clientTop;
+    var canvas_screen_left = canvas_rect.left + window.pageXOffset - document.documentElement.clientLeft;
     var mouse_canvas_x = mouse_screen_x - canvas_screen_left;
     var mouse_canvas_y = mouse_screen_y - canvas_screen_top;
     return { x: mouse_canvas_x, y: mouse_canvas_y };
@@ -93,11 +100,11 @@ window.green_caves.canvas_context = canvas_context;
     var pos = mouse_xy_relative_to_top_left_of_canvas(e);
     window._mouse_up(pos.x, pos.y);
   }, false);
-  //document.addEventListener('mousemove', function(e){
-  //  update();
-  //  var pos = mouse_xy_relative_to_top_left_of_canvas(e);
-  //  window._mouse_moves(pos.x, pos.y);
-  //}, false);
+  document.addEventListener('mousemove', function(e){
+    update();
+    var pos = mouse_xy_relative_to_top_left_of_canvas(e);
+    window._mouse_moves(pos.x, pos.y);
+  }, false);
   document.addEventListener('keydown', function(e){
     update();
     var keycode = (e.keyCode ? e.keyCode : e.which);
