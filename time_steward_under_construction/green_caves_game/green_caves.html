@@ -75,8 +75,9 @@ window.green_caves.canvas_context = canvas_context;
   update_canvas_rect();
   
   function mouse_xy_relative_to_top_left_of_canvas(mouseevent) {
-    var mouse_screen_x = mouseevent.screenX;
-    var mouse_screen_y = mouseevent.screenY;
+    // bug?- assumes the event target is 'document'
+    var mouse_screen_x = mouseevent.clientX;
+    var mouse_screen_y = mouseevent.clientY;
     // compute this every time in case the window resizes/scrolls
     update_canvas_rect();
     var canvas_screen_top  = canvas_rect.top  + window.pageYOffset - document.documentElement.clientTop;
