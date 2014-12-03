@@ -727,7 +727,10 @@ struct draw_green_caves_metadata {
     history_tree::history best;
     if (sprep.columns.empty()) return std::pair<time_type, history_tree::history>(never, best);
     double_vector r = hist_view.from_screen(loc);
-    if (r(!hist_time_dim) < 0) return std::pair<time_type, history_tree::history>(never, best);
+    if ((r( hist_time_dim) < 0) ||
+        (r( hist_time_dim) > 1) ||
+        (r(!hist_time_dim) < 0) ||
+        (r(!hist_time_dim) > 1)) return std::pair<time_type, history_tree::history>(never, best);
     
     const time_type time = r(hist_time_dim) * hist_max_time();
     const double height = r(!hist_time_dim);
