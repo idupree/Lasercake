@@ -81,8 +81,8 @@ window.green_caves.holding_mouse_down_ingame = false;
     var mouse_screen_y = mouseevent.clientY;
     // compute this every time in case the window resizes/scrolls
     update_canvas_rect();
-    var canvas_screen_top  = canvas_rect.top  + window.pageYOffset - document.documentElement.clientTop;
-    var canvas_screen_left = canvas_rect.left + window.pageXOffset - document.documentElement.clientLeft;
+    var canvas_screen_top  = canvas_rect.top;
+    var canvas_screen_left = canvas_rect.left;
     var mouse_canvas_x = mouse_screen_x - canvas_screen_left;
     var mouse_canvas_y = mouse_screen_y - canvas_screen_top;
     return { x: mouse_canvas_x, y: mouse_canvas_y };
