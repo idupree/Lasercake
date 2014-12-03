@@ -78,6 +78,7 @@ window.green_caves.canvas_context = canvas_context;
     var mouse_screen_x = mouseevent.screenX;
     var mouse_screen_y = mouseevent.screenY;
     // compute this every time in case the window resizes/scrolls
+    update_canvas_rect();
     var canvas_screen_top  = canvas_rect.top  + window.pageYOffset - document.documentElement.clientTop;
     var canvas_screen_left = canvas_rect.left + window.pageXOffset - document.documentElement.clientLeft;
     var mouse_canvas_x = mouse_screen_x - canvas_screen_left;
@@ -125,6 +126,7 @@ window.green_caves.canvas_context = canvas_context;
   }, false);
   
   var draw = (function(){
+    update_canvas_rect();
     canvas_context.fillStyle = "black";
     canvas_context.fillRect(0,0,640,640);
     window._draw();
