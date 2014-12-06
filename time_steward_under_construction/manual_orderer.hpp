@@ -293,6 +293,210 @@ namespace std {
 #else
 
 namespace manual_orderer_impl {
+  
+  
+  
+  
+  
+  
+  
+  
+
+
+struct node {
+  entry_base* first_entry;
+  entry_base* last_entry;
+  uint64_t entries;
+  uint64_t supply_current_size;
+  uint64_t supply_available_size;
+  
+  struct resupply {
+    int64_t steps_before_parent_supply;
+    int64_t steps_after_this_node_supply;
+  };
+  
+  
+  uint64_t remaining_capacity()const {
+    return max_entries() - entries;
+  }
+  int64_t resupply_max_steps_after_this_node_supply(bool is_middle)const {
+    return remaining_capacity()*max_resupply_steps_per_insert - is_middle ? (entries >> 1) : 0;
+  }
+  void validate()const {
+    assert (entries < max_entries());
+    if (next_sibling) {
+      assert (next_sibling->prev_sibling == this);
+      assert (next_sibling->first_entry == last_entry->next());
+    }
+    if (prev_sibling) {
+      assert (prev_sibling->next_sibling == this);
+      assert (prev_sibling->last_entry == first_entry->prev());
+    }
+    if (resupply_source_node) {
+      assert (resupply_source_node->last_entry->idx > last_entry->idx);
+      
+    }
+    if (last_entry->next()) {
+      const uint64_t observed_gap_size = last_entry->next()->idx - last_entry->idx;
+      assert (observed_gap_size >= supply_current_size);
+    }
+    assert (supply_current_size >= supply_available_size);
+    
+    if (is_bottom_level()) {
+      assert (supply_available_size >= remaining_capacity());
+    }
+    else {
+      assert (supply_available_size >= remaining_capacity()*2);
+    }
+    assert (
+      middle_resupply.steps_after_this_node_supply + middle_resupply.steps_before_parent_supply == 
+         end_resupply.steps_after_this_node_supply +    end_resupply.steps_before_parent_supply
+    );
+    assert (middle_resupply.steps_before_parent_supply >= 0);
+    assert (   end_resupply.steps_before_parent_supply >= 0);
+    assert (middle_resupply.steps_after_this_node_supply <= resupply_max_steps_after_this_node_supply( true));
+    assert (   end_resupply.steps_after_this_node_supply <= resupply_max_steps_after_this_node_supply(false));
+    int64_t total_close_siblings = 1;
+    for (node* sib = next_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->next_sibling) {
+      ++total_close_siblings;
+    }
+    for (node* sib = prev_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->prev_sibling) {
+      ++total_close_siblings;
+    }
+    assert (total_close_siblings <= max_close_siblings);
+  }
+  void step_resupply_once(resupply& r) {
+    r.lower_end->idx += resupply_size();
+    assert (r.lower_end->idx < r.lower_end->next()->idx);
+    r.lower_end = r.lower_end.prev();
+    --r.steps_after_this_node_supply;
+    ++r.steps_before_parent_supply;
+  }
+  void unstep_resupply_once(resupply& r) {
+    r.lower_end->idx -= resupply_size();
+    assert (r.lower_end->idx > r.lower_end->prev()->idx);
+    r.lower_end = r.lower_end.next();
+    ++r.steps_after_this_node_supply;
+    --r.steps_before_parent_supply;
+  }
+  void step_resupply_enough_for_one_insertion(resupply& r, bool is_middle) {
+    if (is_middle) {
+      int64_t unsteps = -int64_t(entries >> 1) - r.steps_after_this_node_supply;
+      if (unsteps > 0) {
+        if (unsteps > max_resupply_steps_per_insert) { unsteps = max_resupply_steps_per_insert; }
+        while (unsteps > 0) {
+          unstep_resupply_once(r);
+          --unsteps;
+        }
+        return;
+      }
+    }
+    int64_t steps = r.steps_after_this_node_supply - resupply_max_steps_after_this_node_supply(is_middle);
+    assert (steps <= max_resupply_steps_per_insert);
+    while (steps > 0) {
+      step_resupply_once(r);
+      --steps;
+    }
+  }
+  void update_resupply_based_on_insertion(resupply& r, entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    if (r.lower_end->idx == existing_entry->idx) {
+      if (after) {
+        r.lower_end = inserted_entry;
+      }
+      ++r.steps_after_this_node_supply;
+      step_resupply_once(r);
+    }
+    else if (r.lower_end->idx > existing_entry->idx) {
+      ++r.steps_after_this_node_supply;
+      step_resupply_once(r);
+    }
+    else { assert (r.lower_end->idx < existing_entry->idx);
+      ++r.steps_before_parent_supply;
+    }
+  }
+  void update_resupply_based_on_erasure(resupply& r, entry_base* erased_entry) {
+    if (r.lower_end->idx == existing_entry->idx) {
+      if (after) {
+        r.lower_end = erased_entry.next();
+      }
+      --r.steps_before_parent_supply;
+    }
+    else if (r.lower_end->idx > existing_entry->idx) {
+      --r.steps_after_this_node_supply;
+    }
+    else { assert (r.lower_end->idx < existing_entry->idx);
+      --r.steps_before_parent_supply;
+    }
+  }
+  bool was_inserted(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    validate();
+    assert (existing_entry->idx >= first_entry->idx);
+    assert (existing_entry->idx <= last_entry->idx);
+    if (inserted_entry->idx > last_entry->idx) {
+      last_entry = inserted_entry;
+    }
+    ++entries;
+    supply_available_size -= is_bottom_level() ? 1 : 2;
+    
+    assert (entries <= max_entries());
+    update_resupply_based_on_insertion(middle_resupply, inserted_entry, existing_entry, after);
+    update_resupply_based_on_insertion(end_resupply, inserted_entry, existing_entry, after);
+    for (node* sib = next_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->next_sibling) {
+      update_resupply_based_on_insertion(sib->middle_resupply, inserted_entry, existing_entry, after);
+      update_resupply_based_on_insertion(sib->end_resupply, inserted_entry, existing_entry, after);
+    }
+    for (node* sib = prev_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->prev_sibling) {
+      update_resupply_based_on_insertion(sib->middle_resupply, inserted_entry, existing_entry, after);
+      update_resupply_based_on_insertion(sib->end_resupply, inserted_entry, existing_entry, after);
+    }
+    bool parent_split = resupply_source_node->was_inserted(inserted_entry, existing_entry, after);
+    if (parent_split) {
+      for (node* sib = next_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->next_sibling) {
+        if (sib->last_entry->idx < resupply_source_node->prev_sibling->last_entry->idx) {
+          sib->resupply_source_node = resupply_source_node->prev_sibling;
+        }
+      }
+      for (node* sib = prev_sibling; sib && sib->resupply_source_node == resupply_source_node; sib = sib->prev_sibling) {
+        if (sib->last_entry->idx < resupply_source_node->prev_sibling->last_entry->idx) {
+          sib->resupply_source_node = resupply_source_node->prev_sibling;
+        }
+      }
+      if (last_entry->idx < resupply_source_node->prev_sibling->last_entry->idx) {
+        resupply_source_node = resupply_source_node->prev_sibling;
+      }
+    }
+    if (entries == max_entries) {
+      assert (middle_resupply.steps_from_dst == 0);
+      assert (end_resupply.steps_from_dst == 0);
+      node* new_sibling = new node();
+      
+      new_sibling->first_entry = first_entry;
+      new_sibling->last_entry = middle_resupply.lower_end;
+      first_entry = middle_resupply.lower_end->next();
+      if (new_sibling->last_entry->idx < resupply_source_node->prev_sibling->last_entry->idx) {
+        new_sibling->resupply_source_node = resupply_source_node->prev_sibling;
+      }
+      else {
+        new_sibling->resupply_source_node = resupply_source_node;
+      }
+      new_sibling->next_sibling = next_sibling;
+      next_sibling->prev_sibling = new_sibling;
+      next_sibling = new_sibling;
+      new_sibling->prev_sibling = this;
+      new_sibling->validate();
+      validate();
+      return true;
+    }
+    validate();
+  }
+};
+
+
+
+
+  
+  
+
 // O(log n) amortized, maybe O(log^2 n) worst case?
 
 typedef uint64_t idx_type;
