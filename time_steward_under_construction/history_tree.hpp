@@ -129,17 +129,16 @@ public:
     }
   }
   
-  template<class LineFuncsType>
-  void draw(time_type focus_time, LineFuncsType& line) {
+  template<class LineFuncType>
+  void draw_tree(LineFuncType& line, time_type focus_time) {
     size_t place_in_current_history = 0;
-    for (size_t i = 1; i < spatial_representation_columns.size(); ++i) {
-      auto& cur = spatial_representation_columns[i];
-      auto& prev = spatial_representation_columns[i-1];
-      for (auto e : cur.entries) {
-        for (auto f : prev.entries) {
+    auto prev = spatial_representation_columns.begin();
+    for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
+      for (auto e : i->second.entries) {
+        for (auto f : prev->second.entries) {
           if (f.h.back() == e.h.back()) {
-            double ewid = time_coord(cur.time, focus_time);
-            double fwid = time_coord(prev.time, focus_time);
+            double ewid = time_coord(i->first, focus_time);
+            double fwid = time_coord(prev->first, focus_time);
             bool in_current_history = (w.current_history[place_in_current_history] == e.h.back());
             line(fwid, f.height, ewid, e.height, in_current_history);
             if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
@@ -148,8 +147,52 @@ public:
           }
         }
       }
+      prev = i;
     }
     return metadata;
+  }
+  
+  std::pair<time_type, history_tree::history> hist_from_draw_coords(double time_coord, double height, time_type focus_time) {
+    history_tree::history best;
+    time_type best_time = never;
+    double best_dist = 2.0;
+    auto prev = spatial_representation_columns.begin();
+    for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
+      time_type max_time = i->first;
+      time_type min_time = prev->first;
+      double max_time_coord = time_coord(max_time, focus_time);
+      double min_time_coord = time_coord(min_time, focus_time);
+      if (min_time_coord <= time_coord && time_coord < max_time_coord) {
+        while (max_time-min_time > 1) {
+          time_type mid_time = divide(max_time+min_time, 2, rounding_strategy<round_down, negative_continuous_with_positive>());
+          double mid_time_coord = time_coord(mid_time, focus_time);
+          if (mid_time_coord < time_coord) {
+            max_time = mid_time;
+            max_time_coord = mid_time_coord;
+          }
+          else {
+            min_time = mid_time;
+            min_time_coord = mid_time_coord;
+          }
+        }
+        best_time = min_time;
+        double frac = double(min_time-prev->first)/double(i->first-prev->first);
+        for (auto e : i->second.entries) {
+          for (auto f : prev->second.entries) {
+            if (f.h.back() == e.h.back()) {
+              const double efh = f.height + (e.height-f.height)*frac;
+              const double dist = std::abs(efh - height);
+              if (dist < best_dist) {
+                best_dist = dist;
+                best = e.h;
+              }
+            }
+          }
+        }
+      }
+      prev = i;
+    }
+    return std::pair<time_type, history_tree::history>(best_time, best);
   }
   
   std::unique_ptr<accessor> accessor_after(time_type time) {

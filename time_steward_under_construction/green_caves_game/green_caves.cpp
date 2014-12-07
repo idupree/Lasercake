@@ -545,20 +545,6 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
     }
   }
   
-  size_t place_in_current_history = 0;
-  for (size_t i = 1; i < metadata.sprep.columns.size(); ++i) {
-    auto& cur = metadata.sprep.columns[i];
-    auto& prev = metadata.sprep.columns[i-1];
-    for (auto e : cur.entries) {
-      for (auto f : prev.entries) {
-        if (f.h.back() == e.h.back()) {
-          double_vector v0 = metadata.hist_to_screen(prev.time, f.height);
-          double_vector v1 = metadata.hist_to_screen(cur.time, e.height);
-          bool in_current_history = (w.current_history[place_in_current_history] == e.h.back());
-          draw.segment(v0(0), v0(1), v1(0), v1(1), in_current_history ? 4 : 1.5);
-          if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
-            ++place_in_current_history;
-          }
           if (in_current_history) {
             if (prev.time <= time && time < cur.time) {
               draw.circle(
@@ -567,10 +553,6 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
                 15);
             }
           }
-        }
-      }
-    }
-  }
   return metadata;
 }
 
