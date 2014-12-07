@@ -303,12 +303,15 @@ namespace manual_orderer_impl {
   
 
 
-struct node {
-  entry_base* first_entry;
-  entry_base* last_entry;
-  uint64_t entries;
+struct supply {
+  entry_base* first_served_entry;
+  entry_base* last_served_entry;
+  supply* middle_served_supply;
+  uint64_t num_served_entries;
   uint64_t supply_current_size;
   uint64_t supply_free_size;
+  supply* resupply_source;
+  uint64_t num_entries_between_this_and_resupply_source;
   
   struct resupply {
     entry_base* lower_end;
@@ -319,11 +322,14 @@ struct node {
   resupply middle_resupply;
   
   
-  uint64_t remaining_capacity()const {
-    return max_entries() - entries;
+  uint64_t max_served_entries()const {
+    return ;
   }
-  int64_t resupply_max_steps_after_this_node_supply(bool is_middle)const {
-    return remaining_capacity()*max_resupply_steps_per_insert - (is_middle ? int64_t(entries >> 1) : int64_t(0));
+  uint64_t remaining_capacity()const {
+    return max_served_entries() - num_served_entries;
+  }
+  int64_t resupply_max_steps_to_dst()const {
+    return remaining_capacity()*max_resupply_steps_per_insert;
   }
   void validate()const {
     assert (entries < max_entries());
