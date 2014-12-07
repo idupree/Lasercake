@@ -444,7 +444,6 @@ struct view_rect {
 const double vqqq = tile_size*view_rad*2;
 
 struct draw_green_caves_metadata {
-  history_tree::spatial_representation sprep;
   view_rect main_view;
   view_rect hist_view;
   num_coordinates_type hist_time_dim;
@@ -464,37 +463,11 @@ struct draw_green_caves_metadata {
     return hist_view.to_screen(r);
   }
   std::pair<time_type, history_tree::history> hist_from_screen(fd_vector loc) {
-    history_tree::history best;
-    if (sprep.columns.empty()) return std::pair<time_type, history_tree::history>(never, best);
     double_vector r = hist_view.from_screen(loc);
-    if ((r( hist_time_dim) < 0) ||
-        (r( hist_time_dim) > 1) ||
-        (r(!hist_time_dim) < 0) ||
-        (r(!hist_time_dim) > 1)) return std::pair<time_type, history_tree::history>(never, best);
-    
-    const time_type time = r(hist_time_dim) * hist_max_time();
-    const double height = r(!hist_time_dim);
-    double best_dist = 2;
-    for (size_t i = 1; i < sprep.columns.size(); ++i) {
-      auto& cur = sprep.columns[i];
-      auto& prev = sprep.columns[i-1];
-      if (prev.time <= time && time < cur.time) {
-        double frac = double(time-prev.time)/double(cur.time-prev.time);
-        for (auto e : cur.entries) {
-          for (auto f : prev.entries) {
-            if (f.h.back() == e.h.back()) {
-              const double efh = f.height + (e.height-f.height)*frac;
-              const double dist = std::abs(efh - height);
-              if (dist < best_dist) {
-                best_dist = dist;
-                best = e.h;
-              }
-            }
-          }
-        }
-      }
+    if ((r(0) < 0) || (r(0) > 1) || (r(1) < 0) || (r(1) > 1)) {
+      return std::pair<time_type, history_tree::history>(never, history_tree::history());
     }
-    return std::pair<time_type, history_tree::history>(time, best);
+    return hist_from_draw_coords(r(hist_time_dim), r(!hist_time_dim), focus_time);
   }
   draw_green_caves_metadata() {}
   draw_green_caves_metadata(fd_vector screen_size) {

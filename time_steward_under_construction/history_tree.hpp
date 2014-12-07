@@ -128,12 +128,18 @@ public:
       return middle_end_coord + (from_middle*flat_slope)*(frac) + (from_middle*far_slope)*(1-frac);
     }
   }
+  double height_coord(history const& hist, time_type time, time_type focus_time) {
+    
+  }
   
   template<class LineFuncType>
   void draw_tree(LineFuncType& line, time_type focus_time) {
     size_t place_in_current_history = 0;
     auto prev = spatial_representation_columns.begin();
     for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
+      if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
+        ++place_in_current_history;
+      }
       for (auto e : i->second.entries) {
         for (auto f : prev->second.entries) {
           if (f.h.back() == e.h.back()) {
@@ -141,9 +147,6 @@ public:
             double fwid = time_coord(prev->first, focus_time);
             bool in_current_history = (w.current_history[place_in_current_history] == e.h.back());
             line(fwid, f.height, ewid, e.height, in_current_history);
-            if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
-              ++place_in_current_history;
-            }
           }
         }
       }
@@ -203,7 +206,7 @@ public:
   }
   
   
-  void expand_to_time(node* node, time_type time) {
+  void expand_to_time(time_type time) {
     expand_to_time_impl(current_history.back(), time);
   }
   void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
@@ -244,7 +247,7 @@ public:
   }
   
   void expand_to_time_impl(node* node, time_type time) {
-    if (node->end_time < time) {
+    if (time > node->end_time) {
       update_spatial_representation_heights(node->end_time, time);
       auto a = spatial_representation_columns.upper_bound(node->end_time);
       auto b = spatial_representation_columns.upper_bound(time);
@@ -263,13 +266,26 @@ public:
       for (auto i = a; i != b; ++i) {
         for (size_t j = 0; j < i->second.entries.size(); ++j) {
           if (i->second.entries[j].h.back() == insert_after_this) {
-            i->second.entries.insert(i->second.entries.begin()+i+1, h);
-            insert_before_this = boost::next(i);
+            i->second.entries.insert(i->second.entries.begin()+j+1, h);
             break;
           }
         }
       }
       node->end_time = time;
+      
+      while (time > boost::prior(spatial_representation_columns.end())->first + (StandardTimeIncrement>>3)) {
+        time_type new_time = boost::prior(spatial_representation_columns.end())->first + (StandardTimeIncrement>>3) + 1;
+        auto p = spatial_representation_columns.insert(std::make_pair(new_time, boost::prior(spatial_representation_columns.end())->second));
+        assert (p.second);
+        for (size_t j = 0; j < p.first->second.entries.size(); ) {
+          if (p.first->second.entries[j].h.back()->end_time < new_time) {
+            p.first->second.entries.erase(p.first->second.entries.begin()+j);
+          }
+          else {
+            ++j;
+          }
+        }
+      }
     }
   }
   size_t where_in_current_history_is(time_type time) {
