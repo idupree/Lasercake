@@ -26,6 +26,8 @@ template<class TimeSteward, typename TimeSteward::time_type StandardTimeIncremen
 class history_tree {
 public:
   typedef typename TimeSteward::time_type time_type;
+  typedef typename TimeSteward::event event;
+  typedef typename TimeSteward::accessor accessor;
   struct fiat_event {
     fiat_event(uint64_t distinguisher, std::shared_ptr<event> e):distinguisher(distinguisher),e(e){}
     uint64_t distinguisher;
@@ -54,12 +56,12 @@ public:
     std::vector<spatial_representation_entry> entries;
     std::vector<double> desired_heights(spatial_representation_column const& prev, time_type time_diff) {
       std::vector<double> results;
-      double inc = double(1) / double(current.size() + 1);
+      double inc = double(1) / double(entries.size() + 1);
       double current_height_asymptote = 0;
-      for (auto e : entries) {
+      for (auto const& e : entries) {
         bool in_prev = false;
         double prev_height;
-        for (auto f : prev.entries) {
+        for (auto const& f : prev.entries) {
           if (f.h.back() == e.h.back()) {
             in_prev = true;
             prev_height = f.height;
@@ -69,9 +71,15 @@ public:
         }
         if (in_prev) {
           // decay towards evenly-spaced
-          results.push_back(current_height_asymptote - (current_height_asymptote-prev_height)*std::pow(0.9, double(time_diff)/double(StandardTimeIncrement)));
+          double decay_factor = std::pow(0.8, double(time_diff)/double(StandardTimeIncrement));
+          assert (decay_factor >= 0.0);
+          assert (decay_factor <= 1.0);
+          results.push_back(prev_height*decay_factor + current_height_asymptote*(1.0-decay_factor));
+          assert (results.back() >= 0.0);
+          assert (results.back() <= 1.0);
         }
         else {
+          assert (!results.empty());
           results.push_back(results.back());
         }
       }
@@ -82,12 +90,14 @@ public:
   
   history_tree():
     history_root(-1),
-    current_time(-1),
+    current_time(-1)
   {
+    history_root.end_time = 0;
     current_history.push_back(&history_root);
     spatial_representation_column c;
     c.entries.push_back(spatial_representation_entry(0.5, current_history));
     spatial_representation_columns.insert(std::make_pair(time_type(0), c));
+    spatial_representation_columns.insert(std::make_pair(time_type(1), c));
     validate();
   }
   
@@ -98,11 +108,17 @@ public:
     for (; i != spatial_representation_columns.end(); ++i) {
       // decay towards desired_heights
       double decay_factor = 0;
-      if (i->first > start) { decay_factor = std::pow(0.9, double(end - start)/double(i->first - start)); }
+      if (i->first > end) { decay_factor = std::pow(0.5, double(end - start)/double(i->first - end)); }
       if (decay_factor > 0.9999) break;
+      assert (decay_factor >= 0.0);
+      assert (decay_factor <= 1.0);
       std::vector<double> desired_heights = i->second.desired_heights(prev->second, i->first - prev->first);
       for (size_t j = 0; j < desired_heights.size(); ++j) {
-        i->second.entries[j].height = i->second.entries[j].height*decay_factor - desired_heights[j]*(1-decay_factor);
+        assert (i->second.entries[j].height >= 0.0);
+        assert (i->second.entries[j].height <= 1.0);
+        i->second.entries[j].height = i->second.entries[j].height*decay_factor + desired_heights[j]*(1.0-decay_factor);
+        assert (i->second.entries[j].height >= 0.0);
+        assert (i->second.entries[j].height <= 1.0);
       }
       prev = i;
     }
@@ -124,12 +140,44 @@ public:
       double middle_end_coord = (focus_time_coord + s*0.1);
       double far_slope = (middle_end_coord-far_end_coord)/(middle_end_time-far_end_time);
       double frac = (double(time)-far_end_time) / double(middle_end_time-far_end_time);
-      double from_middle = time - middle_end_time;
-      return middle_end_coord + (from_middle*flat_slope)*(frac) + (from_middle*far_slope)*(1-frac);
+      double from_middle = double(time) - middle_end_time;
+      double result = middle_end_coord + (from_middle*flat_slope)*(frac) + (from_middle*far_slope)*(1-frac);
+      //std::cerr << time << ", " << focus_time << ", " << result << "\n";
+      return result;
     }
   }
+  time_type time_from_coord(double drawn_time_coord, time_type min_time, time_type max_time, time_type focus_time) {
+    while (max_time-min_time > 1) {
+      time_type mid_time = divide(max_time+min_time, 2, rounding_strategy<round_down, negative_continuous_with_positive>());
+      double mid_time_coord = time_coord(mid_time, focus_time);
+      if (mid_time_coord < drawn_time_coord) {
+        max_time = mid_time;
+      }
+      else {
+        min_time = mid_time;
+      }
+    }
+    return min_time;
+  }
   double height_coord(history const& hist, time_type time, time_type focus_time) {
+    caller_error_if (time > hist.back()->end_time, "getting height beyond end of history");
+    auto i = spatial_representation_columns.upper_bound(time);
+    assert (i != spatial_representation_columns.begin());
+    assert (i != spatial_representation_columns.end());
+    auto prev = boost::prior(i);
+    double ewid = time_coord(i->first, focus_time);
+    double fwid = time_coord(prev->first, focus_time);
+    double frac = (time_coord(time, focus_time) - fwid) / (ewid - fwid);
+    node* n = hist[where_in_history_is(hist, time)];
+    double fallback = 0;
     
+    for (auto const& e : i->second.entries) { if (e.h.back() == n) {
+      fallback = e.height;
+      for (auto const& f : prev->second.entries) { if (f.h.back() == n) {
+        return e.height*frac + f.height*(1-frac);
+      }}
+    }}
+    return fallback;
   }
   
   template<class LineFuncType>
@@ -137,27 +185,26 @@ public:
     size_t place_in_current_history = 0;
     auto prev = spatial_representation_columns.begin();
     for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
-      if ((place_in_current_history+1 < w.current_history.size()) && w.current_history[place_in_current_history+1]->start_time == prev.time) {
+      if ((place_in_current_history+1 < current_history.size()) && current_history[place_in_current_history+1]->start_time == prev->first) {
         ++place_in_current_history;
       }
-      for (auto e : i->second.entries) {
-        for (auto f : prev->second.entries) {
+      for (auto const& e : i->second.entries) {
+        for (auto const& f : prev->second.entries) {
           if (f.h.back() == e.h.back()) {
             double ewid = time_coord(i->first, focus_time);
             double fwid = time_coord(prev->first, focus_time);
-            bool in_current_history = (w.current_history[place_in_current_history] == e.h.back());
+            bool in_current_history = (current_history[place_in_current_history] == e.h.back());
             line(fwid, f.height, ewid, e.height, in_current_history);
           }
         }
       }
       prev = i;
     }
-    return metadata;
   }
   
-  std::pair<time_type, history_tree::history> hist_from_draw_coords(double time_coord, double height, time_type focus_time) {
+  std::pair<time_type, history_tree::history> hist_from_draw_coords(double drawn_time_coord, double height, time_type focus_time) {
     history_tree::history best;
-    time_type best_time = never;
+    time_type best_time = TimeSteward::never;
     double best_dist = 2.0;
     auto prev = spatial_representation_columns.begin();
     for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
@@ -165,25 +212,13 @@ public:
       time_type min_time = prev->first;
       double max_time_coord = time_coord(max_time, focus_time);
       double min_time_coord = time_coord(min_time, focus_time);
-      if (min_time_coord <= time_coord && time_coord < max_time_coord) {
-        while (max_time-min_time > 1) {
-          time_type mid_time = divide(max_time+min_time, 2, rounding_strategy<round_down, negative_continuous_with_positive>());
-          double mid_time_coord = time_coord(mid_time, focus_time);
-          if (mid_time_coord < time_coord) {
-            max_time = mid_time;
-            max_time_coord = mid_time_coord;
-          }
-          else {
-            min_time = mid_time;
-            min_time_coord = mid_time_coord;
-          }
-        }
-        best_time = min_time;
-        double frac = double(min_time-prev->first)/double(i->first-prev->first);
-        for (auto e : i->second.entries) {
-          for (auto f : prev->second.entries) {
+      if (min_time_coord <= drawn_time_coord && drawn_time_coord < max_time_coord) {
+        best_time = time_from_coord(drawn_time_coord, min_time, max_time, focus_time);
+        double frac = double(best_time-prev->first)/double(i->first-prev->first);
+        for (auto const& e : i->second.entries) {
+          for (auto const& f : prev->second.entries) {
             if (f.h.back() == e.h.back()) {
-              const double efh = f.height + (e.height-f.height)*frac;
+              const double efh = e.height*frac + f.height*(1-frac);
               const double dist = std::abs(efh - height);
               if (dist < best_dist) {
                 best_dist = dist;
@@ -207,7 +242,9 @@ public:
   
   
   void expand_to_time(time_type time) {
+    validate();
     expand_to_time_impl(current_history.back(), time);
+    validate();
   }
   void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
     validate();
@@ -218,10 +255,7 @@ public:
     node* cur_node = current_history[place];
     if ((place+1 >= current_history.size()) && (time >= cur_node->end_time)) {
       cur_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
-      if (cur_node->end_time < time) {
-        update_spatial_representation_heights(cur_node->end_time, time);
-        cur_node->end_time = time;
-      }
+      expand_to_time_impl(cur_node, time);
     }
     else {
       assert (time < cur_node->end_time);
@@ -237,8 +271,11 @@ public:
         p.first->second.entries = boost::prior(p.first)->second.entries;
       }
       for (size_t i = 0; i < p.first->second.entries.size(); ++i) {
-        if (p.first->second.entries[i].back() == current_history[current_history.size()-2]) {
-          p.first->second.entries.insert(current.begin()+i+1, current_history);
+        if (p.first->second.entries[i].h.back() == current_history[current_history.size()-2]) {
+          spatial_representation_entry e(
+            p.first->second.entries[i].height,
+            current_history);
+          p.first->second.entries.insert(p.first->second.entries.begin()+i+1, e);
           break;
         }
       }
@@ -246,34 +283,49 @@ public:
     validate();
   }
   
-  void expand_to_time_impl(node* node, time_type time) {
-    if (time > node->end_time) {
-      update_spatial_representation_heights(node->end_time, time);
-      auto a = spatial_representation_columns.upper_bound(node->end_time);
+  void expand_to_time_impl(node* n, time_type time) {
+    if (time > n->end_time) {
+      time_type old_end_time = n->end_time;
+      auto a = spatial_representation_columns.upper_bound(old_end_time);
       auto b = spatial_representation_columns.upper_bound(time);
       assert (a != spatial_representation_columns.begin());
       auto prev = boost::prior(a);
-      node* insert_after_this = nullptr;
       history h;
       for (size_t j = 0; j < prev->second.entries.size(); ++j) {
-        if (prev->second.entries[j].h.back() == node) {
+        if (prev->second.entries[j].h.back() == n) {
           h = prev->second.entries[j].h;
-          if (j > 0) { insert_after_this = prev->second.entries[j-1].h.back(); }
+          for (auto i = a; i != b; ++i) {
+            bool inserted = false;
+            for (size_t k = j-1; k != size_t(-1); --k) {
+              for (size_t l = 0; l < i->second.entries.size(); ++l) {
+                if (i->second.entries[l].h.back() == prev->second.entries[k].h.back()) {
+                  spatial_representation_entry e(
+                    0.5 * (i->second.entries[l].height + ((l+1 < i->second.entries.size()) ? i->second.entries[l+1].height : 1.0)),
+                    h);
+                  i->second.entries.insert(i->second.entries.begin()+l+1, e);
+                  inserted = true;
+                  goto triplebreak;
+                }
+              }
+            }
+            triplebreak:
+            
+            if (!inserted) {
+              spatial_representation_entry e(
+                i->second.entries.empty() ? 0.5 : 0.5 * (i->second.entries[0].height),
+                h);
+              i->second.entries.insert(i->second.entries.begin(), e);
+            }
+          }
           break;
         }
       }
-      assert (!h.empty());
-      for (auto i = a; i != b; ++i) {
-        for (size_t j = 0; j < i->second.entries.size(); ++j) {
-          if (i->second.entries[j].h.back() == insert_after_this) {
-            i->second.entries.insert(i->second.entries.begin()+j+1, h);
-            break;
-          }
-        }
-      }
-      node->end_time = time;
       
-      while (time > boost::prior(spatial_representation_columns.end())->first + (StandardTimeIncrement>>3)) {
+      assert (!h.empty());
+      
+      n->end_time = time;
+      
+      while (time >= boost::prior(spatial_representation_columns.end())->first) {
         time_type new_time = boost::prior(spatial_representation_columns.end())->first + (StandardTimeIncrement>>3) + 1;
         auto p = spatial_representation_columns.insert(std::make_pair(new_time, boost::prior(spatial_representation_columns.end())->second));
         assert (p.second);
@@ -286,17 +338,22 @@ public:
           }
         }
       }
+      update_spatial_representation_heights(old_end_time, time);
     }
   }
-  size_t where_in_current_history_is(time_type time) {
+  size_t where_in_history_is(history const& h, time_type time) {
     size_t result = 0;
-    for (size_t i = 1; i < current_history.size(); ++i) {
-      if (time >= current_history[i]->start_time) { result = i; }
+    for (size_t i = 1; i < h.size(); ++i) {
+      if (time >= h[i]->start_time) { result = i; }
       else { break; }
     }
     return result;
   }
+  size_t where_in_current_history_is(time_type time) {
+    return where_in_history_is(current_history, time);
+  }
   void validate_node(node const& n) {
+    assert (boost::prior(spatial_representation_columns.end())->first > n.end_time);
     for (auto const& p : n.events) {
       assert (p.first >= n.start_time);
     }
@@ -314,6 +371,14 @@ public:
       n = current_history[i];
     }
     validate_node(history_root);
+    auto i = spatial_representation_columns.begin();
+    assert (i != spatial_representation_columns.end());
+    for (; i != spatial_representation_columns.end(); ++i) {
+      //assert (!i->second.entries.empty());
+      for (size_t j = 0; j < i->second.entries.size(); ++j) {
+        assert (!i->second.entries[j].h.empty());
+      }
+    }
   }
   
   void set_time(time_type new_time) {
@@ -367,8 +432,8 @@ public:
     }
     if (first_difference >= current_history.size() &&
         first_difference >=     new_history.size()) { return; }
-    const time_type s0 = (first_difference >= current_history.size()) ? max_time : current_history[first_difference]->start_time;
-    const time_type s1 = (first_difference >=     new_history.size()) ? max_time :     new_history[first_difference]->start_time;
+    const time_type s0 = (first_difference >= current_history.size()) ? TimeSteward::max_time : current_history[first_difference]->start_time;
+    const time_type s1 = (first_difference >=     new_history.size()) ? TimeSteward::max_time :     new_history[first_difference]->start_time;
     const time_type branch_point = std::min(s0, s1);
     if (branch_point-1 < current_time) {
       set_time(branch_point-1);

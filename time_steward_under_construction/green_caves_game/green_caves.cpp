@@ -26,6 +26,7 @@
 
 #include "../bounded_int_calculus.hpp"
 #include "../time_steward.hpp"
+#include "../history_tree.hpp"
 typedef ptrdiff_t num_coordinates_type;
 
 typedef time_steward_system::time_steward<time_steward_system::fields_list<int>> hack_time_steward;
@@ -423,6 +424,8 @@ public:
   }
 };
 
+typedef history_tree<time_steward, second_time> gc_history_tree;
+
 
 struct view_rect {
   fd_vector screen_min;
@@ -447,27 +450,20 @@ struct draw_green_caves_metadata {
   view_rect main_view;
   view_rect hist_view;
   num_coordinates_type hist_time_dim;
-  double hist_max_time() {
-    return double(sprep.columns.back().time);
-  }
+  time_type focus_time;
+  gc_history_tree* w;
   double_vector main_to_screen(space_coordinate x, space_coordinate y) {
     double_vector r;
     r[0] = 0.5 + double(x) / vqqq;
     r[1] = 0.5 + double(y) / vqqq;
     return main_view.to_screen(r);
   }
-  double_vector hist_to_screen(time_type time, double height) {
-    double_vector r;
-    r[hist_time_dim] = double(time) / hist_max_time();
-    r[!hist_time_dim] = height;
-    return hist_view.to_screen(r);
-  }
-  std::pair<time_type, history_tree::history> hist_from_screen(fd_vector loc) {
+  std::pair<time_type, gc_history_tree::history> hist_from_screen(fd_vector loc) {
     double_vector r = hist_view.from_screen(loc);
     if ((r(0) < 0) || (r(0) > 1) || (r(1) < 0) || (r(1) > 1)) {
-      return std::pair<time_type, history_tree::history>(never, history_tree::history());
+      return std::pair<time_type, gc_history_tree::history>(never, gc_history_tree::history());
     }
-    return hist_from_draw_coords(r(hist_time_dim), r(!hist_time_dim), focus_time);
+    return w->hist_from_draw_coords(r(hist_time_dim), r(!hist_time_dim), focus_time);
   }
   draw_green_caves_metadata() {}
   draw_green_caves_metadata(fd_vector screen_size) {
@@ -485,9 +481,26 @@ struct draw_green_caves_metadata {
 
 time_type shot_tail_delay = second_time/10;
 template<class DrawFuncsType>
-draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& w, time_type time, DrawFuncsType& draw) {
+struct hist_line_func {
+  draw_green_caves_metadata* m;
+  DrawFuncsType* draw;
+  void operator()(double x0, double y0, double x1, double y1, bool in_current_history) {
+    double_vector v0;
+    double_vector v1;
+    v0[m->hist_time_dim] = x0;
+    v0[!m->hist_time_dim] = y0;
+    v1[m->hist_time_dim] = x1;
+    v1[!m->hist_time_dim] = y1;
+    v0 = m->hist_view.to_screen(v0);
+    v1 = m->hist_view.to_screen(v1);
+    draw->segment(v0(0), v0(1), v1(0), v1(1), in_current_history ? 4.0 : 1.5);
+  }
+};
+template<class DrawFuncsType>
+draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tree& w, time_type time, DrawFuncsType& draw) {
   draw_green_caves_metadata metadata(screen_size);
-  metadata.sprep = w.spatialize();
+  metadata.focus_time = time;
+  metadata.w = &w;
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
   auto player = accessor->get(time_steward_system::global_object_id);
   fd_vector ct = accessor->get<player_center_reference_tile>(player);
@@ -518,14 +531,17 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, history_tree& 
     }
   }
   
-          if (in_current_history) {
-            if (prev.time <= time && time < cur.time) {
-              draw.circle(
-                v0(0) + (v1(0)-v0(0))*double(time-prev.time)/double(cur.time-prev.time),
-                v0(1) + (v1(1)-v0(1))*double(time-prev.time)/double(cur.time-prev.time),
-                15);
-            }
-          }
+  hist_line_func<DrawFuncsType> line;
+  line.m = &metadata;
+  line.draw = &draw;
+  w.draw_tree(line, time);
+  
+  double_vector current_hist_pos;
+  current_hist_pos[metadata.hist_time_dim] = w.time_coord(time, time);
+  current_hist_pos[!metadata.hist_time_dim] = w.height_coord(w.current_history, time, time);
+  current_hist_pos = metadata.hist_view.to_screen(current_hist_pos);
+  draw.circle(current_hist_pos(0), current_hist_pos(1), 15);
+              
   return metadata;
 }
 
@@ -536,7 +552,7 @@ struct green_caves_ui_backend {
   fd_vector screen_size;
   draw_green_caves_metadata last_metadata;
 
-  history_tree hist;
+  gc_history_tree hist;
   time_type current_time = 0;
   int64_t last_milliseconds = 0;
   bool shooting = false;
@@ -580,6 +596,7 @@ struct green_caves_ui_backend {
           break;
         }
       }
+      hist.expand_to_time(new_time);
       current_time = new_time;
     }
   }
