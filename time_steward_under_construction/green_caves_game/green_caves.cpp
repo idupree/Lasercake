@@ -540,7 +540,7 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
   current_hist_pos[metadata.hist_time_dim] = w.time_coord(time, time);
   current_hist_pos[!metadata.hist_time_dim] = w.height_coord(w.current_history, time, time);
   current_hist_pos = metadata.hist_view.to_screen(current_hist_pos);
-  draw.circle(current_hist_pos(0), current_hist_pos(1), 15);
+  draw.circle(current_hist_pos(0), current_hist_pos(1), 8);
               
   return metadata;
 }

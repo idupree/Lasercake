@@ -125,12 +125,16 @@ public:
   }
   
   double time_coord(time_type time, time_type focus_time) {
-    double double_max_time = boost::prior(spatial_representation_columns.end())->first;
-    double focus_time_coord = 0.1 + 0.8*(double(focus_time) / double_max_time);
     time_type flat_dist = 2*StandardTimeIncrement;
     double flat_slope = 0.1/double(flat_dist);
+    double double_max_time = boost::prior(spatial_representation_columns.end())->first;
+    if (double_max_time < 1.0/flat_slope) {
+      return double(time)*flat_slope;
+    }
+    
+    double focus_time_coord = 0.1 + 0.8*(double(focus_time) / double_max_time);
     if (focus_time-flat_dist < time && time < focus_time+flat_dist) {
-      return focus_time_coord + (time-focus_time)*flat_slope;
+      return focus_time_coord + double(time-focus_time)*flat_slope;
     }
     else {
       double s = sign(time-focus_time);
@@ -138,10 +142,20 @@ public:
       double far_end_coord = (s>0) ? 1 : 0;
       double middle_end_time = (focus_time + s*flat_dist);
       double middle_end_coord = (focus_time_coord + s*0.1);
-      double far_slope = (middle_end_coord-far_end_coord)/(middle_end_time-far_end_time);
-      double frac = (double(time)-far_end_time) / double(middle_end_time-far_end_time);
+      double average_slope = (middle_end_coord-far_end_coord)/(middle_end_time-far_end_time);
+      //double frac = (double(time)-far_end_time) / double(middle_end_time-far_end_time);
       double from_middle = double(time) - middle_end_time;
-      double result = middle_end_coord + (from_middle*flat_slope)*(frac) + (from_middle*far_slope)*(1-frac);
+      //double result = middle_end_coord + (from_middle*flat_slope)*(frac) + (from_middle*average_slope)*(1-frac);
+      double a = from_middle / double(far_end_time-middle_end_time);
+      double k = average_slope / flat_slope;
+      assert (k >= 0.0);
+      if (k >= 1.0) {
+        // just extend the flat area (it won't reach the end of the drawing space,which is OK)
+        return focus_time_coord + double(time-focus_time)*flat_slope;
+      }
+      // wolfram alpha "solve ((1-k)x^2 + kx) = a for x"
+      double fancy_func_result = (k - std::sqrt(k*k + 4*a*(1-k)))/(2*(k-1));
+      double result = middle_end_coord + fancy_func_result * (far_end_coord-middle_end_coord);
       //std::cerr << time << ", " << focus_time << ", " << result << "\n";
       return result;
     }
@@ -193,6 +207,7 @@ public:
           if (f.h.back() == e.h.back()) {
             double ewid = time_coord(i->first, focus_time);
             double fwid = time_coord(prev->first, focus_time);
+            assert (ewid >= fwid);
             bool in_current_history = (current_history[place_in_current_history] == e.h.back());
             line(fwid, f.height, ewid, e.height, in_current_history);
           }
