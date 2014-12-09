@@ -311,25 +311,25 @@ public:
           h = prev->second.entries[j].h;
           for (auto i = a; i != b; ++i) {
             bool inserted = false;
-            for (size_t k = j-1; k != size_t(-1); --k) {
+            for (size_t k = j+1; k < prev->second.entries.size(); ++k) {
               for (size_t l = 0; l < i->second.entries.size(); ++l) {
                 if (i->second.entries[l].h.back() == prev->second.entries[k].h.back()) {
                   spatial_representation_entry e(
-                    0.5 * (i->second.entries[l].height + ((l+1 < i->second.entries.size()) ? i->second.entries[l+1].height : 1.0)),
+                    0.5 * (i->second.entries[l].height + ((l > 1) ? i->second.entries[l-1].height : 0.0)),
                     h);
-                  i->second.entries.insert(i->second.entries.begin()+l+1, e);
+                  i->second.entries.insert(i->second.entries.begin()+l, e);
                   inserted = true;
-                  goto triplebreak;
+                  goto doublebreak;
                 }
               }
             }
-            triplebreak:
+            doublebreak:
             
             if (!inserted) {
               spatial_representation_entry e(
-                i->second.entries.empty() ? 0.5 : 0.5 * (i->second.entries[0].height),
+                i->second.entries.empty() ? 0.5 : 0.5 * (i->second.entries.back().height),
                 h);
-              i->second.entries.insert(i->second.entries.begin(), e);
+              i->second.entries.push_back(e);
             }
           }
           break;
