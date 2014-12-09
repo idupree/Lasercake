@@ -570,8 +570,10 @@ struct green_caves_ui_backend {
     last_milliseconds = milliseconds;
     if (dur > 0 && dur < 400) {
       const time_type new_time = current_time + second_time * dur / 1000;
-      for (int64_t i = current_time*acc_updates_per_second/second_time; i < new_time*acc_updates_per_second/second_time; ++i) {
+      for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_up, negative_continuous_with_positive>()); ; ++i) {
         const time_type ut = i * second_time / acc_updates_per_second;
+        assert (ut >= current_time);
+        if (ut >= new_time) { break; }
         if (   up && ! down) { hist.insert_fiat_event(ut, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
         if ( down && !   up) { hist.insert_fiat_event(ut, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
         if ( left && !right) { hist.insert_fiat_event(ut, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
