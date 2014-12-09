@@ -128,7 +128,7 @@ public:
     time_type flat_dist = 2*StandardTimeIncrement;
     double flat_slope = 0.1/double(flat_dist);
     double double_max_time = boost::prior(spatial_representation_columns.end())->first;
-    if (double_max_time < 1.0/flat_slope) {
+    if (double_max_time < 0.9/flat_slope) {
       return double(time)*flat_slope;
     }
     
