@@ -40,7 +40,7 @@ struct draw_funcs {
   void rect(double x0, double y0, double x1, double y1) {
     y0 = backend.screen_size(1)-y0;
     y1 = backend.screen_size(1)-y1;
-    draw_rect(x0, y0, x1-x0, y0-y1);
+    draw_rect(x0, y1, x1-x0, y0-y1);
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
     y0 = backend.screen_size(1)-y0;
