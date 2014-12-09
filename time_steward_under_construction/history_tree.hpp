@@ -110,16 +110,16 @@ public:
     auto prev = boost::prior(i);
     for (; i != spatial_representation_columns.end(); ++i) {
       // decay towards desired_heights
-      double decay_factor = 0;
+      double decay_factor = 1.0;
       if (i->first > end) { decay_factor = std::pow(0.5, double(end - start)/double(i->first - end)); }
-      if (decay_factor > 0.9999) break;
+      if (decay_factor < 0.0001) break;
       assert (decay_factor >= 0.0);
       assert (decay_factor <= 1.0);
       std::vector<double> desired_heights = i->second.desired_heights(prev->second, i->first - prev->first);
       for (size_t j = 0; j < desired_heights.size(); ++j) {
         assert (i->second.entries[j].height >= 0.0);
         assert (i->second.entries[j].height <= 1.0);
-        i->second.entries[j].height = i->second.entries[j].height*decay_factor + desired_heights[j]*(1.0-decay_factor);
+        i->second.entries[j].height = i->second.entries[j].height*(1.0-decay_factor) + desired_heights[j]*decay_factor;
         assert (i->second.entries[j].height >= 0.0);
         assert (i->second.entries[j].height <= 1.0);
       }
