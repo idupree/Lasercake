@@ -46,6 +46,8 @@ public:
   typedef std::vector<node*> history;
   history current_history;
   time_type current_time;
+  time_type max_reached_time;
+  static const time_type max_column_separation = (StandardTimeIncrement>>3) + 1;
   
   struct spatial_representation_entry {
     spatial_representation_entry(double height, history h):height(height),h(h){}
@@ -90,14 +92,15 @@ public:
   
   history_tree():
     history_root(-1),
-    current_time(-1)
+    current_time(-1),
+    max_reached_time(0)
   {
     history_root.end_time = 0;
     current_history.push_back(&history_root);
     spatial_representation_column c;
     c.entries.push_back(spatial_representation_entry(0.5, current_history));
     spatial_representation_columns.insert(std::make_pair(time_type(0), c));
-    spatial_representation_columns.insert(std::make_pair(time_type(1), c));
+    spatial_representation_columns.insert(std::make_pair(time_type(max_column_separation), spatial_representation_column()));
     validate();
   }
   
@@ -127,7 +130,7 @@ public:
   double time_coord(time_type time, time_type focus_time) {
     time_type flat_dist = 2*StandardTimeIncrement;
     double flat_slope = 0.1/double(flat_dist);
-    double double_max_time = boost::prior(spatial_representation_columns.end())->first;
+    double double_max_time = max_reached_time;
     if (double_max_time < 0.9/flat_slope) {
       return double(time)*flat_slope;
     }
@@ -183,14 +186,15 @@ public:
     double fwid = time_coord(prev->first, focus_time);
     double frac = (time_coord(time, focus_time) - fwid) / (ewid - fwid);
     node* n = hist[where_in_history_is(hist, time)];
-    double fallback = 0;
+    double fallback = -1;
     
-    for (auto const& e : i->second.entries) { if (e.h.back() == n) {
-      fallback = e.height;
-      for (auto const& f : prev->second.entries) { if (f.h.back() == n) {
+    for (auto const& f : prev->second.entries) { if (f.h.back() == n) {
+      fallback = f.height;
+      for (auto const& e : i->second.entries) { if (e.h.back() == n) {
         return e.height*frac + f.height*(1-frac);
       }}
     }}
+    assert (fallback >= 0.0);
     return fallback;
   }
   
@@ -339,9 +343,12 @@ public:
       assert (!h.empty());
       
       n->end_time = time;
+      if (max_reached_time < time) {
+        max_reached_time = time;
+      }
       
       while (time >= boost::prior(spatial_representation_columns.end())->first) {
-        time_type new_time = boost::prior(spatial_representation_columns.end())->first + (StandardTimeIncrement>>3) + 1;
+        time_type new_time = boost::prior(spatial_representation_columns.end())->first + max_column_separation;
         auto p = spatial_representation_columns.insert(std::make_pair(new_time, boost::prior(spatial_representation_columns.end())->second));
         assert (p.second);
         for (size_t j = 0; j < p.first->second.entries.size(); ) {
@@ -380,6 +387,7 @@ public:
     }
   }
   void validate() {
+    assert (boost::prior(spatial_representation_columns.end())->second.entries.empty());
     node* n = &history_root;
     for (size_t i = 1; i < current_history.size(); ++i) {
       assert(n->children.find(current_history[i]->start_time) != n->children.end());
