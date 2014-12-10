@@ -351,13 +351,19 @@ public:
     fd_vector ct = accessor->get<player_center_reference_tile>(e);
     player_shape const& p = *accessor->get<player_shape>(e);
     
-    for (tile_coordinate tx = ct(0)-2; tx <= ct(0)+2; ++tx) {
-      for (tile_coordinate ty = ct(1)-2; ty <= ct(1)+2; ++ty) {
+    fd_vector c = p.center.get_term<space_coordinate>(accessor->now(), 0);
+    fd_vector v = p.center.get_term<space_coordinate>(accessor->now(), 1);
+    for (tile_coordinate tx = ct(0)-1-(v(0)<0); tx <= ct(0)+1+(v(0)>0); ++tx) {
+      for (tile_coordinate ty = ct(1)-1-(v(1)<0); ty <= ct(1)+1+(v(1)>0); ++ty) {
         auto tile = fd_vector(tx,ty);
         auto te = tile_entity(accessor, tile);
         if (accessor->get<wall_state>(te) == WALL) {
           for (space_coordinate corner_x = tile_to_space_min(tx); corner_x <= tile_to_space_max(tx); corner_x += tile_size) {
             for (space_coordinate corner_y = tile_to_space_min(ty); corner_y <= tile_to_space_max(ty); corner_y += tile_size) {
+              if (c(0) < corner_x-p.radius && v(0) <= 0) { continue; }
+              if (c(0) > corner_x+p.radius && v(0) >= 0) { continue; }
+              if (c(1) < corner_y-p.radius && v(1) <= 0) { continue; }
+              if (c(1) > corner_y+p.radius && v(1) >= 0) { continue; }
               poly3 distish = (p.center(0)-corner_x)*(p.center(0)-corner_x) + (p.center(1)-corner_y)*(p.center(1)-corner_y) - p.radius*p.radius;
               assert(distish.get_term(accessor->now(), 0) > 0);
               time_type when = when_nonpos(accessor->now(), distish);
@@ -550,7 +556,7 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
         draw.rect(v0(0), v0(1), v1(0), v1(1));
       }
       for (entity_id shot : accessor->get<tile_shots>(te)) {
-        assert(accessor->get<shot_tile>(accessor->get(shot)) == tile);
+        maybe_assert(accessor->get<shot_tile>(accessor->get(shot)) == tile);
         auto trajectory = *accessor->get<shot_trajectory>(accessor->get(shot));
         double_vector v0 = metadata.main_to_screen(trajectory(0)(accessor->now()) - cx, trajectory(1)(accessor->now()) - cy);
         double_vector v1 = metadata.main_to_screen(trajectory(0)(accessor->now() - shot_tail_delay) - cx, trajectory(1)(accessor->now() - shot_tail_delay) - cy);

@@ -633,8 +633,6 @@ private:
   trigger_id trigger_id_;
   siphash_random_generator rng_;
   mutable std::unordered_map<entity_id, entity_info> entities;
-  siphash_id random_pool;
-  uint32_t random_pool_idx;
   
   std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
