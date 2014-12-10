@@ -163,7 +163,47 @@ namespace std {
     }
   };
 }
+
+
+class siphash_random_generator {
+public:
+  siphash_random_generator(siphash_id seed):seed_(seed),ids_created_(0),random_pool_idx_(128) {}
   
+  siphash_id random_id() {
+    return siphash_id::combining(seed_, ids_created_++);
+  }
+  uint64_t random_bits(uint32_t bits) {
+    caller_correct_if(bits <= 64, "You can only get 64 random bits at a time");
+    if (bits == 0) { return 0; }
+    if (random_pool_idx_ >= 128) { random_pool_ = random_id(); random_pool_idx_ = 0; }
+    const uint32_t bits_unavailable = (random_pool_idx_ & 63);
+    const uint32_t bits_available = 64-bits_unavailable;
+    const uint64_t mask = (1ULL<<(bits-1))-1ULL+(1ULL<<(bits-1));
+    uint64_t result = (random_pool_.data()[random_pool_idx_>=64] >> bits_unavailable) & mask;
+    if (bits > bits_available) {
+      const uint32_t bits_still_needed = bits-bits_available;
+      if (random_pool_idx_ >= 64) {
+        random_pool_ = random_id();
+        random_pool_idx_ = bits_still_needed;
+      }
+      else {
+        random_pool_idx_ = 64+bits_still_needed;
+      }
+      const uint64_t result_finisher = (random_pool_.data()[random_pool_idx_>=64] & ((1ULL<<bits_still_needed)-1))<<bits_available;
+      assert (!(result & result_finisher));
+      result |= result_finisher;
+    }
+    else {
+      random_pool_idx_ += bits;
+    }
+    assert(!(result & ~mask));
+    return result;
+  }
+  siphash_id seed_;
+  size_t ids_created_;
+  siphash_id random_pool_;
+  uint32_t random_pool_idx_;
+};
 
 namespace persistent_siphash_id_trie_system {
 typedef uint32_t num_bits_type;

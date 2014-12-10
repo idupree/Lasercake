@@ -620,31 +620,7 @@ public:
     return get(create_id());
   }
   uint64_t random_bits(uint32_t bits) {
-    caller_correct_if(bits <= 64, "You can only get 64 random bits at a time");
-    if (bits == 0) { return 0; }
-    if (random_pool_idx>=128) { random_pool = create_id(); random_pool_idx = 0; }
-    const uint32_t bits_unavailable = (random_pool_idx & 63);
-    const uint32_t bits_available = 64-bits_unavailable;
-    const uint64_t mask = (1ULL<<(bits-1))-1ULL+(1ULL<<(bits-1));
-    uint64_t result = (random_pool.data()[random_pool_idx>=64] >> bits_unavailable) & mask;
-    if (bits > bits_available) {
-      const uint32_t bits_still_needed = bits-bits_available;
-      if (random_pool_idx>=64) {
-        random_pool = create_id();
-        random_pool_idx = bits_still_needed;
-      }
-      else {
-        random_pool_idx = 64+bits_still_needed;
-      }
-      const uint64_t result_finisher = (random_pool.data()[random_pool_idx>=64] & ((1ULL<<bits_still_needed)-1))<<bits_available;
-      assert (!(result & result_finisher));
-      result |= result_finisher;
-    }
-    else {
-      random_pool_idx += bits;
-    }
-    assert(!(result & ~mask));
-    return result;
+    return rng_.random_bits(bits);
   }
     
   time_steward_accessor(time_steward_accessor const&) = delete;
@@ -655,7 +631,7 @@ private:
   TimeSteward const* ts_;
   extended_time time_;
   trigger_id trigger_id_;
-  size_t ids_created_;
+  siphash_random_generator rng_;
   mutable std::unordered_map<entity_id, entity_info> entities;
   siphash_id random_pool;
   uint32_t random_pool_idx;
@@ -665,10 +641,10 @@ private:
   mutable std::vector<entity_field_id> entity_fields_modified; // hack - we COULD make this non-mutable, but get_impl is easier this way
   mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
 
-  siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
+  siphash_id create_id() { return rng_.random_id(); }
     
   time_steward_accessor(TimeSteward const* ts, extended_time time, trigger_id trigger_id_ = trigger_id::null())
-    :ts_(ts),time_(time),trigger_id_(trigger_id_),ids_created_(0),random_pool_idx(128){}
+    :ts_(ts),time_(time),trigger_id_(trigger_id_),rng_(time_->id){}
   void process_event(event const* e) {
     (*e)(this);
   }
