@@ -141,8 +141,13 @@ public:
   }
 };
 
+std::unordered_map<fd_vector, entity_id> tile_entity_id_memo;
 entity_id tile_entity_id(fd_vector tile) {
-  return siphash_id::combining('t','i','l','e',tile(0),tile(1));
+  auto i = tile_entity_id_memo.find(tile);
+  if (i != tile_entity_id_memo.end()) { return i->second; }
+  entity_id result = siphash_id::combining('t','i','l','e',tile(0),tile(1));
+  tile_entity_id_memo.insert(std::make_pair(tile, result));
+  return result;
 }
 
 const int64_t max_cave_radius_in_tiles = 10;

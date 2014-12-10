@@ -929,5 +929,18 @@ void test() {
 }
 
 } // namespace bounded_int_calculus
+namespace std {
+  template<int num_dimensions, typename CoordinateType>
+  struct hash<bounded_int_calculus::finite_dimensional_vector<num_dimensions, CoordinateType>> {
+    public:
+    size_t operator()(bounded_int_calculus::finite_dimensional_vector<num_dimensions, CoordinateType> const& i)const {
+      size_t seed = std::hash<CoordinateType>()(i(0));
+      for (int j = 1; j < num_dimensions; ++j) {
+        seed ^= std::hash<CoordinateType>()(i(j)) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      }
+      return seed;
+    }
+  };
+}
 
 #endif

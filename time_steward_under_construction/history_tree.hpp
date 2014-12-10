@@ -387,6 +387,7 @@ public:
     }
   }
   void validate() {
+    return;
     assert (boost::prior(spatial_representation_columns.end())->second.entries.empty());
     node* n = &history_root;
     for (size_t i = 1; i < current_history.size(); ++i) {
