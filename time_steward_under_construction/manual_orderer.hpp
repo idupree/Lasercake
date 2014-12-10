@@ -299,17 +299,19 @@ struct supply {
   entry_base* first_served_entry;
   entry_base* last_served_entry;
   supply* middle_served_supply;
+  uint64_t steps_to_parent;
   uint64_t num_served_entries;
   uint64_t current_size;
   uint64_t amount_reserved;
+  uint64_t amount_reserved_from_parent_supply_to_replace_resupplies;
   
   uint64_t remaining_capacity()const {
     return max_served_entries(level) - num_served_entries;
   }
   uint64_t entries_above_half()const {
-    const uint64_t result = num_served_entries - (max_served_entries(level)>>1);
-    if (result < 0) { return 0; }
-    return result;
+    const uint64_t half = max_served_entries(level)>>1;
+    if (num_served_entries < half) { return 0; }
+    return num_served_entries - half;
   }
   
   int64_t resupply_steps_after_this(resupply const& r)const {
@@ -321,11 +323,19 @@ struct supply {
   int64_t resupply_max_steps_to_parent()const {
     return entries_above_half()*max_resupply_steps_per_insert;
   }
+  uint64_t resupply_reserve_needed()const {
+    const uint64_t split_claim_size = supply_target_size(level)*4;
+    const uint64_t leeway = remaining_capacity()*max_reserved_per_insert;
+    if (split_claim_size > leeway) {
+      return split_claim_size - leeway;
+    }
+    return 0;
+  }
   void validate_resupply(bool is_middle)const {
     resupply const& r = is_middle ? middle_resupply : end_resupply;
     assert (resupply_steps_after_this(r) <= resupply_max_steps_after_this(is_middle));
     assert (r.steps_to_parent <= resupply_max_steps_to_parent());
-    assert (r.amount_reserved_from_parent_supply_for_replacement + remaining_capacity()*max_reserved_per_insert >= supply_max_size(level));
+    assert (r.amount_reserved_from_parent_supply_for_replacement >= resupply_reserve_needed());
   }
   
   void validate()const {
@@ -338,8 +348,7 @@ struct supply {
     uint64_t confirm_num_served_entries = 0;
     for (auto i : served_supplies) {
       assert (i.level == level - 1);
-      confirm_amount_reserved += i.middle_resupply.amount_reserved_from_parent_supply_for_replacement;
-      confirm_amount_reserved += i.   end_resupply.amount_reserved_from_parent_supply_for_replacement;
+      confirm_amount_reserved += i.amount_reserved_from_parent_supply_to_replace_resupplies;
       confirm_num_served_entries += i.num_served_entries;
     }
     assert (confirm_num_served_entries == num_served_entries);
@@ -354,18 +363,18 @@ struct supply {
   }
   
   void step_resupply_upward(resupply& r) {
-    r.lower_end->idx -= supply_max_size(level);
+    r.lower_end->idx -= supply_target_size(level);
     assert (r.lower_end->idx > r.lower_end->prev()->idx);
     r.lower_end = r.lower_end.next();
     --r.steps_to_parent;
   }
   void step_resupply_downward(resupply& r) {
-    r.lower_end->idx += supply_max_size(level);
+    r.lower_end->idx += supply_target_size(level);
     assert (r.lower_end->idx < r.lower_end->next()->idx);
     r.lower_end = r.lower_end.prev();
     ++r.steps_to_parent;
   }
-  void step_resupply_as_necessary(resupply& r, int64_t max_steps, bool is_middle) {
+  void step_resupply_as_needed(resupply& r, int64_t max_steps, bool is_middle) {
     int64_t forced_steps_upward = r.steps_to_parent - resupply_max_steps_to_parent();
     if (forced_steps_upward > 0) {
       assert (forced_steps_upward <= max_steps);
@@ -393,7 +402,17 @@ struct supply {
       }
     }
   }
-  void update_resupply_based_on_insertion(resupply& r, entry_base* inserted_entry, entry_base* existing_entry, bool after, bool is_middle) {
+  void reserve_for_resupplies_as_needed() {
+    resupply& r = is_middle ? middle_resupply : end_resupply;
+    const int64_t reserve_needed = resupply_reserve_needed();
+    const int64_t change = reserve_needed - int64_t(amount_reserved_from_parent_supply_to_replace_resupplies);
+    assert (change <=  max_reserved_per_insert);
+    assert (change >= -max_reserved_per_insert);
+    amount_reserved_from_parent_supply_to_replace_resupplies = change;
+    parent->amount_reserved += change;
+  }
+  void update_resupply_based_on_insertion(entry_base* inserted_entry, entry_base* existing_entry, bool after, bool is_middle) {
+    resupply& r = is_middle ? middle_resupply : end_resupply;
     if (existing_entry->idx > r.lower_end->idx) {
       ++r.steps_to_parent;
     }
@@ -402,7 +421,8 @@ struct supply {
     }
     step_resupply_as_necessary(r, 1, is_middle);
   }
-  void update_resupply_based_on_erasure(resupply& r, entry_base* erased_entry, bool is_middle) {
+  void update_resupply_based_on_erasure(entry_base* erased_entry, bool is_middle) {
+    resupply& r = is_middle ? middle_resupply : end_resupply;
     if (erased_entry->idx > r.lower_end->idx) {
       --r.steps_to_parent;
     }
@@ -410,6 +430,75 @@ struct supply {
       r.lower_end = erased_entry.prev();
     }
     step_resupply_as_necessary(r, 1, is_middle);
+  }
+  void split() {
+    assert (num_served_entries == max_served_entries());
+    assert (amount_reserved_from_parent_supply_to_replace_resupplies == supply_target_size(level)*4);
+    
+    supply* s1 = new supply();
+      
+    s1->last_served_entry = s0->last_served_entry;
+    s0->last_served_entry = s0->middle_resupply.lower_end;
+    s1->first_served_entry = s0->last_served_entry->next();
+    s1->num_served_entries = s0->middle_served_supply->steps_to_parent;
+    s0->num_served_entries -= s1->num_served_entries;
+      
+    parent->amount_reserved -= supply_target_size(s0->level)*4;
+    parent->current_size -= supply_target_size(s0->level)*4;
+    s0->middle_resupply.lower_end = parent->last_entry;
+    s0->middle_resupply.steps_to_parent = 0;
+    s0->   end_resupply.lower_end = parent->last_entry;
+    s0->   end_resupply.steps_to_parent = 0;
+    s1->middle_resupply.lower_end = parent->last_entry;
+    s1->middle_resupply.steps_to_parent = 0;
+    s1->   end_resupply.lower_end = parent->last_entry;
+    s1->   end_resupply.steps_to_parent = 0;
+    
+    s0->current_size = supply_target_size(s0->level);
+    s1->current_size = supply_target_size(s0->level);
+    s0->amount_reserved = 0;
+    s1->amount_reserved = 0;
+    for (auto i : served_supplies) {
+      if (i.last_served_entry->idx < s1->first_served_entry->idx) {
+        s0->amount_reserved += i.amount_reserved_from_parent_supply_to_replace_resupplies;
+      }
+      else {
+        s1->amount_reserved += i.amount_reserved_from_parent_supply_to_replace_resupplies;
+      }
+    }
+    s0->amount_reserved_from_parent_supply_to_replace_resupplies = 0;
+    s1->amount_reserved_from_parent_supply_to_replace_resupplies = 0;
+    s0->update_middle_served_supply();
+    s1->update_middle_served_supply();
+  }
+  void join() {
+    assert (num_served_entries + old_sibling->num_served_entries == max_served_entries(level));
+    assert (s0->amount_reserved_from_parent_supply_to_replace_resupplies == 0);
+    assert (s1->amount_reserved_from_parent_supply_to_replace_resupplies == 0);
+    assert (s0->middle_resupply.lower_end == parent->last_entry);
+    assert (s0->middle_resupply.steps_to_parent == 0);
+    assert (s0->   end_resupply.lower_end == parent->last_entry);
+    assert (s0->   end_resupply.steps_to_parent == 0);
+    assert (s1->middle_resupply.lower_end == parent->last_entry);
+    assert (s1->middle_resupply.steps_to_parent == 0);
+    assert (s1->   end_resupply.lower_end == parent->last_entry);
+    assert (s1->   end_resupply.steps_to_parent == 0);
+    assert (s0->current_size == supply_target_size(s0->level));
+    assert (s1->current_size == supply_target_size(s0->level));
+    
+    parent->amount_reserved += supply_target_size(s0->level)*4;
+    parent->current_size += supply_target_size(s0->level)*4;
+    s0->amount_reserved_from_parent_supply_to_replace_resupplies = supply_target_size(s0->level)*4;
+    
+    s0->amount_reserved += s1->amount_reserved;
+    s0->num_served_entries = max_served_entries(s0->level);
+    s0->middle_resupply.lower_end = s0->last_served_entry;
+    s0->middle_resupply.steps_to_parent = s0->steps_to_parent;
+    s0->   end_resupply.lower_end = s1->last_served_entry;
+    s0->   end_resupply.steps_to_parent = s1->steps_to_parent;
+    s0->last_served_entry = s1->last_served_entry;
+    s0->current_size = 0;
+    s0->update_middle_served_supply();
   }
   
 
