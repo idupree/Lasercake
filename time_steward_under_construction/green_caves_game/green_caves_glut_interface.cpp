@@ -39,27 +39,39 @@ struct draw_funcs {
   draw_funcs(gl_triangles& triangles) : triangles(triangles){}
   gl_triangles& triangles;
   void circle(double cx, double cy, double r) {
-    gl_polygon polygon;
-    for (double theta = 0; theta < 6.283; theta += 0.3) {
-      polygon.vertices_.push_back(gl_data_format::vertex_with_color(
+    gl_data_format::vertex_with_color first;
+    gl_data_format::vertex_with_color prev;
+    gl_data_format::vertex_with_color center(cx, cy, 0, green_color);
+    for (double theta = 0; ; theta += 0.3) {
+      gl_data_format::vertex_with_color cur(
         cx + std::cos(theta)*r,
         cy + std::sin(theta)*r,
         0,
-        green_color));
+        green_color);
+      if (theta == 0) {
+        first = cur;
+      }
+      else {
+        if (theta >= 6.283) {
+          triangles.push_back(gl_triangle{{{ center, prev, first }}});
+          break;
+        }
+        else {
+          triangles.push_back(gl_triangle{{{ center, prev, cur }}});
+        }
+      }
+      prev = cur;
     }
-    push_wireframe_polygon(triangles, r*2/3, polygon);
   }
   void rect(double x0, double y0, double x1, double y1) {
-    gl_polygon polygon;
-    polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x0, y0, 0, green_color));
-    polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x1, y0, 0, green_color));
-    polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x1, y1, 0, green_color));
-    polygon.vertices_.push_back(gl_data_format::vertex_with_color(
-        x0, y1, 0, green_color));
-    push_wireframe_polygon(triangles, 5, polygon);
+    triangles.push_back(gl_triangle{{{
+      gl_data_format::vertex_with_color(x0, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x1, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+    triangles.push_back(gl_triangle{{{
+      gl_data_format::vertex_with_color(x0, y0, 0, green_color),
+      gl_data_format::vertex_with_color(x0, y1, 0, green_color),
+      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
     triangles.push_back(gl_triangle{{{
