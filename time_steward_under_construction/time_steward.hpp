@@ -513,7 +513,7 @@ private:
       // then this is not accessing the field's state *before* this time.
       if (!ever_modified && !accessed_preexisting_state) {
         accessed_preexisting_state = true;
-        acc.entity_fields_preexisting_state_accessed.insert(id);
+        acc.entity_fields_preexisting_state_accessed.push_back(id);
         return true;
       }
       return false;
@@ -663,7 +663,7 @@ private:
   std::unordered_map<trigger_id, std::shared_ptr<const trigger>> trigger_changes;
   std::vector<std::pair<extended_time, std::shared_ptr<const event>>> new_upcoming_events;
   mutable std::vector<entity_field_id> entity_fields_modified; // hack - we COULD make this non-mutable, but get_impl is easier this way
-  mutable std::unordered_set<entity_field_id> entity_fields_preexisting_state_accessed;
+  mutable std::vector<entity_field_id> entity_fields_preexisting_state_accessed;
 
   siphash_id create_id() { return siphash_id::combining(time_->id, ids_created_++); }
     
@@ -725,7 +725,7 @@ private:
       {}
     std::shared_ptr<const event> instigating_event;
     trigger_id tid;
-    std::unordered_set<entity_field_id> entity_fields_pile_accessed;
+    std::vector<entity_field_id> entity_fields_pile_accessed;
     std::vector<entity_field_id> entity_fields_pile_modified;
     std::vector<trigger_id> triggers_changed;
     std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
@@ -759,8 +759,18 @@ private:
   get_field_throughout_time(entity_field_id const& id) {
     return get_field_throughout_time<FieldID>(id.e, id.f.which);
   }
-  field_metadata_throughout_time& get_field_metadata_throughout_time(entity_field_id const& id) {
+  field_metadata_throughout_time& require_field_metadata_throughout_time(entity_field_id const& id) {
     return field_metadata[id];
+  }
+  field_metadata_throughout_time const& get_field_metadata_throughout_time(entity_field_id const& id)const {
+    auto i = field_metadata.find(id);
+    assert (i != field_metadata.end());
+    return i->second;
+  }
+  field_metadata_throughout_time& get_mut_field_metadata_throughout_time(entity_field_id const& id) {
+    auto i = field_metadata.find(id);
+    assert (i != field_metadata.end());
+    return i->second;
   }
   
   typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
@@ -879,8 +889,7 @@ private:
       }
     }
   }
-  void update_triggers(bool undoing, entity_field_id const& id, extended_time field_change_time) {
-    auto const& metadata = get_field_metadata_throughout_time(id);
+  void update_triggers(bool undoing, field_metadata_throughout_time const& metadata, extended_time field_change_time) {
     for (auto v : metadata.triggers_pointing_at_this.range_containing(field_change_time)) {
       // bidirectional_interval_map acts as if its intervals are closed intervals but we treat them as right-open ones.
       // if a trigger checks a field and then changes it, it retriggers itself.
@@ -890,8 +899,7 @@ private:
       }
     }
   }
-  void invalidate_events(entity_field_id const& id, extended_time field_change_time, extended_time field_change_end_time) {
-    auto const& metadata = get_field_metadata_throughout_time(id);
+  void invalidate_events(field_metadata_throughout_time const& metadata, extended_time field_change_time, extended_time field_change_end_time) {
     for (auto incorrect_event_time = metadata.event_piles_which_accessed_this.upper_bound(field_change_time); // upper_bound:
         // don't paradoxically cancel the event that changed this field
          (incorrect_event_time != metadata.event_piles_which_accessed_this.end()) && (*incorrect_event_time <= field_change_end_time); // <=:
@@ -902,9 +910,9 @@ private:
     }
   }
   template<typename Iterator, typename Map>
-  void invalidate_events(entity_field_id const& id, Iterator const& field_iter, Map const& f) {
+  void invalidate_events(field_metadata_throughout_time const& metadata, Iterator const& field_iter, Map const& f) {
     const Iterator next = boost::next(field_iter);
-    invalidate_events(id, field_iter->first, (next == f.end()) ? make_extended_time::max_time() : next->first);
+    invalidate_events(metadata, field_iter->first, (next == f.end()) ? make_extended_time::max_time() : next->first);
   }
   
   struct copy_field_change_from_accessor {
@@ -920,20 +928,20 @@ private:
     }
     
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, extended_time time, decltype(accessor::entity_info::fields)& src) {
+    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time time, decltype(accessor::entity_info::fields)& src) {
       auto& f = ts->get_field_throughout_time<FieldID>(id);
       const auto p = f.insert(std::make_pair(time, get_field<FieldID>(src, id)));
       assert(p.second);
-      ts->invalidate_events(id, p.first, f);
+      ts->invalidate_events(metadata, p.first, f);
     }
   };
   struct undo_field_change {
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, extended_time time) {
+    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time time) {
       auto& f = ts->get_field_throughout_time<FieldID>(id);
       const auto i = f.find(time);
       assert(i != f.end());
-      ts->invalidate_events(id, i, f);
+      ts->invalidate_events(metadata, i, f);
       f.erase(i);
     }
   };
@@ -982,16 +990,15 @@ private:
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
     return &*boost::prior(last_call_iter);
   }
-  void delete_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid) {
-    update_trigger_access_record(id, time, tid, bool(), true);
+  void delete_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time time, trigger_id tid) {
+    update_trigger_access_record(id, metadata, time, tid, bool(), true);
   }
-  void update_trigger_access_record(entity_field_id const& id, extended_time time, trigger_id tid, bool undoing, bool force_erase = false) {
-    assert (event_piles.find(time)->second.tid == tid);
+  void update_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time time, trigger_id tid, bool undoing, bool force_erase = false) {
+    maybe_assert (event_piles.find(time)->second.tid == tid);
     
     auto next_call_ptr = next_executed_trigger_call(tid, time);
     const extended_time change_end = next_call_ptr ? next_call_ptr->first : make_extended_time::max_time();
     
-    auto& metadata = get_field_metadata_throughout_time(id);
     if (force_erase) { undoing = !metadata.triggers_pointing_at_this.key_active_before(tid, time); }
     const bool changed = (undoing == metadata.triggers_pointing_at_this.key_active_after(tid, time));
     assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, change_end));
@@ -1142,7 +1149,7 @@ private:
       for (auto const& p2 : p.second.event_piles_which_accessed_this) {
         const auto e = event_piles.find(p2);
         assert (e != event_piles.end());
-        assert (e->second.entity_fields_pile_accessed.find(p.first) != e->second.entity_fields_pile_accessed.end());
+        //assert (e->second.entity_fields_pile_accessed.find(p.first) != e->second.entity_fields_pile_accessed.end());
       }
     }
     for (auto const& p : event_piles) {
@@ -1344,12 +1351,11 @@ private:
       //   before calling update_triggers on it.
       pile_info.entity_fields_pile_accessed = std::move(a.entity_fields_preexisting_state_accessed);
       for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
-        auto& metadata = get_field_metadata_throughout_time(id);
+        auto& metadata = require_field_metadata_throughout_time(id);
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
         if (pile_info.tid) {
-          assert (false == (pile_info.entity_fields_pile_accessed.find(id) == pile_info.entity_fields_pile_accessed.end()));
-          update_trigger_access_record(id, time, pile_info.tid, false);
+          update_trigger_access_record(id, metadata, time, pile_info.tid, false);
         }
       }
       std::pair<const extended_time, trigger_call_info> const* next_call_ptr = nullptr;
@@ -1374,16 +1380,18 @@ private:
           const extended_time last_call_time = last_call_ptr->first;
           event_pile_info const& last_call_pile_info = event_piles.find(last_call_time)->second;
           for (entity_field_id const& accessed_by_last_call : last_call_pile_info.entity_fields_pile_accessed) {
-            if (pile_info.entity_fields_pile_accessed.find(accessed_by_last_call) == pile_info.entity_fields_pile_accessed.end()) {
-              update_trigger_access_record(accessed_by_last_call, time, pile_info.tid, true);
+            auto& metadata = get_mut_field_metadata_throughout_time(accessed_by_last_call);
+            if (metadata.event_piles_which_accessed_this.find(time) == metadata.event_piles_which_accessed_this.end()) {
+              update_trigger_access_record(accessed_by_last_call, metadata, time, pile_info.tid, true);
             }
           }
         }
       }
       pile_info.entity_fields_pile_modified = std::move(a.entity_fields_modified);
       for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-        (*copy_field_change_from_accessor_funcs[id.f.base])(this, id, time, a.entities.find(id.e)->second.fields);
-        update_triggers(false, id, time);
+        auto const& metadata = require_field_metadata_throughout_time(id);
+        (*copy_field_change_from_accessor_funcs[id.f.base])(this, id, metadata, time, a.entities.find(id.e)->second.fields);
+        update_triggers(false, metadata, time);
       }
       pile_info.triggers_changed.reserve(a.trigger_changes.size());
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
@@ -1418,15 +1426,18 @@ private:
       update_trigger(true, tid, time, true);
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
-      update_triggers(true, id, time);
-      (*undo_field_change_funcs[id.f.base])(this, id, time);
+      auto const& metadata = get_field_metadata_throughout_time(id);
+      update_triggers(true, metadata, time);
+      (*undo_field_change_funcs[id.f.base])(this, id, metadata, time);
     }
     if (pile_info.tid) {
       const auto last_call_ptr = last_executed_trigger_call(pile_info.tid, time);
       if (last_call_ptr) {
         for (entity_field_id const& accessed_by_last_call : event_piles.find(last_call_ptr->first)->second.entity_fields_pile_accessed) {
-          if (pile_info.entity_fields_pile_accessed.find(accessed_by_last_call) == pile_info.entity_fields_pile_accessed.end()) {
-            delete_trigger_access_record(accessed_by_last_call, time, pile_info.tid);
+          auto& metadata = get_mut_field_metadata_throughout_time(accessed_by_last_call);
+          // this 'if' isn't strictly necessary, but I think it provides some optimization
+          if (metadata.event_piles_which_accessed_this.find(time) == metadata.event_piles_which_accessed_this.end()) {
+            delete_trigger_access_record(accessed_by_last_call, metadata, time, pile_info.tid);
           }
         }
       }
@@ -1436,11 +1447,11 @@ private:
     }
     pile_info.anticipated_events.clear();
     for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
-      auto& metadata = get_field_metadata_throughout_time(id);
+      auto& metadata = get_mut_field_metadata_throughout_time(id);
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
       assert(j);
       if (pile_info.tid) {
-        delete_trigger_access_record(id, time, pile_info.tid);
+        delete_trigger_access_record(id, metadata, time, pile_info.tid);
       }
     }
     pile_info.entity_fields_pile_accessed.clear();
