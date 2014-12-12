@@ -714,14 +714,13 @@ private:
   };
   template<typename FieldData>
   using field_throughout_time = std::map<extended_time, FieldData>;
-  struct entity_throughout_time_info {
-    fields_list_impl::foreach_field<entity_fields, false, field_throughout_time> fields;
-  };
+  template<typename FieldData>
+  using field_info_by_entity = std::unordered_map<entity_id, field_throughout_time<FieldData>>;
   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
   
   template<typename FieldID, typename... Ext>
   field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
-    return entities[id].fields.template get<FieldID>(ext...);
+    return field_values.template get<FieldID>(ext...)[id];
   }
   template<typename FieldID>
   std::enable_if_t<!fields_list_impl::field_entry<entity_fields, FieldID>::per_id, field_throughout_time<field_data<entity_fields, FieldID>>&>
@@ -747,13 +746,12 @@ private:
     return i->second;
   }
   
-  typedef std::unordered_map<entity_id, entity_throughout_time_info> entities_map;
   typedef std::unordered_map<entity_field_id, field_metadata_throughout_time> field_metadata_map;
   // The events map doesn't need to be ordered (even though it has a meaningful order)
   // because it's just for looking up events whose times we know.
   typedef std::unordered_map<extended_time, event_pile_info> event_piles_map;
   
-  entities_map entities;
+  fields_list_impl::foreach_field<entity_fields, false, field_info_by_entity> field_values; // TODO rename this to be more explanatory
   field_metadata_map field_metadata;
   event_piles_map event_piles;
   std::set<extended_time> event_piles_needing_execution;
@@ -1219,16 +1217,20 @@ private:
   }
   template<typename FieldID, typename... Ext>
   field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time time, Ext... ext)const {
-    const auto entity_stream_iter = entities.find(id);
-    if (entity_stream_iter == entities.end()) { return entity_fields::template get_null_const_ref<FieldID>(); }
+    auto const* fd = field_values.template find<FieldID>(ext...);
+    if (fd) {
+      const auto e = fd->find(id);
+      if (e != fd->end()) {
+        field_throughout_time<field_data<entity_fields, FieldID>> const& f = e->second;
+        
+        const auto next_change_iter = f.lower_bound(time);
+        if (next_change_iter!= f.begin()) {
+          return boost::prior(next_change_iter)->second;
+        }
+      }
+    }
     
-    entity_throughout_time_info const& e = entity_stream_iter->second;
-    field_throughout_time<field_data<entity_fields, FieldID>> const* f = e.fields.template find<FieldID>(ext...);
-    if (!f) { return entity_fields::template get_null_const_ref<FieldID>(); }
-    
-    const auto next_change_iter = f->lower_bound(time);
-    if (next_change_iter == f->begin()) { return entity_fields::template get_null_const_ref<FieldID>(); }
-    return boost::prior(next_change_iter)->second;
+    return entity_fields::template get_null_const_ref<FieldID>();
   }
   
   void insert_instigating_event(extended_time time, event_pile_info const& e) {
