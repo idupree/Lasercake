@@ -25,6 +25,7 @@
 #include <list>
 
 #ifndef WORST_CASE_MANUAL_ORDERER
+#ifndef NEW_AMORTIZED_MANUAL_ORDERER
 template<typename ValueType> class manual_orderer;
 namespace manual_orderer_impl {
 typedef uint64_t idx_type;
@@ -290,6 +291,439 @@ namespace std {
     }
   };
 }
+#else
+
+namespace manual_orderer_impl {
+
+const uint64_t no_idx = std::numeric_limits<uint64_t>::max();
+struct entry_base {
+  entry_base():idx(no_idx),ref_count(0){}
+  uint64_t idx;
+  size_t ref_count;
+  entry_base* prev;
+  entry_base* next;
+};
+
+template<typename ValueType>
+struct entry : public entry_base {
+  template <class... Args>
+  entry(Args&&... args):entry_base(),contents(std::forward<Args>(args)...){}
+  ValueType contents;
+};
+
+template<typename ValueType> class manual_orderer;
+
+template<typename ValueType>
+struct manually_orderable {
+public:
+  template <class... Args>
+  static manually_orderable construct(Args&&... args) {
+    return manually_orderable(new entry<ValueType>(std::forward<Args>(args)...));
+  }
+  manually_orderable():data(nullptr){}
+  manually_orderable(manually_orderable const& o):data(o.data) { inc_ref(); }
+  
+  bool operator< (manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <  o.data->idx;
+  }
+  bool operator> (manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >  o.data->idx;
+  }
+  bool operator<=(manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <= o.data->idx;
+  }
+  bool operator>=(manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >= o.data->idx;
+  }
+  bool operator==(manually_orderable const& o)const { return data == o.data; }
+  bool operator!=(manually_orderable const& o)const { return data != o.data; }
+  explicit operator bool()const { return bool(data); }
+  ValueType& operator*()const { return data->contents; }
+  ValueType* operator->()const { return &data->contents; }
+  manually_orderable& operator=(manually_orderable const& o) {
+    o.inc_ref(); // do this before dec_ref in case lhs and rhs are the same object
+    dec_ref();
+    data = o.data;
+    return *this;
+  }
+  ~manually_orderable() { dec_ref(); }
+private:
+  void inc_ref()const {
+    if (data) { ++data->ref_count; }
+  }
+  void dec_ref() {
+    if (data && (--data->ref_count == 0)) {
+      assert (false);
+      delete data;
+      data = nullptr;
+    }
+  }
+  explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
+  entry<ValueType>* data;
+  friend struct std::hash<manually_orderable>;
+  friend class manual_orderer<ValueType>;
+};
+
+const uint32_t max_children_per_block_shift = 4;
+const uint64_t max_children_per_block = 1ULL << max_children_per_block_shift;
+const uint64_t min_children_per_block = 5;
+
+inline uint64_t block_size(uint32_t level) {
+  return 1ULL << (level*max_children_per_block_shift);
+}
+inline uint64_t position_in_block_mask(uint32_t level) {
+  return block_size(level)-1;
+}
+inline uint64_t block_start_mask(uint32_t level) {
+  return ~position_in_block_mask(level);
+}
+inline uint64_t block_start(uint64_t idx, uint32_t level) {
+  return idx & block_start_mask(level);
+}
+inline uint64_t next_block_start(uint64_t idx, uint32_t level) {
+  return (idx & block_start_mask(level)) + block_size(level);
+}
+inline uint64_t position_in_block(uint64_t idx, uint32_t level) {
+  return idx & position_in_block_mask(level);
+}
+inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
+  return (block_start(idx, level) & position_in_block_mask(level+1)) / block_size(level-1);
+}
+
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by manually_orderable instead of the object itself.
+template<typename ValueType>
+class manual_orderer {
+public:
+  typedef manually_orderable<ValueType> entry_ref;
+
+  // create a ValueType in the heap and an manually_orderable refcounted pointer
+  // to it.  It's not in the ordering until you put it there using one of
+  // this manual_orderer's put_*() methods.
+  template <class... Args>
+  entry_ref construct(Args&&... args) {
+    // TODO: better allocator
+    return entry_ref::construct(std::forward<Args>(args)...);
+  }
+
+  // put_only puts the first object in the ordering; you can't use it
+  // after it's been called once
+  void put_only(entry_ref m) {
+    m.data->prev = nullptr;
+    m.data->next = nullptr;
+    m.data->idx = 0;
+    set(0, m.data);
+  }
+
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just prior to relative_to.
+  void put_before(entry_ref moving, entry_ref relative_to) {
+    insert(moving.data, relative_to.data, false);
+  }
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just after relative_to.
+  void put_after(entry_ref moving, entry_ref relative_to) {
+    insert(moving.data, relative_to.data, true);
+  }
+  
+private:
+  std::unordered_map<uint64_t, entry_base*> data;
+  entry_base* last_entry;
+  
+  entry_base* get(uint64_t idx) {
+    auto i = data.find(idx);
+    if (i == data.end()) { return nullptr; }
+    return i->second;
+  }
+  void set(uint64_t idx, entry_base* e) {
+    data[idx] = e;
+  }
+  
+  entry_base* first_in_block(uint64_t idx, uint32_t level) {
+    return get(block_start(idx, level));
+  }
+  entry_base* last_in_block(uint64_t idx, uint32_t level) {
+    uint64_t after_this = next_block_start(idx, level);
+    auto a = get(after_this);
+    if (!a) { 
+      assert (last_entry->idx < after_this);
+      return last_entry;
+    }
+    return a->prev;
+  }
+  uint64_t num_children_in_block(uint64_t idx, uint32_t level) {
+    entry_base* l = last_in_block(idx, level);
+    if (l->idx < block_start(idx, level)) { return 0; }
+    uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
+    assert (num_children >= min_children_per_block);
+    assert (num_children <= max_children_per_block);
+    return num_children;
+  }
+  
+  entry_base* move_entries_up(entry_base* first, uint64_t last, uint64_t dist) {
+    auto i = first;
+    for (; i && i->idx >= last; i = i->prev) {
+      set(i->idx, nullptr);
+      i->idx += dist;
+      assert (i->next->idx < i->idx);
+      set(i->idx, i);
+    }
+    return i;
+  }
+  entry_base* move_entries_down(entry_base* first, uint64_t last, uint64_t dist) {
+    auto i = first;
+    for (; i && i->idx <= last; i = i->next) {
+      set(i->idx, nullptr);
+      i->idx -= dist;
+      assert (i->prev->idx > i->idx);
+      set(i->idx, i);
+    }
+    return i;
+  }
+  
+  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    const uint64_t idx = existing_entry->idx;
+    uint32_t nonfull_level = 1;
+    while (true) {
+      uint64_t after_this = next_block_start(idx, nonfull_level);
+      if (last_in_block(idx, nonfull_level)->idx >= after_this - block_size(nonfull_level-1)) {
+        ++nonfull_level;
+      }
+      else { break; }
+    }
+    
+    for (uint32_t level = nonfull_level; level != uint32_t(-1); --level) {
+      uint64_t shove_dist = block_size(level-1);
+      uint64_t split_dist = shove_dist >> 1;
+      uint64_t last_shoved = next_block_start(idx, level-1);
+      uint64_t last_split = last_shoved - split_dist;
+      if (level == 0 && !after) {
+        --last_shoved;
+      }
+      auto i = last_in_block(idx, level);
+      i = move_entries_up(i, last_shoved, shove_dist);
+      move_entries_up(i, last_split, split_dist);
+    }
+    
+    if (after) {
+      set(idx+1, inserted_entry);
+      inserted_entry->prev = existing_entry;
+      inserted_entry->next = existing_entry->next;
+      existing_entry->next->prev = inserted_entry;
+      existing_entry->next = inserted_entry;
+      if (last_entry == existing_entry) { last_entry = inserted_entry; }
+    }
+    else {
+      set(idx, inserted_entry);
+      inserted_entry->prev = existing_entry->prev;
+      inserted_entry->next = existing_entry;
+      existing_entry->prev->next = inserted_entry;
+      existing_entry->prev = inserted_entry;
+    }
+  }
+  
+  void erase(entry_base* erased_entry) {
+    uint64_t idx = erased_entry->idx;
+    if (last_entry == erased_entry) { last_entry = erased_entry->prev; }
+    entry_base* next_entry = erased_entry->next;
+    erased_entry->prev->next = erased_entry->next;
+    erased_entry->next->prev = erased_entry->prev;
+    set(idx, nullptr);
+    
+    for (uint32_t level = 1; ; ++level) {
+      move_entries_down(next_entry, next_block_start(idx, level)-1, block_size(level-1));
+      
+      uint64_t num_children = num_children_in_block(idx, level);
+      if (num_children > min_children_per_block) {
+        break;
+      }
+      else {
+        uint64_t which_child_are_we = which_child_is_block(idx, level);
+        uint64_t prev_num_children = 0;
+        uint64_t next_num_children = 0;
+        uint64_t somewhere_in_next = idx + block_size(level);
+        uint64_t somewhere_in_prev = idx - block_size(level);
+        if (which_child_are_we > 0) {
+          prev_num_children = num_children_in_block(somewhere_in_prev, level);
+        }
+        if (which_child_are_we < max_children_per_block-1) {
+          next_num_children = num_children_in_block(somewhere_in_next, level);
+        }
+        assert (prev_num_children || next_num_children);
+        bool prefer_prev = prev_num_children && ((!next_num_children) || (prev_num_children < next_num_children));
+        if (prefer_prev) {
+          if (prev_num_children + num_children <= max_children_per_block) {
+            uint64_t retract_dist = block_size(level) + num_children*block_size(level-1) - prev_num_children*block_size(level-1);
+            uint64_t last_retracted = next_block_start(idx, level)-1;
+            move_entries_down(first_in_block(idx, level), last_retracted, retract_dist);
+            idx -= retract_dist;
+          }
+          else {
+            uint64_t transferred_children = (prev_num_children - num_children) >> 1;
+            assert (prev_num_children - transferred_children >= max_children_per_block/2);
+            assert (num_children + transferred_children >= max_children_per_block/2);
+            move_entries_up(last_in_block(idx, level), block_start(idx, level), transferred_children*block_size(level-1));
+            uint64_t steal_end = block_start(somewhere_in_prev, level) + (prev_num_children-transferred_children)*block_size(level-1);
+            move_entries_up(last_in_block(somewhere_in_prev, level), steal_end, block_start(idx, level) - steal_end);
+            break;
+          }
+        }
+        else {
+          if (next_num_children + num_children <= max_children_per_block) {
+            uint64_t retract_dist = block_size(level) + next_num_children*block_size(level-1) - num_children*block_size(level-1);
+            uint64_t last_retracted = next_block_start(somewhere_in_next, level)-1;
+            move_entries_down(first_in_block(somewhere_in_next, level), last_retracted, retract_dist);
+          }
+          else {
+            uint64_t transferred_children = (next_num_children - num_children) >> 1;
+            assert (next_num_children - transferred_children >= max_children_per_block/2);
+            assert (num_children + transferred_children >= max_children_per_block/2);
+            uint64_t steal_end = block_start(somewhere_in_next, level) + transferred_children*block_size(level-1) - 1;
+            auto i = first_in_block(somewhere_in_next, level);
+            i = move_entries_down(i, steal_end, block_size(level) - num_children*block_size(level-1));
+            move_entries_down(i, next_block_start(somewhere_in_next, level)-1, transferred_children*block_size(level-1));
+            break;
+          }
+        }
+      }
+    }
+  }
+};
+  
+  
+  
+  
+  
+  /*
+  
+uint64_t supply_size(uint32_t level) {
+  return 1ULL << (level*2);
+}
+uint64_t block_size(uint32_t level) {
+  uint64_t result = 4;
+  uint32_t level2 = level*2;
+  for (uint32_t i = 0; i < level2; i += 2) {
+    result <<= 2;
+    result += (1ULL << i);
+  }
+  return result;
+}
+uint64_t block_idx(uint64_t idx, uint32_t level, bool use_next) {
+  uint64_t result = 0;
+  uint32_t end = level*2 - 2;
+  uint64_t block_size_ = max_block_size;
+  for (uint32_t i = max_level*2; ; i -= 2) {
+    assert (block_size_ = block_size(i));
+    uint64_t position_in_block = idx % block_size_;
+    result += (idx-position_in_block);
+    idx = position_in_block;
+    if (i == end) { break; }
+    block_size_ -= (1ULL << i);
+    block_size_ >>= 2;
+  }
+  if (use_next) { result += block_size_; }
+  return result;
+}
+
+void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+  const uint64_t idx = existing_entry->idx;
+  std::array<uint64_t, max_possible_levels> block_sizes;
+  std::array<uint64_t, max_possible_levels> our_block_starts;
+  std::array<uint64_t, max_possible_levels> next_block_starts;
+  uint64_t block_size_ = 4;
+  for (uint32_t level = 0; ; ++level) {
+    assert (block_size_ = block_size(level));
+    block_sizes[level] = block_size_;
+    if (level == max_level) { break; }
+    block_size_ <<= 2;
+    block_size_ += supply_size(level);
+  }
+  uint64_t block_start = 0;
+  for (uint32_t level = max_level; ; --level) {
+    uint64_t position_in_block = idx % block_sizes[level];
+    block_start += (idx-position_in_block);
+    idx = position_in_block;
+    our_block_starts[level] = block_start;
+    assert (block_start == block_idx(idx, level, true));
+    next_block_starts[level] = block_start + block_sizes[level];
+    if (level == 0) { break; }
+    block_sizes[level] -= supply_size(level);
+    block_sizes[level] >>= 2;
+  }
+  
+  uint32_t nonfull_level = 0;
+  while (true) { 
+    auto a = get(next_block_starts[level]);
+    auto last_entry_maybe_in_supply;
+    if (a) {
+      last_entry_maybe_in_supply = a->prev;
+    }
+    else {
+      assert (last->idx < next_block_starts[level]);
+      last_entry_maybe_in_supply = last;
+    }
+    if (last_entry_maybe_in_supply->idx >= next_block_starts[level]-supply_size(level)) {
+      ++nonfull_level;
+    }
+    else { break; }
+  }
+  
+  for (uint32_t level = nonfull_level; level != uint32_t(-1); --level) {
+    uint64_t move_dist;
+    uint64_t last_moved;
+    if (level == 0) {
+      move_dist = 1;
+      last_moved = idx + after;
+    }
+    else {
+      move_dist = block_sizes[level-1];
+      last_moved = next_block_starts[level-1] - supply_size(level-1);
+    }
+    for (auto i = get(next_block_starts[level])->prev; i && i->idx >= last_moved; i = i->prev) {
+      set(i->idx, nullptr);
+      i->idx += move_dist;
+      set(i->idx, i);
+    }
+  }
+  
+  if (after) {
+    set(idx+1, inserted_entry);
+    inserted_entry->prev = existing_entry;
+    inserted_entry->next = existing_entry->next;
+    existing_entry->next->prev = inserted_entry;
+    existing_entry->next = inserted_entry;
+  }
+  else {
+    set(idx, inserted_entry);
+    inserted_entry->prev = existing_entry->prev;
+    inserted_entry->next = existing_entry;
+    existing_entry->prev->next = inserted_entry;
+    existing_entry->prev = inserted_entry;
+  }
+}
+
+*/
+} // end namespace manual_orderer_impl
+
+namespace std {
+  template<typename ValueType>
+  struct hash<typename manual_orderer_impl::manually_orderable<ValueType>> {
+    public:
+    size_t operator()(manual_orderer_impl::manually_orderable<ValueType> const& i)const {
+      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
+      return std::hash<decltype(i.data)>()(i.data);
+    }
+  };
+}
+
+using manual_orderer_impl::manual_orderer;
+#endif
 #else
 
 namespace manual_orderer_impl {
