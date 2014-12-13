@@ -417,7 +417,12 @@ protected:
     return i->second;
   }
   void set(uint64_t idx, entry_base* e) {
-    data[idx] = e;
+    if (e) {
+      data[idx] = e;
+    }
+    else {
+      data.erase(idx);
+    }
   }
   
   entry_base* first_in_block(uint64_t idx, uint32_t level) {
@@ -470,6 +475,16 @@ protected:
       set(i->idx, i);
     }
     return i;
+  }
+  
+  ~manual_orderer_base() {
+    for (auto p : data) {
+      entry_base* e = p.second;
+      e->idx = no_idx;
+      e->prev = nullptr;
+      e->next = nullptr;
+      e->owner = nullptr;
+    }
   }
 
 public:
