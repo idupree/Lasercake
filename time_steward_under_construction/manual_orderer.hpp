@@ -357,9 +357,9 @@ private:
   }
   void dec_ref() {
     if (data && (--data->ref_count == 0)) {
-      assert (false);
-      delete data;
-      data = nullptr;
+//       assert (false);
+//       delete data;
+//       data = nullptr;
     }
   }
   explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
@@ -418,6 +418,7 @@ public:
     m.data->prev = nullptr;
     m.data->next = nullptr;
     m.data->idx = 0;
+    last_entry = m.data;
     set(0, m.data);
   }
 
@@ -461,8 +462,10 @@ private:
     entry_base* l = last_in_block(idx, level);
     if (l->idx < block_start(idx, level)) { return 0; }
     uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
-    assert (num_children >= min_children_per_block);
     assert (num_children <= max_children_per_block);
+    if (l->next) {
+      assert (num_children >= min_children_per_block);
+    }
     return num_children;
   }
   
@@ -471,7 +474,7 @@ private:
     for (; i && i->idx >= last; i = i->prev) {
       set(i->idx, nullptr);
       i->idx += dist;
-      assert (i->next->idx < i->idx);
+      assert (!i->next || i->next->idx > i->idx);
       set(i->idx, i);
     }
     return i;
@@ -481,14 +484,14 @@ private:
     for (; i && i->idx <= last; i = i->next) {
       set(i->idx, nullptr);
       i->idx -= dist;
-      assert (i->prev->idx > i->idx);
+      assert (!i->prev || i->prev->idx < i->idx);
       set(i->idx, i);
     }
     return i;
   }
   
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
-    const uint64_t idx = existing_entry->idx;
+    uint64_t idx = existing_entry->idx;
     uint32_t nonfull_level = 1;
     while (true) {
       uint64_t after_this = next_block_start(idx, nonfull_level);
@@ -498,33 +501,45 @@ private:
       else { break; }
     }
     
-    for (uint32_t level = nonfull_level; level != uint32_t(-1); --level) {
+    for (uint32_t level = nonfull_level; level != 0; --level) {
       uint64_t shove_dist = block_size(level-1);
       uint64_t split_dist = shove_dist >> 1;
       uint64_t last_shoved = next_block_start(idx, level-1);
       uint64_t last_split = last_shoved - split_dist;
-      if (level == 0 && !after) {
+      if (level == 1 && !after) {
         --last_shoved;
       }
       auto i = last_in_block(idx, level);
       i = move_entries_up(i, last_shoved, shove_dist);
       move_entries_up(i, last_split, split_dist);
+      if (idx >= last_split) {
+        assert (level > 1);
+        idx += split_dist;
+      }
     }
     
     if (after) {
       set(idx+1, inserted_entry);
+      inserted_entry->idx = idx+1;
       inserted_entry->prev = existing_entry;
       inserted_entry->next = existing_entry->next;
-      existing_entry->next->prev = inserted_entry;
+      if (existing_entry->next) { existing_entry->next->prev = inserted_entry; }
       existing_entry->next = inserted_entry;
       if (last_entry == existing_entry) { last_entry = inserted_entry; }
+      
+      assert (inserted_entry->idx > existing_entry->idx);
+      assert (!inserted_entry->next || inserted_entry->idx < inserted_entry->next->idx);
     }
     else {
       set(idx, inserted_entry);
+      inserted_entry->idx = idx;
       inserted_entry->prev = existing_entry->prev;
       inserted_entry->next = existing_entry;
-      existing_entry->prev->next = inserted_entry;
+      if (existing_entry->prev) { existing_entry->prev->next = inserted_entry; }
       existing_entry->prev = inserted_entry;
+      
+      assert (inserted_entry->idx < existing_entry->idx);
+      assert (!inserted_entry->prev || inserted_entry->idx > inserted_entry->prev->idx);
     }
   }
   
@@ -532,8 +547,11 @@ private:
     uint64_t idx = erased_entry->idx;
     if (last_entry == erased_entry) { last_entry = erased_entry->prev; }
     entry_base* next_entry = erased_entry->next;
-    erased_entry->prev->next = erased_entry->next;
-    erased_entry->next->prev = erased_entry->prev;
+    if (erased_entry->prev) { erased_entry->prev->next = erased_entry->next; }
+    if (erased_entry->next) { erased_entry->next->prev = erased_entry->prev; }
+    erased_entry->idx = no_idx;
+    erased_entry->prev = nullptr;
+    erased_entry->next = nullptr;
     set(idx, nullptr);
     
     for (uint32_t level = 1; ; ++level) {
