@@ -314,10 +314,10 @@ struct entry : public entry_base {
   ValueType contents;
 };
 
-template<typename ValueType> class manual_orderer;
-
 template<typename ValueType>
-struct NoDecRefCallback { void operator()(ValueType&, size_t){} };
+struct NoDecRefCallback { void operator()(ValueType&, size_t)const{} };
+
+template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>> class manual_orderer;
 
 template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>>
 struct manually_orderable {
@@ -363,21 +363,24 @@ private:
   }
   void dec_ref() {
     if (data) {
-      --data->ref_count;
       DecRefCallback()(data->contents, data->ref_count);
-      if (data->ref_count == 0) {
-        if (data->owner) {
-          data->owner->erase(data);
+      if (data) {
+        --data->ref_count;
+        if (data->ref_count == 0) {
+          if (data->owner) {
+            data->owner->erase(data);
+          }
+          entry<ValueType>* was_data = data;
+          data = nullptr;
+          delete was_data;
         }
-        delete data;
-        data = nullptr;
       }
     }
   }
   explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
   entry<ValueType>* data;
   friend struct std::hash<manually_orderable>;
-  friend class manual_orderer<ValueType>;
+  friend class manual_orderer<ValueType, DecRefCallback>;
 };
 
 const uint32_t max_children_per_block_shift = 4;
@@ -437,6 +440,7 @@ protected:
       after_this = next_block_start(idx, level);
       a = get(after_this);
     }
+    assert (a->prev->idx < after_this);
     return a->prev;
   }
   bool block_is_full(uint64_t idx, uint32_t level) {
@@ -445,13 +449,13 @@ protected:
     assert (result == (num_children_in_block(idx, level) == max_children_per_block));
     return result;
   }
-  uint64_t num_children_in_block(uint64_t idx, uint32_t level) {
+  uint64_t num_children_in_block(uint64_t idx, uint32_t level, bool lenient = false) {
     entry_base* l = last_in_block(idx, level);
     if (l->idx < block_start(idx, level)) { return 0; }
     uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
     assert (num_children <= max_children_per_block);
     if (l->next) {
-      assert (num_children >= min_children_per_block);
+      assert (num_children >= min_children_per_block - lenient);
     }
     return num_children;
   }
@@ -486,9 +490,40 @@ protected:
       e->owner = nullptr;
     }
   }
+  
+  void validate() {
+    return;
+    for (auto p : data) {
+      entry_base* e = p.second;
+      if (e->prev) {
+        assert (e->prev->next == e);
+        assert (e->prev->idx < e->idx);
+      }
+      if (e->next) {
+        assert (e->next->prev == e);
+        assert (e->next->idx > e->idx);
+      }
+      else {
+        assert (e == last_entry);
+      }
+      assert (e->idx != no_idx);
+      assert (e->owner == this);
+    }
+    
+    for (uint32_t level = 1; level < 15; ++level) {
+      for (uint64_t start = 0; start <= last_entry->idx; start += block_size(level)) {
+        bool f = true;
+        for (uint64_t cstart = start; cstart < start + block_size(level); cstart += block_size(level-1)) {
+          if (!get(cstart)) { f = false; }
+          else { assert(f); }
+        }
+      }
+    }
+  }
 
 public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    validate();
     uint32_t nonfull_level = 1;
     while (block_is_full(existing_entry->idx, nonfull_level)) { ++nonfull_level; }
     
@@ -529,12 +564,16 @@ public:
       assert (!inserted_entry->prev || inserted_entry->idx > inserted_entry->prev->idx);
     }
     inserted_entry->owner = this;
+    for (uint32_t level = nonfull_level; level != 0; --level) {
+      assert (first_in_block(existing_entry->idx, level));
+    }
+    validate();
   }
   
   void erase(entry_base* erased_entry) {
+    validate();
     uint64_t idx = erased_entry->idx;
     if (last_entry == erased_entry) { last_entry = erased_entry->prev; }
-    entry_base* next_entry = erased_entry->next;
     if (erased_entry->prev) { erased_entry->prev->next = erased_entry->next; }
     if (erased_entry->next) { erased_entry->next->prev = erased_entry->prev; }
     erased_entry->idx = no_idx;
@@ -544,10 +583,10 @@ public:
     set(idx, nullptr);
     
     for (uint32_t level = 1; ; ++level) {
-      move_entries_down(next_entry, next_block_start(idx, level)-1, block_size(level-1));
+      move_entries_down(first_in_block(idx+block_size(level-1), level-1), next_block_start(idx, level)-1, block_size(level-1));
       
-      uint64_t num_children = num_children_in_block(idx, level);
-      if (num_children > min_children_per_block) {
+      uint64_t num_children = num_children_in_block(idx, level, true);
+      if (num_children >= min_children_per_block) {
         break;
       }
       else {
@@ -566,26 +605,31 @@ public:
         bool prefer_prev = prev_num_children && ((!next_num_children) || (prev_num_children < next_num_children));
         if (prefer_prev) {
           if (prev_num_children + num_children <= max_children_per_block) {
-            uint64_t retract_dist = block_size(level) + num_children*block_size(level-1) - prev_num_children*block_size(level-1);
+            uint64_t retract_dist = block_size(level) - prev_num_children*block_size(level-1);
             uint64_t last_retracted = next_block_start(idx, level)-1;
             move_entries_down(first_in_block(idx, level), last_retracted, retract_dist);
-            idx -= retract_dist;
+            assert (first_in_block(somewhere_in_prev, level));
           }
           else {
             uint64_t transferred_children = (prev_num_children - num_children) >> 1;
             assert (prev_num_children - transferred_children >= max_children_per_block/2);
             assert (num_children + transferred_children >= max_children_per_block/2);
-            move_entries_up(last_in_block(idx, level), block_start(idx, level), transferred_children*block_size(level-1));
+            auto i = last_in_block(idx, level);
+            i = move_entries_up(i, block_start(idx, level), transferred_children*block_size(level-1));
             uint64_t steal_end = block_start(somewhere_in_prev, level) + (prev_num_children-transferred_children)*block_size(level-1);
-            move_entries_up(last_in_block(somewhere_in_prev, level), steal_end, block_start(idx, level) - steal_end);
+            move_entries_up(i, steal_end, block_start(idx, level) - steal_end);
+            assert (first_in_block(idx, level));
+            assert (first_in_block(somewhere_in_prev, level));
             break;
           }
         }
         else {
           if (next_num_children + num_children <= max_children_per_block) {
-            uint64_t retract_dist = block_size(level) + next_num_children*block_size(level-1) - num_children*block_size(level-1);
+            uint64_t retract_dist = block_size(level) - num_children*block_size(level-1);
             uint64_t last_retracted = next_block_start(somewhere_in_next, level)-1;
             move_entries_down(first_in_block(somewhere_in_next, level), last_retracted, retract_dist);
+            assert (first_in_block(idx, level));
+            idx = somewhere_in_next;
           }
           else {
             uint64_t transferred_children = (next_num_children - num_children) >> 1;
@@ -595,11 +639,14 @@ public:
             auto i = first_in_block(somewhere_in_next, level);
             i = move_entries_down(i, steal_end, block_size(level) - num_children*block_size(level-1));
             move_entries_down(i, next_block_start(somewhere_in_next, level)-1, transferred_children*block_size(level-1));
+            assert (first_in_block(idx, level));
+            assert (first_in_block(somewhere_in_next, level));
             break;
           }
         }
       }
     }
+    validate();
   }
 };
 
@@ -607,25 +654,17 @@ public:
 // manual_orderer is a data structure that lets you place
 // arbitrary objects in an O(1)-comparable order, but you have to refer
 // to them by manually_orderable instead of the object itself.
-template<typename ValueType>
+template<typename ValueType, class DecRefCallback>
 class manual_orderer : public manual_orderer_base {
 public:
-  typedef manually_orderable<ValueType> entry_ref;
-
-  // create a ValueType in the heap and an manually_orderable refcounted pointer
-  // to it.  It's not in the ordering until you put it there using one of
-  // this manual_orderer's put_*() methods.
-  template <class... Args>
-  entry_ref construct(Args&&... args) {
-    // TODO: better allocator
-    return entry_ref::construct(std::forward<Args>(args)...);
-  }
+  typedef manually_orderable<ValueType, DecRefCallback> entry_ref;
 
   // put_only puts the first object in the ordering; you can't use it
   // after it's been called once
   void put_only(entry_ref m) {
     m.data->prev = nullptr;
     m.data->next = nullptr;
+    m.data->owner = this;
     m.data->idx = 0;
     last_entry = m.data;
     set(0, m.data);
@@ -758,10 +797,10 @@ void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) 
 } // end namespace manual_orderer_impl
 
 namespace std {
-  template<typename ValueType>
-  struct hash<typename manual_orderer_impl::manually_orderable<ValueType>> {
+  template<typename ValueType, class DecRefCallback>
+  struct hash<typename manual_orderer_impl::manually_orderable<ValueType, DecRefCallback>> {
     public:
-    size_t operator()(manual_orderer_impl::manually_orderable<ValueType> const& i)const {
+    size_t operator()(manual_orderer_impl::manually_orderable<ValueType, DecRefCallback> const& i)const {
       // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
       return std::hash<decltype(i.data)>()(i.data);
     }

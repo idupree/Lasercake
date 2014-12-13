@@ -47,17 +47,43 @@ struct time_type_info {
 static const uint32_t not_a_trigger = std::numeric_limits<uint32_t>::max();
 template<class TimeTypeInfo>
 struct extended_time_metadata {
-  typedef typename manual_orderer<extended_time_metadata>::entry_ref extended_time;
+  struct dec_ref_callback {
+    void operator()(extended_time_metadata& t, size_t old_ref_count)const {
+      if (old_ref_count == 2 && t.parent && t.id != siphash_id::greatest() && t.base_time != TimeTypeInfo::never) {
+        // i.e. no base time roots, sentinels, or temporary lookup-in-children hacks
+        // TODO handle base time roots too
+        t.delete_from_parent();
+      }
+    }
+  };
+  typedef typename manual_orderer<extended_time_metadata, dec_ref_callback>::entry_ref extended_time;
   typedef typename TimeTypeInfo::time_type time_type;
   
-  extended_time_metadata(time_type base_time):
-    base_time(base_time),id(),trigger_iteration(not_a_trigger){}
-  extended_time_metadata(time_type base_time, siphash_id id):
-    base_time(base_time),id(id),trigger_iteration(not_a_trigger){}
-  extended_time_metadata(time_type base_time, siphash_id id, uint32_t trigger_iteration, extended_time closest_non_trigger_ancestor):
-    base_time(base_time),id(id),trigger_iteration(trigger_iteration),closest_non_trigger_ancestor(closest_non_trigger_ancestor){}
+  void delete_from_parent() {
+    //auto e = parent->children->erase(t);
+    //assert (e);
+    // hack
+    auto parent_ = parent;
+    parent = extended_time(); // prevent dec_ref_callback recursion
+    const extended_time twin = extended_time::construct(time_type(TimeTypeInfo::never), parent_, id, trigger_iteration);
+    const auto i = parent_->children->lower_bound(twin);
+    assert (i != parent_->children->end());
+    if (**i == *this) {
+      parent_->children->erase(i);
+      if (parent_->children->size() == 1) {
+        parent_->children = nullptr;
+      }
+    }
+  }
   
-  struct sort_sibling_extended_times_by_id {
+  extended_time_metadata(time_type base_time):
+    base_time(base_time),parent(),id(),trigger_iteration(not_a_trigger){}
+  extended_time_metadata(time_type base_time, extended_time parent, siphash_id id):
+    base_time(base_time),parent(parent),id(id),trigger_iteration(not_a_trigger){}
+  extended_time_metadata(time_type base_time, extended_time parent, siphash_id id, uint32_t trigger_iteration):
+    base_time(base_time),parent(parent),id(id),trigger_iteration(trigger_iteration){}
+  
+  struct sort_sibling_extended_times_by_id_and_trigger_iteration {
     bool operator()(extended_time a, extended_time b)const {
       if (a->trigger_iteration != b->trigger_iteration) { return a->trigger_iteration < b->trigger_iteration; }
       return a->id < b->id;
@@ -66,12 +92,15 @@ struct extended_time_metadata {
   
   // TODO: can we optimize for size in common cases?
   time_type base_time;
+  extended_time parent;
   siphash_id id; // unused for base_time_roots
   uint32_t trigger_iteration; // constant not_a_trigger for all non-triggers
-  extended_time closest_non_trigger_ancestor; // unused for all non-triggers
-  typedef std::set<extended_time, sort_sibling_extended_times_by_id> children_set;
+  typedef std::set<extended_time, sort_sibling_extended_times_by_id_and_trigger_iteration> children_set;
   std::unique_ptr<children_set> children; // usually empty
   
+  bool is_trigger()const {
+    return trigger_iteration != not_a_trigger;
+  }
   bool operator==(extended_time_metadata const& o)const {
     return id == o.id;
   }
@@ -90,10 +119,10 @@ public:
     return make_extended_time_impl(get_base_time_root(t), id);
   }
   static extended_time event_time(extended_time t, siphash_id id) {
-    return make_extended_time_impl(t->closest_non_trigger_ancestor ? t->closest_non_trigger_ancestor : t, id);
+    return make_extended_time_impl(t->is_trigger() ? t->parent : t, id);
   }
   static extended_time trigger_call_time(trigger_id tid, extended_time when_triggered) {
-    const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
+    const extended_time t = when_triggered->is_trigger() ? when_triggered->parent : when_triggered;
     uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 : when_triggered->trigger_iteration;
     
     siphash_id id = siphash_id::combining(t->id, tid, trigger_iteration);
@@ -102,15 +131,16 @@ public:
       id = siphash_id::combining(t->id, tid, trigger_iteration);
     }
     
-    const extended_time result = make_extended_time_impl(t, id, trigger_iteration, t);
+    const extended_time result = make_extended_time_impl(t, id, trigger_iteration);
     assert (result > when_triggered);
+    assert (result->parent);
     return result;
   }
   static extended_time max_time() {
     return get_base_time_root(max_base_time);
   }
   static extended_time after_all_calls_triggered_at(extended_time when_triggered) {
-    const extended_time t = when_triggered->closest_non_trigger_ancestor ? when_triggered->closest_non_trigger_ancestor : when_triggered;
+    const extended_time t = when_triggered->is_trigger() ? when_triggered->parent : when_triggered;
     return require_sentinel_child(t);
   }
   static extended_time base_time_end(time_type t) {
@@ -123,8 +153,8 @@ private:
       return a->base_time < b->base_time;
     }
   };
-  static manual_orderer<extended_time_metadata<TimeTypeInfo>>& all_extended_times() {
-    static manual_orderer<extended_time_metadata<TimeTypeInfo>> a; return a;
+  static manual_orderer<extended_time_metadata<TimeTypeInfo>, typename extended_time_metadata<TimeTypeInfo>::dec_ref_callback>& all_extended_times() {
+    static manual_orderer<extended_time_metadata<TimeTypeInfo>, typename extended_time_metadata<TimeTypeInfo>::dec_ref_callback> a; return a;
   }
   static std::set<extended_time, sort_extended_times_by_base_time>& base_time_roots() {
     static std::set<extended_time, sort_extended_times_by_base_time> a; return a;
@@ -133,9 +163,11 @@ private:
     if (!t->children) {
       // create a sentinel with no children at the end
       t->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
-      const extended_time sentinel = all_extended_times().construct(t->base_time, siphash_id::greatest());
+      const extended_time sentinel = extended_time::construct(time_type(never), t, siphash_id::greatest());
       all_extended_times().put_after(sentinel, t);
       t->children->insert(sentinel);
+      assert (sentinel->parent == t);
+      sentinel->base_time = t->base_time;
       return sentinel;
     }
     return *boost::prior(t->children->end());
@@ -145,11 +177,11 @@ private:
     if (base_time_roots().empty()) {
       // create a sentinel with no children at the end
       // time_type() is a hack - without it, compiler tries to pass max_base_time as reference and gets undefined reference
-      const extended_time sentinel = all_extended_times().construct(time_type(max_base_time));
+      const extended_time sentinel = extended_time::construct(time_type(max_base_time));
       all_extended_times().put_only(sentinel);
       base_time_roots().insert(sentinel);
     }
-    const extended_time result = all_extended_times().construct(t);
+    const extended_time result = extended_time::construct(t);
     const auto i = base_time_roots().lower_bound(result);
     assert(i != base_time_roots().end());
     if ((*i)->base_time == t) { return *i; }
@@ -160,12 +192,14 @@ private:
   template <class... Args>
   static extended_time make_extended_time_impl(extended_time parent, Args&&... args) {
     require_sentinel_child(parent);
-    const extended_time result = all_extended_times().construct(parent->base_time, std::forward<Args>(args)...);
+    const extended_time result = extended_time::construct(time_type(never), parent, std::forward<Args>(args)...);
     const auto i = parent->children->lower_bound(result);
     assert(i != parent->children->end());
     if (**i == *result) { return *i; }
     all_extended_times().put_before(result, *i);
     parent->children->emplace_hint(i, result);
+    assert (result->parent);
+    result->base_time = parent->base_time;
     return result;
   }
 };
