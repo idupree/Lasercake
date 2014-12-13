@@ -23,6 +23,7 @@
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
 #include <list>
+#define NEW_AMORTIZED_MANUAL_ORDERER
 
 #ifndef WORST_CASE_MANUAL_ORDERER
 #ifndef NEW_AMORTIZED_MANUAL_ORDERER
@@ -391,7 +392,7 @@ inline uint64_t position_in_block(uint64_t idx, uint32_t level) {
   return idx & position_in_block_mask(level);
 }
 inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
-  return (block_start(idx, level) & position_in_block_mask(level+1)) / block_size(level-1);
+  return (block_start(idx, level) & position_in_block_mask(level+1)) / block_size(level);
 }
 
 
@@ -452,11 +453,19 @@ private:
   entry_base* last_in_block(uint64_t idx, uint32_t level) {
     uint64_t after_this = next_block_start(idx, level);
     auto a = get(after_this);
-    if (!a) { 
-      assert (last_entry->idx < after_this);
-      return last_entry;
+    while (!a) {
+      if (last_entry->idx < after_this) { return last_entry; }
+      ++level;
+      after_this = next_block_start(idx, level);
+      a = get(after_this);
     }
     return a->prev;
+  }
+  bool block_is_full(uint64_t idx, uint32_t level) {
+    uint64_t after_this = next_block_start(idx, level);
+    bool result = last_in_block(idx, level)->idx >= after_this - block_size(level-1);
+    assert (result == (num_children_in_block(idx, level) == max_children_per_block));
+    return result;
   }
   uint64_t num_children_in_block(uint64_t idx, uint32_t level) {
     entry_base* l = last_in_block(idx, level);
@@ -491,36 +500,25 @@ private:
   }
   
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
-    uint64_t idx = existing_entry->idx;
     uint32_t nonfull_level = 1;
-    while (true) {
-      uint64_t after_this = next_block_start(idx, nonfull_level);
-      if (last_in_block(idx, nonfull_level)->idx >= after_this - block_size(nonfull_level-1)) {
-        ++nonfull_level;
-      }
-      else { break; }
-    }
+    while (block_is_full(existing_entry->idx, nonfull_level)) { ++nonfull_level; }
     
     for (uint32_t level = nonfull_level; level != 0; --level) {
       uint64_t shove_dist = block_size(level-1);
       uint64_t split_dist = shove_dist >> 1;
-      uint64_t last_shoved = next_block_start(idx, level-1);
+      uint64_t last_shoved = next_block_start(existing_entry->idx, level-1);
       uint64_t last_split = last_shoved - split_dist;
       if (level == 1 && !after) {
         --last_shoved;
       }
-      auto i = last_in_block(idx, level);
+      auto i = last_in_block(existing_entry->idx, level);
       i = move_entries_up(i, last_shoved, shove_dist);
       move_entries_up(i, last_split, split_dist);
-      if (idx >= last_split) {
-        assert (level > 1);
-        idx += split_dist;
-      }
     }
     
     if (after) {
-      set(idx+1, inserted_entry);
-      inserted_entry->idx = idx+1;
+      set(existing_entry->idx+1, inserted_entry);
+      inserted_entry->idx = existing_entry->idx+1;
       inserted_entry->prev = existing_entry;
       inserted_entry->next = existing_entry->next;
       if (existing_entry->next) { existing_entry->next->prev = inserted_entry; }
@@ -531,8 +529,8 @@ private:
       assert (!inserted_entry->next || inserted_entry->idx < inserted_entry->next->idx);
     }
     else {
-      set(idx, inserted_entry);
-      inserted_entry->idx = idx;
+      set(existing_entry->idx-1, inserted_entry);
+      inserted_entry->idx = existing_entry->idx-1;
       inserted_entry->prev = existing_entry->prev;
       inserted_entry->next = existing_entry;
       if (existing_entry->prev) { existing_entry->prev->next = inserted_entry; }
