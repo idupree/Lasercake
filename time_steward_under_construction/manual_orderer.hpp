@@ -315,6 +315,9 @@ struct entry : public entry_base {
 template<typename ValueType> class manual_orderer;
 
 template<typename ValueType>
+struct NoDecRefCallback { void operator()(ValueType&, size_t){} };
+
+template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>>
 struct manually_orderable {
 public:
   template <class... Args>
@@ -357,10 +360,14 @@ private:
     if (data) { ++data->ref_count; }
   }
   void dec_ref() {
-    if (data && (--data->ref_count == 0)) {
-//       assert (false);
-//       delete data;
-//       data = nullptr;
+    if (data) {
+      --data->ref_count;
+      DecRefCallback()(data->contents, data->ref_count);
+      if (data->ref_count == 0) {
+        
+        delete data;
+        data = nullptr;
+      }
     }
   }
   explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
@@ -373,69 +380,31 @@ const uint32_t max_children_per_block_shift = 4;
 const uint64_t max_children_per_block = 1ULL << max_children_per_block_shift;
 const uint64_t min_children_per_block = 5;
 
-inline uint64_t block_size(uint32_t level) {
+constexpr inline uint64_t block_size(uint32_t level) {
   return 1ULL << (level*max_children_per_block_shift);
 }
-inline uint64_t position_in_block_mask(uint32_t level) {
+constexpr inline uint64_t position_in_block_mask(uint32_t level) {
   return block_size(level)-1;
 }
-inline uint64_t block_start_mask(uint32_t level) {
+constexpr inline uint64_t block_start_mask(uint32_t level) {
   return ~position_in_block_mask(level);
 }
-inline uint64_t block_start(uint64_t idx, uint32_t level) {
+constexpr inline uint64_t block_start(uint64_t idx, uint32_t level) {
   return idx & block_start_mask(level);
 }
-inline uint64_t next_block_start(uint64_t idx, uint32_t level) {
+constexpr inline uint64_t next_block_start(uint64_t idx, uint32_t level) {
   return (idx & block_start_mask(level)) + block_size(level);
 }
-inline uint64_t position_in_block(uint64_t idx, uint32_t level) {
+constexpr inline uint64_t position_in_block(uint64_t idx, uint32_t level) {
   return idx & position_in_block_mask(level);
 }
-inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
+constexpr inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
   return (block_start(idx, level) & position_in_block_mask(level+1)) / block_size(level);
 }
 
-
-// manual_orderer is a data structure that lets you place
-// arbitrary objects in an O(1)-comparable order, but you have to refer
-// to them by manually_orderable instead of the object itself.
-template<typename ValueType>
-class manual_orderer {
-public:
-  typedef manually_orderable<ValueType> entry_ref;
-
-  // create a ValueType in the heap and an manually_orderable refcounted pointer
-  // to it.  It's not in the ordering until you put it there using one of
-  // this manual_orderer's put_*() methods.
-  template <class... Args>
-  entry_ref construct(Args&&... args) {
-    // TODO: better allocator
-    return entry_ref::construct(std::forward<Args>(args)...);
-  }
-
-  // put_only puts the first object in the ordering; you can't use it
-  // after it's been called once
-  void put_only(entry_ref m) {
-    m.data->prev = nullptr;
-    m.data->next = nullptr;
-    m.data->idx = 0;
-    last_entry = m.data;
-    set(0, m.data);
-  }
-
-  // relative_to must already have been put in the ordering.
-  // Puts "moving" in the ordering just prior to relative_to.
-  void put_before(entry_ref moving, entry_ref relative_to) {
-    insert(moving.data, relative_to.data, false);
-  }
-  // relative_to must already have been put in the ordering.
-  // Puts "moving" in the ordering just after relative_to.
-  void put_after(entry_ref moving, entry_ref relative_to) {
-    insert(moving.data, relative_to.data, true);
-  }
-  
-private:
-  std::unordered_map<uint64_t, entry_base*> data;
+class manual_orderer_base {
+protected:
+  std::unordered_map<uint64_t, level_1_block> data;
   entry_base* last_entry;
   
   entry_base* get(uint64_t idx) {
@@ -611,7 +580,46 @@ private:
     }
   }
 };
-  
+
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by manually_orderable instead of the object itself.
+template<typename ValueType>
+class manual_orderer : public manual_orderer_base {
+public:
+  typedef manually_orderable<ValueType> entry_ref;
+
+  // create a ValueType in the heap and an manually_orderable refcounted pointer
+  // to it.  It's not in the ordering until you put it there using one of
+  // this manual_orderer's put_*() methods.
+  template <class... Args>
+  entry_ref construct(Args&&... args) {
+    // TODO: better allocator
+    return entry_ref::construct(std::forward<Args>(args)...);
+  }
+
+  // put_only puts the first object in the ordering; you can't use it
+  // after it's been called once
+  void put_only(entry_ref m) {
+    m.data->prev = nullptr;
+    m.data->next = nullptr;
+    m.data->idx = 0;
+    last_entry = m.data;
+    set(0, m.data);
+  }
+
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just prior to relative_to.
+  void put_before(entry_ref moving, entry_ref relative_to) {
+    insert(moving.data, relative_to.data, false);
+  }
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just after relative_to.
+  void put_after(entry_ref moving, entry_ref relative_to) {
+    insert(moving.data, relative_to.data, true);
+  }
+};
   
   
   
