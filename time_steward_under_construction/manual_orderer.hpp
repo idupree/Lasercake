@@ -404,7 +404,7 @@ constexpr inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
 
 class manual_orderer_base {
 protected:
-  std::unordered_map<uint64_t, level_1_block> data;
+  std::unordered_map<uint64_t, entry_base*> data;
   entry_base* last_entry;
   
   entry_base* get(uint64_t idx) {
