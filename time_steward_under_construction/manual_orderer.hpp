@@ -297,12 +297,14 @@ namespace std {
 namespace manual_orderer_impl {
 
 const uint64_t no_idx = std::numeric_limits<uint64_t>::max();
+class manual_orderer_base;
 struct entry_base {
-  entry_base():idx(no_idx),ref_count(0){}
+  entry_base():idx(no_idx),ref_count(0),prev(nullptr),next(nullptr),owner(nullptr){}
   uint64_t idx;
   size_t ref_count;
   entry_base* prev;
   entry_base* next;
+  manual_orderer_base* owner;
 };
 
 template<typename ValueType>
@@ -364,7 +366,9 @@ private:
       --data->ref_count;
       DecRefCallback()(data->contents, data->ref_count);
       if (data->ref_count == 0) {
-        
+        if (data->owner) {
+          data->owner->erase(data);
+        }
         delete data;
         data = nullptr;
       }
@@ -467,7 +471,8 @@ protected:
     }
     return i;
   }
-  
+
+public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     uint32_t nonfull_level = 1;
     while (block_is_full(existing_entry->idx, nonfull_level)) { ++nonfull_level; }
@@ -508,6 +513,7 @@ protected:
       assert (inserted_entry->idx < existing_entry->idx);
       assert (!inserted_entry->prev || inserted_entry->idx > inserted_entry->prev->idx);
     }
+    inserted_entry->owner = this;
   }
   
   void erase(entry_base* erased_entry) {
@@ -519,6 +525,7 @@ protected:
     erased_entry->idx = no_idx;
     erased_entry->prev = nullptr;
     erased_entry->next = nullptr;
+    erased_entry->owner = nullptr;
     set(idx, nullptr);
     
     for (uint32_t level = 1; ; ++level) {
