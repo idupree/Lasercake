@@ -253,6 +253,8 @@ void anticipate_shot_moving(time_steward::accessor* accessor, entity_ref e, fd_v
   accessor->anticipate_event(best_time, std::shared_ptr<event>(new shot_enters_new_tile(e.id(), best)));
 }
 
+const time_type shot_delay = (second_time/4);
+
 class player_shoots : public event {
 public:
   player_shoots(entity_id id, fd_vector v) : id(id),v(v) {}
@@ -272,7 +274,7 @@ public:
     s = s.insert(shot.id());
     accessor->set<shot_tile>(shot, tile);
     anticipate_shot_moving(accessor, shot, tile);
-    accessor->set<player_next_shot_time>(player, accessor->now() + (second_time/4));
+    accessor->set<player_next_shot_time>(player, accessor->now() + shot_delay);
   }
 };
 
@@ -582,6 +584,10 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
 const int64_t acc_updates_per_second = 50;
 const space_coordinate acc = tile_size*30/(second_time*acc_updates_per_second);
 
+enum ui_event_type {
+  LMB = 0, LEFT, RIGHT, UP, DOWN, NUM_INPUT_BUTTONS, MOUSE_MOVES, MAY_SHOOT, ACCELERATE, SET_HISTORY
+};
+
 struct green_caves_ui_backend {
   fd_vector screen_size;
   draw_green_caves_metadata last_metadata;
@@ -589,57 +595,95 @@ struct green_caves_ui_backend {
   gc_history_tree hist;
   time_type current_time = 0;
   int64_t last_milliseconds = 0;
-  bool shooting = false;
   int mouse_x;
   int mouse_y;
-  bool left = false;
-  bool right = false;
-  bool up = false;
-  bool down = false;
+  std::array<bool, NUM_INPUT_BUTTONS> input_button_states;
+  struct ui_event {
+    ui_event(time_type when, ui_event_type type, bool pressed = false):when(when),type(type),pressed(pressed){}
+    ui_event(time_type when, ui_event_type type, int mouse_x, int mouse_y, bool pressed = false):when(when),type(type),pressed(pressed),mouse_x(mouse_x),mouse_y(mouse_y){}
+    ui_event(time_type when, ui_event_type type, time_type new_hist_time, gc_history_tree::history h):when(when),type(type),new_hist_time(new_hist_time),new_hist(h){}
+    time_type when;
+    bool operator<(ui_event const& o)const { return when > o.when; } // hack for priority_queue
+    
+    ui_event_type type;
+    bool pressed;
+    int mouse_x;
+    int mouse_y;
+    time_type new_hist_time;
+    gc_history_tree::history new_hist;
+  };
+  std::priority_queue<ui_event> latest_events;
   green_caves_ui_backend() {
     hist.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   }
-  void update_to_real_time(int64_t milliseconds) {
+  time_type milliseconds_to_time(int64_t milliseconds) {
     const int64_t dur = milliseconds-last_milliseconds;
-    last_milliseconds = milliseconds;
-    if (dur > 0 && dur < 400) {
-      const time_type new_time = current_time + second_time * dur / 1000;
-      for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_up, negative_continuous_with_positive>()); ; ++i) {
-        const time_type ut = i * second_time / acc_updates_per_second;
-        assert (ut >= current_time);
-        if (ut >= new_time) { break; }
-        if (   up && ! down) { hist.insert_fiat_event(ut, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
-        if ( down && !   up) { hist.insert_fiat_event(ut, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
-        if ( left && !right) { hist.insert_fiat_event(ut, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
-        if (right && ! left) { hist.insert_fiat_event(ut, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
-      }
-      while (shooting) {
-        std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(new_time);
-        time_type st = accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id));
-        if (st < current_time) { st = current_time; }
-        if (st <= new_time) {
-          double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, screen_size(1)-mouse_y)) - double_vector(0.5, 0.5);
-          //std::cerr << v0;
-          fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
-          space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
-          if (mag > 0) {
-            v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
-            v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
-            hist.insert_fiat_event(st, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
-          }
-        }
-        else {
-          break;
-        }
-      }
-      hist.expand_to_time(new_time);
-      current_time = new_time;
-    }
+    return current_time + second_time * dur / 1000;
   }
-  void mouse_down(int x, int y) {
-    mouse_x = x;
-    mouse_y = y;
-    auto h = last_metadata.hist_from_screen(fd_vector(mouse_x,screen_size(1)-mouse_y));
+  void shoot(time_type t) {
+    double_vector v0 = last_metadata.main_view.from_screen(fd_vector(mouse_x, screen_size(1)-mouse_y)) - double_vector(0.5, 0.5);
+    fd_vector v(space_coordinate(v0(0)*100000), space_coordinate(v0(1)*100000));
+    space_coordinate mag = isqrt((v(0) * v(0)) + (v(1) * v(1)));
+    if (mag == 0) { v = fd_vector(1, 0); mag = 1; }
+    v[0] = divide(v[0] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+    v[1] = divide(v[1] * tile_size*5, second_time*mag, rounding_strategy<round_up, negative_mirrors_positive>());
+    hist.insert_fiat_event(t, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
+  }
+  void update_to_real_time(int64_t milliseconds) {
+    const int64_t dur = std::min(int64_t(400LL), milliseconds-last_milliseconds);
+    const time_type new_time = current_time + second_time * dur / 1000;
+    last_milliseconds = milliseconds;
+    for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_up, negative_continuous_with_positive>()); ; ++i) {
+      const time_type impulse_time = i * second_time / acc_updates_per_second;
+      assert (impulse_time >= current_time);
+      if (impulse_time >= new_time) { break; }
+      latest_events.push(ui_event(impulse_time, ACCELERATE));
+    }
+    std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(current_time);
+    time_type next_shot_time = accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id));
+    if (next_shot_time < current_time) { next_shot_time = current_time; }
+    latest_events.push(ui_event(next_shot_time, MAY_SHOOT));
+    
+    while (!latest_events.empty() && latest_events.top().when <= new_time) {
+      ui_event e = latest_events.top();
+      latest_events.pop();
+      if (e.type == LMB || e.type == MOUSE_MOVES) {
+        mouse_x = e.mouse_x;
+        mouse_y = e.mouse_y;
+      }
+      if (e.type < NUM_INPUT_BUTTONS) {
+        input_button_states[e.type] = e.pressed;
+      }
+      if (e.type == MAY_SHOOT || e.type == LMB) {
+        if (input_button_states[LMB] && next_shot_time <= e.when) {
+          shoot(e.when);
+          next_shot_time = e.when + shot_delay;
+          latest_events.push(ui_event(next_shot_time, MAY_SHOOT));
+        }
+      }
+      if (e.type == ACCELERATE) {
+        if (input_button_states[   UP] && !input_button_states[ DOWN]) {
+          hist.insert_fiat_event(e.when, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
+        if (input_button_states[ DOWN] && !input_button_states[   UP]) {
+          hist.insert_fiat_event(e.when, 2, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, -acc)))); }
+        if (input_button_states[ LEFT] && !input_button_states[RIGHT]) {
+          hist.insert_fiat_event(e.when, 3, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(-acc, 0)))); }
+        if (input_button_states[RIGHT] && !input_button_states[ LEFT]) {
+          hist.insert_fiat_event(e.when, 4, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(acc, 0)))); }
+      }
+      if (e.type == SET_HISTORY) {
+        current_time = e.new_hist_time;
+        hist.set_history(e.new_hist);
+        latest_events = std::priority_queue<ui_event>();
+        return;
+      }
+    }
+    hist.expand_to_time(new_time);
+    current_time = new_time;
+    latest_events = std::priority_queue<ui_event>();
+  }
+  void mouse_down(int64_t milliseconds, int x, int y) {
+    auto h = last_metadata.hist_from_screen(fd_vector(x,screen_size(1)-y));
     if (!h.second.empty()) {
       bool dif = true;
       for (size_t i = 1; i < hist.current_history.size(); ++i) {
@@ -650,24 +694,20 @@ struct green_caves_ui_backend {
           break;
         }
       }
-      if (dif) {
-        hist.set_history(h.second);
-      }
-      current_time = h.first;
-      shooting = false;
+      latest_events.push(ui_event(milliseconds_to_time(milliseconds), SET_HISTORY, h.first, dif ? h.second : hist.current_history));
     }
     else {
-      shooting = true;
+      latest_events.push(ui_event(milliseconds_to_time(milliseconds), LMB, x, y, true));
     }
   }
-  void mouse_up(int x, int y) {
-    mouse_x = x;
-    mouse_y = y;
-    shooting = false;
+  void mouse_up(int64_t milliseconds, int x, int y) {
+    latest_events.push(ui_event(milliseconds_to_time(milliseconds), LMB, x, y, false));
   }
-  void mouse_moves(int x, int y) {
-    mouse_x = x;
-    mouse_y = y;
+  void mouse_moves(int64_t milliseconds, int x, int y) {
+    latest_events.push(ui_event(milliseconds_to_time(milliseconds), MOUSE_MOVES, x, y));
+  }
+  void set_key(int64_t milliseconds, ui_event_type k, bool pressed) {
+    latest_events.push(ui_event(milliseconds_to_time(milliseconds), k, pressed));
   }
   template<class DrawFuncsType>
   void draw(DrawFuncsType& draw) {

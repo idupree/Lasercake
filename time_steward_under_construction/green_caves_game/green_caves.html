@@ -91,18 +91,20 @@ window.green_caves.holding_mouse_down_ingame = false;
     var mouse_canvas_y = mouse_screen_y - canvas_screen_top;
     return { x: mouse_canvas_x, y: mouse_canvas_y };
   }
-
-  var update = (function(){
+  
+  var now_milliseconds = (function(){
     var now = new Date();
-    window._update_to_real_time(now.getTime());
+    return now.getTime();
+  });
+  var update = (function(){
+    window._update_to_real_time(now_milliseconds());
   });
 
   // TODO make these events not update but instead insert
   // a fiat event at event.timeStamp
   var mousemove_while_mouse_down_ingame = function(e){
-    update();
     var pos = mouse_xy_relative_to_top_left_of_canvas(e);
-    window._mouse_moves(pos.x, pos.y);
+    window._mouse_moves(e.timeStamp, pos.x, pos.y);
     // prevent selecting text while aiming
     e.preventDefault();
   };
@@ -112,9 +114,8 @@ window.green_caves.holding_mouse_down_ingame = false;
       // (allow left-clicks elsewhere to do normal things like selecting text)
       window.green_caves.holding_mouse_down_ingame = true;
       document.addEventListener('mousemove', mousemove_while_mouse_down_ingame, false);
-      update();
       var pos = mouse_xy_relative_to_top_left_of_canvas(e);
-      window._mouse_down(pos.x, pos.y);
+      window._mouse_down(e.timeStamp, pos.x, pos.y);
     }
   }, false);
   document.addEventListener('mouseup', function(e){
@@ -122,28 +123,25 @@ window.green_caves.holding_mouse_down_ingame = false;
       // release left-click
       window.green_caves.holding_mouse_down_ingame = false;
       document.removeEventListener('mousemove', mousemove_while_mouse_down_ingame, false);
-      update();
       var pos = mouse_xy_relative_to_top_left_of_canvas(e);
-      window._mouse_up(pos.x, pos.y);
+      window._mouse_up(e.timeStamp, pos.x, pos.y);
     }
   }, false);
   document.addEventListener('keydown', function(e){
-    update();
     var keycode = (e.keyCode ? e.keyCode : e.which);
     var keystr = String.fromCharCode(keycode);
-    if (keycode === 37 || keystr === "A") { _set_left(true); e.preventDefault(); }
-    if (keycode === 38 || keystr === "W") { _set_up(true); e.preventDefault(); }
-    if (keycode === 39 || keystr === "D") { _set_right(true); e.preventDefault(); }
-    if (keycode === 40 || keystr === "S") { _set_down(true); e.preventDefault(); }
+    if (keycode === 37 || keystr === "A") { _set_left(e.timeStamp, true); e.preventDefault(); }
+    if (keycode === 38 || keystr === "W") { _set_up(e.timeStamp, true); e.preventDefault(); }
+    if (keycode === 39 || keystr === "D") { _set_right(e.timeStamp, true); e.preventDefault(); }
+    if (keycode === 40 || keystr === "S") { _set_down(e.timeStamp, true); e.preventDefault(); }
   }, false);
   document.addEventListener('keyup', function(e){
-    update();
     var keycode = (e.keyCode ? e.keyCode : e.which);
     var keystr = String.fromCharCode(keycode);
-    if (keycode === 37 || keystr === "A") { _set_left(false); e.preventDefault(); }
-    if (keycode === 38 || keystr === "W") { _set_up(false); e.preventDefault(); }
-    if (keycode === 39 || keystr === "D") { _set_right(false); e.preventDefault(); }
-    if (keycode === 40 || keystr === "S") { _set_down(false); e.preventDefault(); }
+    if (keycode === 37 || keystr === "A") { _set_left(e.timeStamp, false); e.preventDefault(); }
+    if (keycode === 38 || keystr === "W") { _set_up(e.timeStamp, false); e.preventDefault(); }
+    if (keycode === 39 || keystr === "D") { _set_right(e.timeStamp, false); e.preventDefault(); }
+    if (keycode === 40 || keystr === "S") { _set_down(e.timeStamp, false); e.preventDefault(); }
   }, false);
   
   var draw = (function(){
@@ -164,7 +162,7 @@ window.green_caves.holding_mouse_down_ingame = false;
     }
   }());
 
-}, 3000);
+}, 1000);
 }, false);
 
 }());

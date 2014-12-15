@@ -56,13 +56,13 @@ extern "C" {
 
 void draw() { draw_funcs draw; backend.draw(draw); }
 void update_to_real_time(double milliseconds) { backend.update_to_real_time(int64_t(milliseconds)); }
-void mouse_down(int x, int y) { backend.mouse_down(x, y); }
-void mouse_up(int x, int y) { backend.mouse_up(x, y); }
-void mouse_moves(int x, int y) { backend.mouse_moves(x, y); }
+void mouse_down(double milliseconds, int x, int y) { backend.mouse_down(int64_t(milliseconds), x, y); }
+void mouse_up(double milliseconds, int x, int y) { backend.mouse_up(int64_t(milliseconds), x, y); }
+void mouse_moves(double milliseconds, int x, int y) { backend.mouse_moves(int64_t(milliseconds), x, y); }
 void set_display_size(int x, int y) { backend.screen_size = fd_vector(x, y); }
-void set_left(bool b) { backend.left = b; }
-void set_right(bool b) { backend.right = b; }
-void set_up(bool b) { backend.up = b; }
-void set_down(bool b) { backend.down = b; }
+void set_left(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), LEFT, b); }
+void set_right(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), RIGHT, b); }
+void set_up(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), UP, b); }
+void set_down(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), DOWN, b); }
 
 } // extern "C"

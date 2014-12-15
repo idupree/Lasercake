@@ -235,61 +235,44 @@ void do_gl() {
   }
 }
 
-bool keys[255];
 
 boost::posix_time::ptime ptmin(boost::posix_time::min_date_time);
+int64_t ms() { return (boost::posix_time::microsec_clock::universal_time() - ptmin).total_milliseconds(); }
 void update() {
-  backend.update_to_real_time((boost::posix_time::microsec_clock::universal_time() - ptmin).total_milliseconds());
+  backend.update_to_real_time(ms());
 }
-
 
 static void keydown(unsigned char key, int /*x*/, int /*y*/) {
-  update();
-  keys[key] = true;
   switch (key) {
-  case 27:
-    exit(0); break;/*
-  case 'q':
-          if(sdle.key.keysym.sym == SDLK_q) { time -= 100; if (time < 0) time = 0; }
-  case 'w':
-          if(sdle.key.keysym.sym == SDLK_w) time += 100;
-  case 'a':
-    view_length *= 0.9; break;
-  case 's':
-    view_length /= 0.9; break;
-  case 'e':
-    height_angle += 0.2; break;
-  case 'd':
-    height_angle -= 0.2; break;*/
+    case 27: exit(0); break;
+    case 'w': backend.set_key(ms(), UP, true); break;
+    case 'a': backend.set_key(ms(), LEFT, true); break;
+    case 's': backend.set_key(ms(), DOWN, true); break;
+    case 'd': backend.set_key(ms(), RIGHT, true); break;
   }
-  backend.up    = keys['w'];
-  backend.left  = keys['a'];
-  backend.down  = keys['s'];
-  backend.right = keys['d'];
 }
 static void keyup(unsigned char key, int /*x*/, int /*y*/) {
-  update();
-  keys[key] = false;
-  backend.up    = keys['w'];
-  backend.left  = keys['a'];
-  backend.down  = keys['s'];
-  backend.right = keys['d'];
+  switch (key) {
+    case 27: exit(0); break;
+    case 'w': backend.set_key(ms(), UP, false); break;
+    case 'a': backend.set_key(ms(), LEFT, false); break;
+    case 's': backend.set_key(ms(), DOWN, false); break;
+    case 'd': backend.set_key(ms(), RIGHT, false); break;
+  }
 }
 
 static void mouse(int button, int state, int x, int y) {
-  update();
   if (button == GLUT_LEFT_BUTTON) {
     if (state == GLUT_DOWN) {
-      backend.mouse_down(x, y);
+      backend.mouse_down(ms(), x, y);
     }
     else {
-      backend.mouse_up(x, y);
+      backend.mouse_up(ms(), x, y);
     }
   }
 }
 static void mouse2(int x, int y) {
-  update();
-  backend.mouse_moves(x, y);
+  backend.mouse_moves(ms(), x, y);
 }
 void reshape(int width, int height) {
   update();
