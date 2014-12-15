@@ -842,15 +842,21 @@ private:
       assert(pile_iter != event_piles.end());
       new_trigger = pile_iter->second.instigating_event;
       if (force_trigger_change) {
-        std::shared_ptr<const trigger> old_trigger = event_piles.find(last_valid_trigger_call(tid, new_trigger_call_time)->first)->second.instigating_event;
+        auto last_call = last_valid_trigger_call(tid, new_trigger_call_time);
+        std::shared_ptr<const trigger> old_trigger = last_call ? event_piles.find(last_call->first)->second.instigating_event : nullptr;
         if (new_trigger != old_trigger) {
           for (auto j = boost::next(i); (j != trigger_info.end()) && (!j->second.replaced); ++j) {
             const auto pile_iter = event_piles.find(j->first);
             if (pile_iter->second.instigating_event) {
               assert (pile_iter != event_piles.end());
               assert (pile_iter->second.instigating_event == new_trigger);
-              pile_iter->second.instigating_event = old_trigger;
-              if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
+              if (old_trigger) {
+                pile_iter->second.instigating_event = old_trigger;
+                if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
+              }
+              else {
+                erase_instigating_event(j->first);
+              }
             }
           }
         }
