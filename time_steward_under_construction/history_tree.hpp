@@ -265,6 +265,13 @@ public:
     expand_to_time_impl(current_history.back(), time);
     validate();
   }
+  void insert_fiat_event_impl(node* node, time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
+    auto p = node->events.equal_range(time);
+    for (; p.first != p.second; ++p.first) {
+      caller_error_if (p.first->second.distinguisher == distinguisher, "inserting two fiat events at same time-and-history with same distinguisher");
+    }
+    node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
+  }
   void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<event> e) {
     validate();
     if (time <= current_time) {
@@ -273,7 +280,7 @@ public:
     size_t place = where_in_current_history_is(time);
     node* cur_node = current_history[place];
     if ((place+1 >= current_history.size()) && (time >= cur_node->end_time)) {
-      cur_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
+      insert_fiat_event_impl(cur_node, time, distinguisher, e);
       expand_to_time_impl(cur_node, time);
     }
     else {
@@ -283,7 +290,7 @@ public:
       auto iter = cur_node->children.insert(std::make_pair(time, node(time)));
       node* new_node = &iter->second;
       current_history.push_back(new_node);
-      new_node->events.insert(std::make_pair(time, fiat_event(distinguisher, e)));
+      insert_fiat_event_impl(new_node, time, distinguisher, e);
       auto p = spatial_representation_columns.insert(std::make_pair(time, spatial_representation_column()));
       if (p.second) {
         assert (p.first != spatial_representation_columns.begin());
@@ -376,8 +383,12 @@ public:
   }
   void validate_node(node const& n) {
     assert (boost::prior(spatial_representation_columns.end())->first > n.end_time);
+    std::unordered_map<time_type, std::unordered_map<uint64_t, bool>> event_dup_checks;
     for (auto const& p : n.events) {
       assert (p.first >= n.start_time);
+      auto& d = event_dup_checks[p.first][p.second.distinguisher];
+      assert (!d);
+      d = true;
     }
     for (auto const& p : n.children) {
       assert (p.first > n.start_time);
