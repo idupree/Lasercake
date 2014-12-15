@@ -414,7 +414,7 @@ public:
         node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
         for (auto i = cur_node->events.upper_bound(current_time);
             i != cur_node->events.end() && (i->first <= new_time) &&
-            ((!next_node) || (i->first <= next_node->start_time)); ++i) {
+            ((!next_node) || (i->first < next_node->start_time)); ++i) {
           steward.insert_fiat_event(i->first, i->second.distinguisher, i->second.e);
         }
         if (next_node && new_time >= next_node->start_time) {
@@ -432,7 +432,7 @@ public:
         node* next_node = (place_in_current_history+1 < current_history.size()) ? current_history[place_in_current_history+1] : nullptr;
         for (auto i = cur_node->events.upper_bound(new_time);
             i != cur_node->events.end() && (i->first <= current_time) &&
-            ((!next_node) || (i->first <= next_node->start_time)); ++i) {
+            ((!next_node) || (i->first < next_node->start_time)); ++i) {
           steward.erase_fiat_event(i->first, i->second.distinguisher);
         }
         if (place_in_current_history > 0 && new_time < cur_node->start_time) {
