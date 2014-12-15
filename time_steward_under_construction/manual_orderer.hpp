@@ -525,7 +525,10 @@ public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     validate();
     uint32_t nonfull_level = 1;
-    while (block_is_full(existing_entry->idx, nonfull_level)) { ++nonfull_level; }
+    while (block_is_full(existing_entry->idx, nonfull_level)) {
+      ++nonfull_level;
+      caller_correct_if(nonfull_level*max_children_per_block_shift < 64, "manual_orderer overflowed");
+    }
     
     for (uint32_t level = nonfull_level; level != 0; --level) {
       uint64_t shove_dist = block_size(level-1);
