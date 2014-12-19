@@ -597,6 +597,7 @@ struct green_caves_ui_backend {
   int64_t last_milliseconds = 0;
   int mouse_x;
   int mouse_y;
+  bool ready_to_branch = false;
   std::array<bool, NUM_INPUT_BUTTONS> input_button_states;
   struct ui_event {
     ui_event(time_type when, ui_event_type type, bool pressed = false):when(when),type(type),pressed(pressed){}
@@ -633,20 +634,24 @@ struct green_caves_ui_backend {
     const int64_t dur = std::min(int64_t(400LL), milliseconds-last_milliseconds);
     const time_type new_time = current_time + second_time * dur / 1000;
     last_milliseconds = milliseconds;
-    for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_up, negative_continuous_with_positive>()); ; ++i) {
-      const time_type impulse_time = i * second_time / acc_updates_per_second;
-      assert (impulse_time >= current_time);
-      if (impulse_time >= new_time) { break; }
-      latest_events.push(ui_event(impulse_time, ACCELERATE));
+    for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_down, negative_continuous_with_positive>()); ; ++i) {
+      const time_type impulse_time = divide(i * second_time, acc_updates_per_second, rounding_strategy<round_down, negative_continuous_with_positive>());
+      if (impulse_time > current_time) {
+        if (impulse_time > new_time) { break; }
+        latest_events.push(ui_event(impulse_time, ACCELERATE));
+      }
     }
     std::unique_ptr<time_steward::accessor> accessor = hist.accessor_after(current_time);
     time_type next_shot_time = accessor->get<player_next_shot_time>(accessor->get(time_steward_system::global_object_id));
-    if (next_shot_time < current_time) { next_shot_time = current_time; }
+    if (next_shot_time <= current_time) { next_shot_time = current_time+1; }
     latest_events.push(ui_event(next_shot_time, MAY_SHOOT));
     
     while (!latest_events.empty() && latest_events.top().when <= new_time) {
       ui_event e = latest_events.top();
       latest_events.pop();
+      if (e.when >= hist.current_history.back()->end_time) {
+        ready_to_branch = false;
+      }
       if (e.type == LMB || e.type == MOUSE_MOVES) {
         mouse_x = e.mouse_x;
         mouse_y = e.mouse_y;
@@ -656,12 +661,28 @@ struct green_caves_ui_backend {
       }
       if (e.type == MAY_SHOOT || e.type == LMB) {
         if (input_button_states[LMB] && next_shot_time <= e.when) {
+          // TODO reduce duplicate code (id IMQw6EdMdnZVeA)
+          assert (e.when > current_time);
+          if (ready_to_branch) {
+            ready_to_branch = false;
+            hist.set_history(hist.create_new_branch(e.when, hist.current_history));
+          }
+          
           shoot(e.when);
           next_shot_time = e.when + shot_delay;
           latest_events.push(ui_event(next_shot_time, MAY_SHOOT));
         }
       }
       if (e.type == ACCELERATE) {
+        // TODO reduce duplicate code (id IMQw6EdMdnZVeA)
+        assert (e.when > current_time);
+        if (input_button_states[UP] || input_button_states[DOWN] || input_button_states[LEFT] || input_button_states[RIGHT]) {
+          if (ready_to_branch) {
+            ready_to_branch = false;
+            hist.set_history(hist.create_new_branch(e.when, hist.current_history));
+          }
+        }
+        
         if (input_button_states[   UP] && !input_button_states[ DOWN]) {
           hist.insert_fiat_event(e.when, 1, std::shared_ptr<event>(new player_accelerates(time_steward_system::global_object_id, fd_vector(0, acc)))); }
         if (input_button_states[ DOWN] && !input_button_states[   UP]) {
@@ -675,8 +696,12 @@ struct green_caves_ui_backend {
         current_time = e.new_hist_time;
         hist.set_history(e.new_hist);
         latest_events = std::priority_queue<ui_event>();
+        ready_to_branch = true;
         return;
       }
+    }
+    if (new_time >= hist.current_history.back()->end_time) {
+      ready_to_branch = false;
     }
     hist.expand_to_time(new_time);
     current_time = new_time;

@@ -299,34 +299,39 @@ public:
     }
     size_t place = where_in_current_history_is(time);
     node* cur_node = current_history[place];
-    if ((place+1 >= current_history.size()) && (time >= cur_node->end_time)) {
-      insert_fiat_event_impl(cur_node, time, distinguisher, e);
-      expand_to_time_impl(cur_node, time);
-    }
-    else {
+    insert_fiat_event_impl(cur_node, time, distinguisher, e);
+    if (place+1 < current_history.size()) {
       assert (time < cur_node->end_time);
-      current_history.resize(place+1);
-      expand_to_time_impl(current_history.back(), time);
-      auto iter = cur_node->children.insert(std::make_pair(time, node(time)));
-      node* new_node = &iter->second;
-      current_history.push_back(new_node);
-      insert_fiat_event_impl(new_node, time, distinguisher, e);
-      auto p = spatial_representation_columns.insert(std::make_pair(time, spatial_representation_column()));
-      if (p.second) {
-        assert (p.first != spatial_representation_columns.begin());
-        p.first->second.entries = boost::prior(p.first)->second.entries;
-      }
-      for (size_t i = 0; i < p.first->second.entries.size(); ++i) {
-        if (p.first->second.entries[i].h.back() == current_history[current_history.size()-2]) {
-          spatial_representation_entry e(
-            p.first->second.entries[i].height,
-            current_history);
-          p.first->second.entries.insert(p.first->second.entries.begin()+i+1, e);
-          break;
-        }
-      }
     }
     validate();
+  }
+  history create_new_branch(time_type time, history const& h) {
+    history result = h;
+    size_t place = where_in_history_is(h, time);
+    node* cur_node = h[place];
+    if (place+1 < h.size()) {
+      assert (time < cur_node->end_time);
+      result.resize(place+1);
+    }
+    expand_to_time_impl(result.back(), time);
+    auto iter = cur_node->children.insert(std::make_pair(time, node(time)));
+    node* new_node = &iter->second;
+    result.push_back(new_node);
+    auto p = spatial_representation_columns.insert(std::make_pair(time, spatial_representation_column()));
+    if (p.second) {
+      assert (p.first != spatial_representation_columns.begin());
+      p.first->second.entries = boost::prior(p.first)->second.entries;
+    }
+    for (size_t i = 0; i < p.first->second.entries.size(); ++i) {
+      if (p.first->second.entries[i].h.back() == result[result.size()-2]) {
+        spatial_representation_entry e(
+          p.first->second.entries[i].height,
+          result);
+        p.first->second.entries.insert(p.first->second.entries.begin()+i+1, e);
+        break;
+      }
+    }
+    return result;
   }
   
   void expand_to_time_impl(node* n, time_type time) {
