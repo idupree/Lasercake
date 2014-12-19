@@ -243,7 +243,7 @@ public:
         }
       }
       assert (!best.empty());
-      return std::pair<time_type, history_tree::history>(blast->first, best);
+      return std::pair<time_type, history_tree::history>(best.back()->end_time, best);
     }
     for (auto i = boost::next(prev); i != spatial_representation_columns.end(); ++i) {
       time_type max_time = i->first;
