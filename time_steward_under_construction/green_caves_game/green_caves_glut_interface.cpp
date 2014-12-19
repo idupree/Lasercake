@@ -250,6 +250,7 @@ static void keydown(unsigned char key, int /*x*/, int /*y*/) {
     case 's': backend.set_key(ms(), DOWN, true); break;
     case 'd': backend.set_key(ms(), RIGHT, true); break;
   }
+  if (key >= '0' && key <= '9') { backend.set_time_rate(key-'0'); }
 }
 static void keyup(unsigned char key, int /*x*/, int /*y*/) {
   switch (key) {

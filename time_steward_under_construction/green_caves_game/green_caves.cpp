@@ -598,6 +598,7 @@ struct green_caves_ui_backend {
   int64_t last_milliseconds = 0;
   int mouse_x;
   int mouse_y;
+  int time_rate = 1;
   bool ready_to_branch = false;
   std::array<bool, NUM_INPUT_BUTTONS> input_button_states;
   struct ui_event {
@@ -632,8 +633,8 @@ struct green_caves_ui_backend {
     hist.insert_fiat_event(t, 5, std::shared_ptr<event>(new player_shoots(time_steward_system::global_object_id, v)));
   }
   void update_to_real_time(int64_t milliseconds) {
-    const int64_t dur = std::min(int64_t(400LL), milliseconds-last_milliseconds);
-    const time_type new_time = current_time + second_time * dur / 1000;
+    const int64_t dur = std::min(int64_t(50LL), milliseconds-last_milliseconds);
+    const time_type new_time = current_time + second_time * time_rate * dur / 1000;
     last_milliseconds = milliseconds;
     const time_type focus_time_diff = std::abs(new_time-focus_time);
     const time_type focus_time_inc = std::max(20 * second_time * dur / 1000, 4 * focus_time_diff * dur / 1000);
@@ -742,6 +743,9 @@ struct green_caves_ui_backend {
   }
   void set_key(int64_t milliseconds, ui_event_type k, bool pressed) {
     latest_events.push(ui_event(milliseconds_to_time(milliseconds), k, pressed));
+  }
+  void set_time_rate(int t) {
+    time_rate = t;
   }
   template<class DrawFuncsType>
   void draw(DrawFuncsType& draw) {

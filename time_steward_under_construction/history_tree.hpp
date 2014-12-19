@@ -128,6 +128,10 @@ public:
   }
   
   double time_coord(time_type time, time_type focus_time) {
+    caller_error_if(time < 0, "time_coord() input out of bounds");
+    caller_error_if(focus_time < 0, "time_coord() input out of bounds");
+    caller_error_if(time > max_reached_time, "time_coord() input out of bounds");
+    caller_error_if(focus_time > max_reached_time, "time_coord() input out of bounds");
     time_type flat_dist = 2*StandardTimeIncrement;
     double flat_slope = 0.1/double(flat_dist);
     double double_max_time = max_reached_time;
