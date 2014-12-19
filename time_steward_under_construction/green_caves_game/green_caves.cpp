@@ -533,9 +533,9 @@ struct hist_line_func {
   }
 };
 template<class DrawFuncsType>
-draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tree& w, time_type time, DrawFuncsType& draw) {
+draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tree& w, time_type time, time_type focus_time, DrawFuncsType& draw) {
   draw_green_caves_metadata metadata(screen_size);
-  metadata.focus_time = time;
+  metadata.focus_time = focus_time;
   metadata.w = &w;
   std::unique_ptr<time_steward::accessor> accessor = w.accessor_after(time);
   auto player = accessor->get(time_steward_system::global_object_id);
@@ -570,11 +570,11 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
   hist_line_func<DrawFuncsType> line;
   line.m = &metadata;
   line.draw = &draw;
-  w.draw_tree(line, time);
+  w.draw_tree(line, focus_time);
   
   double_vector current_hist_pos;
-  current_hist_pos[metadata.hist_time_dim] = w.time_coord(time, time);
-  current_hist_pos[!metadata.hist_time_dim] = w.height_coord(w.current_history, time, time);
+  current_hist_pos[metadata.hist_time_dim] = w.time_coord(time, focus_time);
+  current_hist_pos[!metadata.hist_time_dim] = w.height_coord(w.current_history, time, focus_time);
   current_hist_pos = metadata.hist_view.to_screen(current_hist_pos);
   draw.circle(current_hist_pos(0), current_hist_pos(1), 8);
               
@@ -594,6 +594,7 @@ struct green_caves_ui_backend {
 
   gc_history_tree hist;
   time_type current_time = 0;
+  time_type focus_time = 0;
   int64_t last_milliseconds = 0;
   int mouse_x;
   int mouse_y;
@@ -634,6 +635,14 @@ struct green_caves_ui_backend {
     const int64_t dur = std::min(int64_t(400LL), milliseconds-last_milliseconds);
     const time_type new_time = current_time + second_time * dur / 1000;
     last_milliseconds = milliseconds;
+    const time_type focus_time_diff = std::abs(new_time-focus_time);
+    const time_type focus_time_inc = std::max(20 * second_time * dur / 1000, 4 * focus_time_diff * dur / 1000);
+    if (focus_time_inc >= focus_time_diff) {
+      focus_time = new_time;
+    }
+    else {
+      focus_time += focus_time_inc * ((new_time > focus_time) ? 1 : -1);
+    }
     for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_down, negative_continuous_with_positive>()); ; ++i) {
       const time_type impulse_time = divide(i * second_time, acc_updates_per_second, rounding_strategy<round_down, negative_continuous_with_positive>());
       if (impulse_time > current_time) {
@@ -736,7 +745,7 @@ struct green_caves_ui_backend {
   }
   template<class DrawFuncsType>
   void draw(DrawFuncsType& draw) {
-    last_metadata = draw_green_caves(screen_size, hist, current_time, draw);
+    last_metadata = draw_green_caves(screen_size, hist, current_time, focus_time, draw);
   }
 };
 
