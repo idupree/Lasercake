@@ -247,15 +247,15 @@ public:
     time_type best_time = TimeSteward::never;
     double best_dist = 2.0;
     auto prev = spatial_representation_columns.begin();
-    double global_min_time_coord = time_coord(prev->first, focus_time);
-    if (drawn_time_coord < global_min_time_coord) {
+    double global_min_usable_time_coord = time_coord(prev->first, focus_time);
+    if (drawn_time_coord < global_min_usable_time_coord) {
       best.push_back(&history_root);
       return std::pair<time_type, history_tree::history>(prev->first, best);
     }
     auto last = boost::prior(spatial_representation_columns.end());
-    double global_max_time_coord = time_coord(last->first, focus_time);
-    if (drawn_time_coord >= global_max_time_coord) {
-      auto blast = boost::prior(last);
+    auto blast = boost::prior(last);
+    double global_max_usable_time_coord = time_coord(blast->first, focus_time);
+    if (drawn_time_coord >= global_max_usable_time_coord) {
       for (auto const& f : blast->second.entries) {
         const double dist = std::abs(f.height - height);
         if (dist < best_dist) {
