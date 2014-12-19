@@ -219,6 +219,27 @@ public:
       }
       prev = i;
     }
+    for (int i = 0; i < 2; ++i) {
+      time_type inc = i ? StandardTimeIncrement*60 : StandardTimeIncrement;
+      time_type t = focus_time / inc * inc;
+      double prev_tc = -1.0;
+      while (t < max_reached_time) {
+        double tc = time_coord(t, focus_time);
+        if (prev_tc > -1.0 && tc - prev_tc < 0.01) { break; }
+        line(tc, 0.4-0.1*i, tc, 0.6+0.1*i, false);
+        prev_tc = tc;
+        t += inc;
+      }
+      t = focus_time / inc * inc;
+      prev_tc = -1.0;
+      while (t > 0) {
+        double tc = time_coord(t, focus_time);
+        if (prev_tc > -1.0 && prev_tc - tc < 0.01) { break; }
+        line(tc, 0.4-0.1*i, tc, 0.6+0.1*i, false);
+        prev_tc = tc;
+        t -= inc;
+      }
+    }
   }
   
   std::pair<time_type, history_tree::history> hist_from_draw_coords(double drawn_time_coord, double height, time_type focus_time) {
