@@ -510,7 +510,7 @@ struct draw_green_caves_metadata {
     hist_view.screen_min[hist_time_dim] = 0;
     int64_t remaining = screen_size(!hist_time_dim) - hist_view.screen_size(!hist_time_dim);
     hist_view.screen_min[!hist_time_dim] = remaining;
-    int64_t mss = std::min(remaining, screen_size(hist_time_dim));
+    int64_t mss = std::min(remaining - 4, screen_size(hist_time_dim));
     main_view.screen_size = fd_vector(mss,mss);
   }
 };
@@ -569,6 +569,14 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
   
   draw.rect(0, metadata.main_view.screen_size(1), screen_size(0), screen_size(1), false);
   draw.rect(metadata.main_view.screen_size(0), 0, screen_size(0), screen_size(1), false);
+  double_vector v0;
+  double_vector v1;
+  v0[metadata.hist_time_dim] = 0;
+  v1[metadata.hist_time_dim] = screen_size(metadata.hist_time_dim);
+  v0[!metadata.hist_time_dim] = 
+  v1[!metadata.hist_time_dim] = metadata.hist_view.screen_min(!metadata.hist_time_dim) - 2;
+  draw.segment(v0(0), v0(1), v1(0), v1(1), 1.5);
+  
   hist_line_func<DrawFuncsType> line;
   line.m = &metadata;
   line.draw = &draw;
