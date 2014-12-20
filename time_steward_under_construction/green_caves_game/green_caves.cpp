@@ -636,14 +636,6 @@ struct green_caves_ui_backend {
     const int64_t dur = std::min(int64_t(50LL), milliseconds-last_milliseconds);
     const time_type new_time = current_time + second_time * time_rate * dur / 1000;
     last_milliseconds = milliseconds;
-    const time_type focus_time_diff = std::abs(new_time-focus_time);
-    const time_type focus_time_inc = std::max(20 * second_time * dur / 1000, 4 * focus_time_diff * dur / 1000);
-    if (focus_time_inc >= focus_time_diff) {
-      focus_time = new_time;
-    }
-    else {
-      focus_time += focus_time_inc * ((new_time > focus_time) ? 1 : -1);
-    }
     for (int64_t i = divide(current_time*acc_updates_per_second, second_time, rounding_strategy<round_down, negative_continuous_with_positive>()); ; ++i) {
       const time_type impulse_time = divide(i * second_time, acc_updates_per_second, rounding_strategy<round_down, negative_continuous_with_positive>());
       if (impulse_time > current_time) {
@@ -715,6 +707,14 @@ struct green_caves_ui_backend {
     }
     hist.expand_to_time(new_time);
     current_time = new_time;
+    const time_type focus_time_diff = std::abs(new_time-focus_time);
+    const time_type focus_time_inc = std::max(20 * second_time * dur / 1000, 4 * focus_time_diff * dur / 1000);
+    if (focus_time_inc >= focus_time_diff) {
+      focus_time = new_time;
+    }
+    else {
+      focus_time += focus_time_inc * ((new_time > focus_time) ? 1 : -1);
+    }
     latest_events = std::priority_queue<ui_event>();
   }
   void mouse_down(int64_t milliseconds, int x, int y) {
