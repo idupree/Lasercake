@@ -22,8 +22,9 @@
 (function(){
   "use strict";
   mergeInto(LibraryManager.library, {
-    draw_rect: function(x,y,w,h) {
-      green_caves.canvas_context.fillStyle = "#00ff00";
+    draw_rect: function(x,y,w,h,c) {
+      if (c) { green_caves.canvas_context.fillStyle = "#00ff00"; }
+      else { green_caves.canvas_context.fillStyle = "#000000"; }
       green_caves.canvas_context.fillRect(x-1,y-1,w+2,h+2); // expand to avoid leaving tiny gaps
     },
     draw_circle: function(x,y,r) {

@@ -27,7 +27,7 @@ green_caves_ui_backend backend;
 extern "C" {
 
 extern void draw_circle(double cx, double cy, double r);
-extern void draw_rect(double x0, double y0, double x1, double y1);
+extern void draw_rect(double x0, double y0, double x1, double y1, bool color);
 extern void draw_segment(double x0, double y0, double x1, double y1, double width);
 
 } // extern "C"
@@ -37,10 +37,10 @@ struct draw_funcs {
     cy = backend.screen_size(1)-cy;
     draw_circle(cx, cy, r);
   }
-  void rect(double x0, double y0, double x1, double y1) {
+  void rect(double x0, double y0, double x1, double y1, bool color) {
     y0 = backend.screen_size(1)-y0;
     y1 = backend.screen_size(1)-y1;
-    draw_rect(x0, y1, x1-x0, y0-y1);
+    draw_rect(x0, y1, x1-x0, y0-y1, color);
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
     y0 = backend.screen_size(1)-y0;

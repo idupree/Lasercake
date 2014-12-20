@@ -555,7 +555,7 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
       if (accessor->get<wall_state>(te) == WALL) {
         double_vector v0 = metadata.main_to_screen(tile_to_space_min(tx) - cx, tile_to_space_min(ty) - cy);
         double_vector v1 = metadata.main_to_screen(tile_to_space_max(tx) - cx, tile_to_space_max(ty) - cy);
-        draw.rect(v0(0), v0(1), v1(0), v1(1));
+        draw.rect(v0(0), v0(1), v1(0), v1(1), true);
       }
       for (entity_id shot : accessor->get<tile_shots>(te)) {
         maybe_assert(accessor->get<shot_tile>(accessor->get(shot)) == tile);
@@ -567,6 +567,8 @@ draw_green_caves_metadata draw_green_caves(fd_vector screen_size, gc_history_tre
     }
   }
   
+  draw.rect(0, metadata.main_view.screen_size(1), screen_size(0), screen_size(1), false);
+  draw.rect(metadata.main_view.screen_size(0), 0, screen_size(0), screen_size(1), false);
   hist_line_func<DrawFuncsType> line;
   line.m = &metadata;
   line.draw = &draw;

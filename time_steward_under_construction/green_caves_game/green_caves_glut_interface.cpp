@@ -34,6 +34,7 @@
 green_caves_ui_backend backend;
 
 gl_data_format::color green_color(0x00ff00ff);
+gl_data_format::color black_color(0x000000ff);
 
 struct draw_funcs {
   draw_funcs(gl_triangles& triangles) : triangles(triangles){}
@@ -63,15 +64,16 @@ struct draw_funcs {
       prev = cur;
     }
   }
-  void rect(double x0, double y0, double x1, double y1) {
+  void rect(double x0, double y0, double x1, double y1, bool color) {
+    gl_data_format::color c = color ? green_color : black_color;
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x1, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+      gl_data_format::vertex_with_color(x0, y0, 0, c),
+      gl_data_format::vertex_with_color(x1, y0, 0, c),
+      gl_data_format::vertex_with_color(x1, y1, 0, c) }}});
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x0, y1, 0, green_color),
-      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+      gl_data_format::vertex_with_color(x0, y0, 0, c),
+      gl_data_format::vertex_with_color(x0, y1, 0, c),
+      gl_data_format::vertex_with_color(x1, y1, 0, c) }}});
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
     triangles.push_back(gl_triangle{{{
