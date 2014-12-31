@@ -817,6 +817,116 @@ using manual_orderer_impl::manual_orderer;
 namespace manual_orderer_impl {
   
   
+struct wafwaff {
+  bottom_level_node* node;
+  size_t* which_child;
+  entry_base* get() {
+    return node->children[which_child];
+  }
+  void set(entry_base* e) {
+    node->children[which_child] = e;
+  }
+  void inc() {
+    ++which_child;
+    if (which_child >= node->num_children) {
+      node = node->next;
+      which_child = 0;
+    }
+  }
+  operator bool() const {
+    return bool(node);
+  }
+}
+
+struct manual_orderer { 
+  wafwaff gc_walker_junk_begin;
+  wafwaff gc_walker_junk_end;
+  
+  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    std::vector<node_base*> path;
+    std::vector<size_t> child_indices;
+    path.push_back(&root);
+    while (path.back()->level > 1) {
+      auto a = path.back()->which_child_contains(existing_entry);
+      path.push_back(a.first);
+      child_indices.push_back(a.second);
+    }
+    root.advance_resupply();
+    for (size_t i = 0; i < path.size()-1; ++i) {
+      path[i]->advance_child_resupplies();
+    }
+    if (((bottom_level_node*)path.back())->full()) {
+      size_t first_to_split = path.size()-1;
+      while (first_to_split > 0 && ((upper_level_node*)path[first_to_split-1])->full()) {
+        --first_to_split;
+      }
+      if (first_to_split == 0) {
+        split_root();
+        ++first_to_split;
+      }
+      for (; first_to_split < path.size(); ++first_to_split) {
+        ((upper_level_node*)path[first_to_split-1])->split_child(child_indices[first_to_split-1]);
+      }
+    }
+    ((bottom_level_node*)path.back())->insert(inserted_entry, existing_entry, after);
+    for (size_t i = path.size()-2; i != size_t(-1); --i) {
+      ((upper_level_node*)path[i])->update_min_inserts_to_split();
+    }
+  }
+  void erase(entry_base* erased_entry) {
+    assert (erased_entry->is_junk());
+    gc_walk();
+    gc_walk();
+    gc_erase();
+    gc_erase();
+  }
+  void gc_walk() {
+    if (!gc_walker_junk_end) {
+      gc_walker_junk_begin.node = first;
+      gc_walker_junk_end.node = first;
+      gc_walker_junk_begin.which_child = 0;
+      gc_walker_junk_end.which_child = 0;
+    }
+    entry_base* next = gc_walker_junk_end.get();
+    if (!next->is_junk()) {
+      gc_walker_junk_begin.set(next);
+      gc_walker_junk_begin.inc();
+    }
+    gc_walker_junk_end.inc();
+  }
+};
+
+
+struct node_base {
+  bottom_level_node* resupply_last_moved;
+  void advance_resupply() {
+    
+    resupply_last_moved = resupply_last_moved->prev;
+    for (size_t i = 0; i < resupply_last_moved->num_children; ++i) {
+      resupply_last_moved->children[i]->idx += ;
+    }
+    
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct supply {
   entry_base* first_served_entry;
   entry_base* last_served_entry;
