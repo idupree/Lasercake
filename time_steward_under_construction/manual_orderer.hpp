@@ -816,6 +816,17 @@ using manual_orderer_impl::manual_orderer;
 
 namespace manual_orderer_impl {
   
+typedef uint64_t idx_type;
+const uint32_t node_max_entries_per_level_shift = 4;
+constexpr inline idx_type node_max_entries(uint32_t level) {
+  return 1ULL << (level*node_max_entries_per_level_shift);
+}
+constexpr inline idx_type node_idxspace_size(uint32_t level) {
+  return 1ULL << (level*(node_max_entries_per_level_shift+1));
+}
+constexpr inline idx_type node_entries_to_start_splitting_threshold(uint32_t level) {
+  return (node_max_entries(1)-1) * node_max_entries(level-1);
+}
   
 struct wafwaff {
   bottom_level_node* node;
@@ -841,44 +852,55 @@ struct wafwaff {
 struct manual_orderer { 
   wafwaff gc_walker_junk_begin;
   wafwaff gc_walker_junk_end;
+  uint32_t max_level;
   
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     std::vector<node_base*> path;
     std::vector<size_t> child_indices;
     path.push_back(&root);
-    while (path.back()->level > 1) {
+    for (size_t i = 0; i < max_level-1; ++i) {
       auto a = path.back()->which_child_contains(existing_entry);
       path.push_back(a.first);
       child_indices.push_back(a.second);
     }
-    root.advance_resupply();
+    bottom_level_node* b = (bottom_level_node*)path.back();
+    for (size_t i = 0; i < path.size(); ++i) {
+      node_base* n = path[i];
+      ++n->num_entries;
+    }
     for (size_t i = 0; i < path.size()-1; ++i) {
-      path[i]->advance_child_resupplies();
+      upper_level_node* u = (upper_level_node*)path[i];
+      u->advance_child_resupplies();
     }
-    if (((bottom_level_node*)path.back())->full()) {
-      size_t first_to_split = path.size()-1;
-      while (first_to_split > 0 && ((upper_level_node*)path[first_to_split-1])->full()) {
-        --first_to_split;
-      }
-      if (first_to_split == 0) {
-        split_root();
-        ++first_to_split;
-      }
-      for (; first_to_split < path.size(); ++first_to_split) {
-        ((upper_level_node*)path[first_to_split-1])->split_child(child_indices[first_to_split-1]);
+    for (size_t i = 1; i < path.size()-1; ++i) {
+      upper_level_node* u = (upper_level_node*)path[i];
+      u->advance_resupply();
+      u->advance_resupply();
+    }
+    b->advance_resupply();
+    b->advance_resupply();
+    for (size_t i = 0; i < path.size()-1; ++i) {
+      upper_level_node* u = (upper_level_node*)path[i];
+      uint32_t level = path.size()-i;
+      if (u->num_entries > node_max_entries(level)) {
+        u->split((upper_level_node*)path[i-1], this);
       }
     }
-    ((bottom_level_node*)path.back())->insert(inserted_entry, existing_entry, after);
-    for (size_t i = path.size()-2; i != size_t(-1); --i) {
-      ((upper_level_node*)path[i])->update_min_inserts_to_split();
+    if (b->num_entries > node_max_entries(1)) {
+      b->split((upper_level_node*)path[path.size()-2], this);
+      
+      if (b->entries[0]->idx > existing_entry->idx) {
+        b = b->prev;
+      }
     }
+    b->insert(inserted_entry, existing_entry, after);
   }
   void erase(entry_base* erased_entry) {
     assert (erased_entry->is_junk());
     gc_walk();
     gc_walk();
-    gc_erase();
-    gc_erase();
+    gc_drop();
+    gc_drop();
   }
   void gc_walk() {
     if (!gc_walker_junk_end) {
@@ -889,7 +911,12 @@ struct manual_orderer {
     }
     entry_base* next = gc_walker_junk_end.get();
     if (!next->is_junk()) {
+      entry_base* start = gc_walker_junk_begin.get();
+      idx_type temp = next->idx;
+      next->idx = start->idx;
+      start->idx = next;
       gc_walker_junk_begin.set(next);
+      gc_walker_junk_end.set(start);
       gc_walker_junk_begin.inc();
     }
     gc_walker_junk_end.inc();
@@ -898,14 +925,50 @@ struct manual_orderer {
 
 
 struct node_base {
-  bottom_level_node* resupply_last_moved;
-  void advance_resupply() {
-    
-    resupply_last_moved = resupply_last_moved->prev;
-    for (size_t i = 0; i < resupply_last_moved->num_children; ++i) {
-      resupply_last_moved->children[i]->idx += ;
+  bottom_level_node* resupply_next_moved;
+  uint32_t num_entries;
+  void advance_resupply_impl(idx_type dist) {
+    for (size_t i = 0; i < resupply_next_moved->num_children; ++i) {
+      resupply_next_moved->children[i]->idx += dist;
     }
-    
+    resupply_next_moved = resupply_next_moved->prev;
+  }
+};
+struct bottom_level_node : public node_base {
+  bottom_level_node* prev;
+  bottom_level_node* next;
+  std::array<entry_base*, node_max_entries(1)> entries;
+  
+  void advance_resupply() {
+    if (resupply_next_moved != this) {
+      advance_resupply_impl(node_max_entries(1));
+    }
+  }
+};
+struct upper_level_node : public node_base {
+  uint32_t num_children;
+  // TODO: maybe children should be a std::array<bottom_level_node, node_max_entries(1)*3>*
+  //                              (or std::array< upper_level_node, node_max_entries(1)*3>*)
+  // so that the children are in the same memory region.
+  std::array<node_base*, node_max_entries(1)*3> children;
+  bottom_level_node* last_descendant;
+  bottom_level_node* split_stopper;
+  
+  void advance_resupply() {
+    idx_type threshold = node_entries_to_start_splitting_threshold(level)
+    if (num_entries < threshold) {
+      if (resupply_next_moved != last_descendant) {
+        advance_resupply_impl(node_max_entries(level));
+      }
+    }
+    else {
+      if (num_entries == threshold) {
+        split_stopper = current_best_split_stopper();
+      }
+      if (resupply_next_moved != split_stopper) {
+        advance_resupply_impl(node_max_entries(level) / 2);
+      }
+    }
   }
 };
 
