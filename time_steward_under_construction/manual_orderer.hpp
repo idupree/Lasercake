@@ -923,15 +923,83 @@ struct manual_orderer {
   }
 };
 
+idx_type entry_capacity_provided_to_each_new_sibling_by_refill(uint32_t level) {
+  return divide(max_dist_to_parent_in_entries(level), refill_entries_moved_per_insert, rounding_strategy<round_up, negative_is_forbidden>());
+}
+idx_type ideal_refill_size(uint32_t level) {
+  return entry_capacity_provided_to_each_new_sibling_by_refill(level)*reserved_per_insert(level);
+}
+idx_type worst_case_inserts_to_receive_refill_from_source(uint32_t level) {
+  return divide(max_dist_to_parent_in_entries(level), refill_entries_moved_per_insert, rounding_strategy<round_up, negative_is_forbidden>());
+}
 
 struct node_base {
   bottom_level_node* resupply_next_moved;
-  uint32_t num_entries;
+  idx_type num_entries;
+  
   void advance_resupply_impl(idx_type dist) {
     for (size_t i = 0; i < resupply_next_moved->num_children; ++i) {
       resupply_next_moved->children[i]->idx += dist;
     }
     resupply_next_moved = resupply_next_moved->prev;
+  }
+  idx_type remaining_capacity() {
+    return num_entries * node_max_entries(level);
+  }
+  idx_type max_dist_to_refill_in_entries() {
+    return refill_entries_moved_per_insert * remaining_capacity();
+  }
+    return resupply_next_moved ? ideal_refill_size(level) : 0;
+  }
+  idx_type refill_size() {
+    return resupply_next_moved ? ideal_refill_size(level) : 0;
+  }
+  idx_type min_inserts_till_next_refill_receipt() { // "next refill" not including the current approaching one if any
+    return remaining_capacity() + (resupply_next_moved ? entry_capacity_provided_to_each_new_sibling_by_refill(level) : 0);
+  }
+  idx_type min_inserts_till_next_refill_request() {
+    return min_inserts_till_next_refill_receipt() - worst_case_inserts_to_receive_refill_from_source(level);
+  }
+  void validate() {
+    // Each node must...
+    // ...have enough unreserved supply to last until it fills up
+    assert (unreserved_supply() == remaining_capacity()*reserved_per_insert(level));
+    // ...have a refill coming if it couldn't get here from the source by the time the node is full
+    if (entries_to_parent_supply > max_dist_to_refill_in_entries()) {
+      assert (resupply_next_moved);
+    }
+    // ...have enough reserved from parent supply to provide for the next refill-pair in time
+    assert (reserved_from_parent_supply() + reserved_per_insert(level+1)*min_inserts_till_next_refill_request() == ideal_refill_size(level));
+    
+#if 0
+    // Each node must...
+    // if a refill is coming,
+    if (refill_size()>0) {
+      // ...have enough unreserved supply to last until the refill arrives
+      assert (unreserved_supply()*refill_entries_moved_per_insert >= reserved_per_insert(level)*refill_dist_to_parent_in_entries());
+      // ...have half its refill be big enough to repeat the feat
+      assert (refill_size()*refill_entries_moved_per_insert >= 2*reserved_per_insert(level)*max_dist_to_parent_in_entries(level));
+      // (thus ideal_refill_size(level) = 2*reserved_per_insert(level)*max_dist_to_parent_in_entries(level) / refill_entries_moved_per_insert)
+      // ...run a tight ship
+      assert ((unreserved_supply() - reserved_per_insert(level))*refill_entries_moved_per_insert < reserved_per_insert(level)*refill_dist_to_parent_in_entries());
+      assert (refill_size() == ideal_refill_size(level));
+    }
+    else {
+      // ...have enough unreserved supply to last until *a* refill arrives
+      assert (unreserved_supply()*refill_entries_moved_per_insert >= reserved_per_insert(level)*max_dist_to_parent_in_entries(level));
+      // ...run a tight ship
+      assert ((unreserved_supply() - reserved_per_insert(level))*refill_entries_moved_per_insert >= reserved_per_insert(level)*max_dist_to_parent_in_entries(level));
+    }
+    uint64_t inserts_till_next_receipt = (unreserved_supply()+refill_size()) / reserved_per_insert(level);
+    uint64_t inserts_till_next_request = inserts_till_next_receipt - (max_dist_to_parent_in_entries(level)/refill_entries_moved_per_insert);
+    assert (inserts_till_next_request <= inserts_till_next_receipt); // should be a repeat of the above
+    // ...have enough reserved from parent supply to make the next refill in time
+    assert (reserved_from_parent_supply() + inserts_till_next_request*reserved_per_insert(level+1) >= ideal_refill_size(level));
+    // ...run a tight ship
+    assert (reserved_from_parent_supply() + (inserts_till_next_request-1)*reserved_per_insert(level+1) < ideal_refill_size(level));
+    
+    // in summary, force:
+#endif
   }
 };
 struct bottom_level_node : public node_base {
