@@ -20,3 +20,4 @@ fonts.qrc.depends
 moc_main.cxx
 qrc_fonts.cxx
 /time_steward_under_construction/green_caves_game/green_caves.js*
+/time_steward_under_construction/green_caves_game/benchmarks
