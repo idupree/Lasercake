@@ -899,6 +899,7 @@ struct bottom_level_node {
 namespace manual_orderer_impl {
 
 typedef uint64_t idx_type;
+typedef uint32_t child_idx;
 const idx_type no_idx = std::numeric_limits<idx_type>::max();
 struct entry_base {
   entry_base():idx(no_idx),ref_count(0){}
@@ -924,86 +925,19 @@ constexpr idx_type entry_cap(uint32_t level) {
 constexpr idx_type node_size(uint32_t level) {
   return bottom_level_node_size << ((level - bottom_level) * 2);
 }
+constexpr child_idx which_child(uint32_t level, idx_type offset) {
+  return divide(offset, node_size(level - 1), rounding_strategy<round_down, negative_is_forbidden>());
+}
 const uint32_t max_level = bottom_level + ((64 - bottom_level_node_bits) >> 1);
 
 struct node_base {
   uint32_t level;
-  idx_type entries;
+  idx_type num_entries;
   idx_type beginning;
-  // default-construct root node
-  node_base():level(max_level),entries(0),beginning(0) {}
-  node_base(node_base* parent, child_idx which_child):level(parent->level - 1),entries(0),beginning(parent->beginning + node_size(level) * which_child) {}
+  node_base():level(max_level),num_entries(0),beginning(0) {} // default-construct root node
+  node_base(node_base* parent, child_idx which_child):level(parent->level - 1),num_entries(0),beginning(parent->beginning + node_size(level) * which_child) {}
   bool empty() {
-    return entries == 0;
-  }
-};
-
-struct upper_level_node : public node_base {
-  std::array<node_base*, 4> children;
-  child_idx first_child;
-  child_idx last_child;
-  
-  bottom_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_child(2),last_child(4){}
-  bool can_push_front() {
-    if (!children[0]) { return true; }
-    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[0])->can_push_front(); }
-    else {                           return (( upper_level_node*)children[0])->can_push_front(); }
-  }
-  void create_child(child_idx which) {
-    assert (!children[which]);
-    if (level - 1 == bottom_level) { children[which] = new bottom_level_node(this, which); }
-    else {                           children[which] = new  upper_level_node(this, which); }
-  }
-  void destroy_child(child_idx which) {
-    assert (children[which]);
-    assert (children[which]->empty());
-    if (level - 1 == bottom_level) {}
-    else {
-      for (child_idx i = 0; i < 4; ++i) {
-        assert (!(( upper_level_node*)children[which])->children(i));
-      }
-    }
-    delete children[which];
-    children[which] = nullptr;
-  }
-  idx_type first_half_entries() {
-    return (children[0] && children[0]->entries) + (children[1] && children[1]->entries);
-  }
-  void push_front(entry_base* e) {
-    ++entries;
-    if (first_child > 1) {
-      create_child(1);
-    }
-    if (children[1]->can_push_front()) {
-      children[1]->push_front(e);
-    }
-    else {
-      if (!children[0]) {
-        create_child(0);
-      }
-      assert (children[0]->can_push_front());
-      children[0]->push_front(e);
-    }
-  }
-  entry_base* pop_back() {
-    --entries;
-    entry_base* result = children[last_child]->pop_back();
-    if (children[last_child]->empty()) {
-      destroy_child(last_child);
-      --last_child;
-    }
-    return result;
-  }
-  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
-    ++entries;
-    const child_idx which = which_child(level, existing_entry->idx - beginning);
-    if ((which < 2) && (first_half_entries() >= entry_cap(level-1))) {
-      const child_idx min_right_child = children[2] ? 2 : 3;
-      const child_idx max_left_child = children[1] ? 1 : 0;
-      min_right_child.push_front(max_left_child.pop_back());
-    }
-    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert_after(inserted_entry, existing_entry, after); }
-    else {                           return (( upper_level_node*)children[which])->insert_after(inserted_entry, existing_entry, after); }
+    return num_entries == 0;
   }
 };
 
@@ -1018,20 +952,20 @@ struct bottom_level_node : public node_base {
     return !entries[0];
   }
   void push_front(entry_base* e) {
-    ++entries;
+    ++num_entries;
     --first_entry;
     entries[first_entry] = e;
     e->idx = beginning + first_entry;
   }
   entry_base* pop_back() {
-    --entries;
+    --num_entries;
     entry_base* result = entries[last_entry];
     entries[last_entry] = nullptr;
     --last_entry;
     return result;
   }
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
-    ++entries;
+    ++num_entries;
     child_idx which = existing_entry->idx - beginning;
     for (child_idx i = last_entry; i > which; --i) {
       ++entries[i]->idx;
@@ -1049,6 +983,87 @@ struct bottom_level_node : public node_base {
       entries[which] = inserted_entry;
       entries[which+1] = existing_entry;
     }
+  }
+};
+
+struct upper_level_node : public node_base {
+  std::array<node_base*, 4> children;
+  child_idx first_child;
+  
+  upper_level_node():node_base(),first_child(2){} // default-construct root node
+  upper_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_child(2){}
+  bool child_can_push_front(child_idx which) {
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->can_push_front(); }
+    else {                           return (( upper_level_node*)children[which])->can_push_front(); }
+  }
+  void child_push_front(child_idx which, entry_base* e) {
+    if (level - 1 == bottom_level) { ((bottom_level_node*)children[which])->push_front(e); }
+    else {                           (( upper_level_node*)children[which])->push_front(e); }
+  }
+  entry_base* child_pop_back(child_idx which) {
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->pop_back(); }
+    else {                           return (( upper_level_node*)children[which])->pop_back(); }
+  }
+  bool can_push_front() {
+    return (!children[0]) || child_can_push_front(0);
+  }
+  void create_child(child_idx which) {
+    assert (!children[which]);
+    if (level - 1 == bottom_level) { children[which] = new bottom_level_node(this, which); }
+    else {                           children[which] = new  upper_level_node(this, which); }
+  }
+  void destroy_child(child_idx which) {
+    assert (children[which]);
+    assert (children[which]->empty());
+    if (level - 1 == bottom_level) {}
+    else {
+      for (child_idx i = 0; i < 4; ++i) {
+        assert (!(( upper_level_node*)children[which])->children[i]);
+      }
+    }
+    delete children[which];
+    children[which] = nullptr;
+  }
+  idx_type first_half_entries() {
+    return (children[0] && children[0]->num_entries) + (children[1] && children[1]->num_entries);
+  }
+  void push_front(entry_base* e) {
+    ++num_entries;
+    if (first_child > 1) {
+      create_child(1);
+    }
+    if (child_can_push_front(1)) {
+      child_push_front(1, e);
+    }
+    else {
+      if (!children[0]) {
+        create_child(0);
+      }
+      assert (child_can_push_front(0));
+      child_push_front(0, e);
+    }
+  }
+  entry_base* pop_back() {
+    --num_entries;
+    child_idx last_child = 3;
+    while (!children[last_child]) { --last_child; }
+    entry_base* result = child_pop_back(last_child);
+    if (children[last_child]->empty()) {
+      destroy_child(last_child);
+      --last_child;
+    }
+    return result;
+  }
+  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    ++num_entries;
+    const child_idx which = which_child(level, existing_entry->idx - beginning);
+    if ((which < 2) && (first_half_entries() >= entry_cap(level-1))) {
+      const child_idx min_right_child = children[2] ? 2 : 3;
+      const child_idx max_left_child = children[1] ? 1 : 0;
+      child_push_front(min_right_child, child_pop_back(max_left_child));
+    }
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert(inserted_entry, existing_entry, after); }
+    else {                           return (( upper_level_node*)children[which])->insert(inserted_entry, existing_entry, after); }
   }
 };
 
@@ -1118,11 +1133,13 @@ private:
 // arbitrary objects in an O(1)-comparable order, but you have to refer
 // to them by manually_orderable instead of the object itself.
 template<typename ValueType, class DecRefCallback>
-class manual_orderer : public manual_orderer_base {
+class manual_orderer {
 private:
-  upper_level_node* root;
+  upper_level_node root;
 public:
   typedef manually_orderable<ValueType, DecRefCallback> entry_ref;
+  
+  manual_orderer():root(){} // default-construct root node
 
   // put_only puts the first object in the ordering; you can't use it
   // after it's been called once
@@ -1156,7 +1173,7 @@ namespace std {
 
 using manual_orderer_impl::manual_orderer;
 
-
+#if 0
 
 
 
@@ -2412,6 +2429,8 @@ public:
     moving.put_after(relative_to);
   }
 };
+#endif
+
 #endif
 
 #endif
