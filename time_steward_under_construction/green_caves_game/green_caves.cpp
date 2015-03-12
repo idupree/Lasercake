@@ -626,7 +626,7 @@ struct green_caves_ui_backend {
     gc_history_tree::history new_hist;
   };
   std::priority_queue<ui_event> latest_events;
-  green_caves_ui_backend() {
+  green_caves_ui_backend():input_button_states({{}}) {
     hist.insert_fiat_event(0, 0, std::shared_ptr<event>(new initialize_world()));
   }
   time_type milliseconds_to_time(int64_t milliseconds) {
