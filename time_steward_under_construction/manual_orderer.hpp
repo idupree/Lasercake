@@ -935,7 +935,7 @@ struct node_base {
   idx_type num_entries;
   idx_type beginning;
   node_base():level(max_level),num_entries(0),beginning(0) {} // default-construct root node
-  node_base(node_base* parent, child_idx which_child):level(parent->level - 1),num_entries(0),beginning(parent->beginning + node_size(level) * which_child) {}
+  node_base(node_base* parent, child_idx which):level(parent->level - 1),num_entries(0),beginning(parent->beginning + node_size(level) * which) {}
   bool empty() {
     return num_entries == 0;
   }
@@ -946,7 +946,7 @@ struct bottom_level_node : public node_base {
   child_idx first_entry;
   child_idx last_entry;
   
-  bottom_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_entry((bottom_level_node_size>>1)+1),last_entry(bottom_level_node_size>>1){}
+  bottom_level_node(node_base* parent, child_idx which):node_base(parent, which),entries({{}}),first_entry((bottom_level_node_size>>1)+1),last_entry(bottom_level_node_size>>1){}
   
   bool can_push_front() {
     return !entries[0];
@@ -965,14 +965,29 @@ struct bottom_level_node : public node_base {
     return result;
   }
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    assert(num_entries < bottom_level_node_size);
     ++num_entries;
     child_idx which = existing_entry->idx - beginning;
-    for (child_idx i = last_entry; i > which; --i) {
-      ++entries[i]->idx;
-      entries[i+1] = entries[i];
+    assert (which >= first_entry);
+    assert (which <= last_entry);
+    assert (entries[which] == existing_entry);
+    if (entries[bottom_level_node_size-1]) {
+      assert (first_entry > 0);
+      for (child_idx i = first_entry; i <= which; ++i) {
+        --entries[i]->idx;
+        entries[i-1] = entries[i];
+      }
+      --first_entry;
+      --which;
     }
-    ++last_entry;
-    assert (last_entry < bottom_level_node_size);
+    else {
+      for (child_idx i = last_entry; i > which; --i) {
+        ++entries[i]->idx;
+        entries[i+1] = entries[i];
+      }
+      ++last_entry;
+      assert (last_entry < bottom_level_node_size);
+    }
     if (after) {
       inserted_entry->idx = existing_entry->idx + 1;
       entries[which+1] = inserted_entry;
@@ -988,10 +1003,9 @@ struct bottom_level_node : public node_base {
 
 struct upper_level_node : public node_base {
   std::array<node_base*, 4> children;
-  child_idx first_child;
   
-  upper_level_node():node_base(),first_child(2){} // default-construct root node
-  upper_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_child(2){}
+  upper_level_node():node_base(){} // default-construct root node
+  upper_level_node(node_base* parent, child_idx which):node_base(parent, which),children({{}}){}
   bool child_can_push_front(child_idx which) {
     if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->can_push_front(); }
     else {                           return (( upper_level_node*)children[which])->can_push_front(); }
@@ -1025,14 +1039,15 @@ struct upper_level_node : public node_base {
     children[which] = nullptr;
   }
   idx_type first_half_entries() {
-    return (children[0] && children[0]->num_entries) + (children[1] && children[1]->num_entries);
+    return (children[0] ? children[0]->num_entries : 0) + (children[1] ? children[1]->num_entries : 0);
   }
   void push_front(entry_base* e) {
     ++num_entries;
-    if (first_child > 1) {
+    if (!(children[0] || children[1])) {
       create_child(1);
     }
-    if (child_can_push_front(1)) {
+    
+    if (children[1] && !children[0] && child_can_push_front(1)) {
       child_push_front(1, e);
     }
     else {
@@ -1050,7 +1065,6 @@ struct upper_level_node : public node_base {
     entry_base* result = child_pop_back(last_child);
     if (children[last_child]->empty()) {
       destroy_child(last_child);
-      --last_child;
     }
     return result;
   }
@@ -1058,9 +1072,32 @@ struct upper_level_node : public node_base {
     ++num_entries;
     const child_idx which = which_child(level, existing_entry->idx - beginning);
     if ((which < 2) && (first_half_entries() >= entry_cap(level-1))) {
-      const child_idx min_right_child = children[2] ? 2 : 3;
+      child_idx min_right_child;
+      if (!children[3]) {
+        assert (!children[2]);
+        create_child(3);
+        min_right_child = 3;
+      }
+      else if (child_can_push_front(3)) {
+        min_right_child = 3;
+      }
+      else {
+        if (!children[2]) {
+          create_child(2);
+        }
+        assert (child_can_push_front(2));
+        min_right_child = 2;
+      }
       const child_idx max_left_child = children[1] ? 1 : 0;
-      child_push_front(min_right_child, child_pop_back(max_left_child));
+      entry_base* moved = child_pop_back(max_left_child);
+      child_push_front(min_right_child, moved);
+      if (children[max_left_child]->empty()) {
+        destroy_child(max_left_child);
+      }
+      if (moved == existing_entry) {
+        // TODO
+        return;
+      }
     }
     if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert(inserted_entry, existing_entry, after); }
     else {                           return (( upper_level_node*)children[which])->insert(inserted_entry, existing_entry, after); }
