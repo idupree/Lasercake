@@ -814,6 +814,237 @@ using manual_orderer_impl::manual_orderer;
 #endif
 #else
 
+
+/*
+
+node implements:
+
+
+push_front [O(level) worst case] insert at the beginning; works only (half cap) times
+pop_back [O(level) worst case]
+insert_after: O(level^2) worst case insert anywhere, as long as entries < cap
+
+if we can get push_front and pop_back to be O(1) then the whole thing becomes O(log n)
+
+
+struct upper_level_node {
+  bool can_push_front() {
+    return !(children[0] && !children[0]->can_push_front());
+  }
+  void push_front(entry e) {
+    if (!children[1]) {
+      create children[1];
+    }
+    if (children[1]->can_push_front()) {
+      children[1]->push_front(e);
+    }
+    else {
+      if (!children[0]) {
+        create children[0];
+      }
+      assert (children[0]->can_push_front());
+      children[0]->push_front(e);
+    }
+  }
+  entry pop_back() {
+    entry result = children[last_child]->pop_back();
+    if (children[last_child]->empty()) {
+      destroy children[last_child];
+      --last_child;
+    }
+    return result;
+  }
+  void insert_after(inserted, relative_to) {
+    child_idx which = TODO;
+    if ((which < 2) && (children[0]->entries + children[1]->entries >= entry_cap(level-1))) {
+      first of the last two children.push_front(last of the first two children.pop_back());
+    }
+    children[which].insert_after(inserted, relative_to);
+  }
+};
+
+struct bottom_level_node {
+  bool can_push_front() {
+    return !entries[0];
+  }
+  void push_front(entry e) {
+    --first_entry;
+    entries[first_entry] = e;
+    e.idx = entry_0_idx + first_entry;
+  }
+  entry pop_back() {
+    entry result = entries[last_entry];
+    entries[last_entry] = null;
+    --last_entry;
+    return result;
+  }
+  void insert_after(inserted, relative_to) {
+    child_idx which = relative_to->idx - entry_0_idx;
+    for (child_idx i = last_entry; i > which; --i) {
+      ++entries[i]->idx;
+      entries[i+1] = entries[i];
+    }
+    ++last_entry;
+    inserted->idx = relative_to->idx + 1;
+    entries[which+1] = inserted;
+  }
+};
+
+ */
+
+
+
+const uint32_t bottom_level_node_size = 16;
+const uint32_t bottom_level = 1;
+
+
+struct node_base {
+  uint32_t level;
+  uint64_t entries;
+  idx_type beginning;
+  node_base(node_base* parent, child_idx which_child):level(parent->level - 1),entries(0),beginning(parent->beginning + node_size(level) * which_child) {}
+  bool empty() {
+    return entries == 0;
+  }
+};
+
+struct upper_level_node {
+  std::array<node_base*, 4> children;
+  child_idx first_child;
+  child_idx last_child;
+  
+  bottom_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_child(2),last_child(4){}
+  bool can_push_front() {
+    if (!children[0]) { return true; }
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[0])->can_push_front(); }
+    else {                           return (( upper_level_node*)children[0])->can_push_front(); }
+  }
+  void create_child(child_idx which) {
+    assert (!children[which]);
+    if (level - 1 == bottom_level) { children[which] = new bottom_level_node(this, which); }
+    else {                           children[which] = new  upper_level_node(this, which); }
+  }
+  void destroy_child(child_idx which) {
+    assert (children[which]);
+    delete children[which];
+    children[which] = nullptr;
+  }
+  uint64_t first_half_entries() {
+    return (children[0] && children[0]->entries) + (children[1] && children[1]->entries);
+  }
+  void push_front(entry_base* e) {
+    ++entries;
+    if (first_child > 1) {
+      create_child(1);
+    }
+    if (children[1]->can_push_front()) {
+      children[1]->push_front(e);
+    }
+    else {
+      if (!children[0]) {
+        create_child(0);
+      }
+      assert (children[0]->can_push_front());
+      children[0]->push_front(e);
+    }
+  }
+  entry_base* pop_back() {
+    --entries;
+    entry_base* result = children[last_child]->pop_back();
+    if (children[last_child]->empty()) {
+      destroy_child(last_child);
+      --last_child;
+    }
+    return result;
+  }
+  void insert_after(entry_base* inserted, entry_base* relative_to) {
+    ++entries;
+    const child_idx which = which_child(level, relative_to->idx - beginning);
+    if ((which < 2) && (first_half_entries() >= entry_cap(level-1))) {
+      const child_idx min_right_child = children[2] ? 2 : 3;
+      const child_idx max_left_child = children[1] ? 1 : 0;
+      min_right_child.push_front(max_left_child.pop_back());
+    }
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert_after(inserted, relative_to); }
+    else {                           return (( upper_level_node*)children[which])->insert_after(inserted, relative_to); }
+  }
+};
+
+struct bottom_level_node {
+  std::array<entry_base*, bottom_level_node_size> entries;
+  child_idx first_entry;
+  child_idx last_entry;
+  
+  bottom_level_node(node_base* parent, child_idx which_child):node_base(parent, which_child),first_entry((bottom_level_node_size>>1)+1),last_entry(bottom_level_node_size>>1){}
+  
+  bool can_push_front() {
+    return !entries[0];
+  }
+  void push_front(entry_base* e) {
+    ++entries;
+    --first_entry;
+    entries[first_entry] = e;
+    e->idx = beginning + first_entry;
+  }
+  entry_base* pop_back() {
+    --entries;
+    entry_base* result = entries[last_entry];
+    entries[last_entry] = nullptr;
+    --last_entry;
+    return result;
+  }
+  void insert_after(entry_base* inserted, entry_base* relative_to) {
+    ++entries;
+    child_idx which = relative_to->idx - beginning;
+    for (child_idx i = last_entry; i > which; --i) {
+      ++entries[i]->idx;
+      entries[i+1] = entries[i];
+    }
+    ++last_entry;
+    assert (last_entry < bottom_level_node_size);
+    inserted->idx = relative_to->idx + 1;
+    entries[which+1] = inserted;
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 namespace manual_orderer_impl {
   
 typedef uint64_t idx_type;
