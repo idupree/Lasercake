@@ -824,7 +824,10 @@ push_front [O(level) worst case] insert at the beginning; works only (half cap) 
 pop_back [O(level) worst case]
 insert_after: O(level^2) worst case insert anywhere, as long as entries < cap
 
-if we can get push_front and pop_back to be O(1) then the whole thing becomes O(log n)
+if we can get push_front and pop_back to be O(1) then the whole thing becomes O(log n).
+The reason to seek this particular improvement:
+This algorithm already achieves O(log n) *index changes* per insert.
+The pop_back-into-push_front operation only changes one index.
 
 
 struct upper_level_node {
@@ -893,22 +896,49 @@ struct bottom_level_node {
  */
 
 
+namespace manual_orderer_impl {
 
-const uint32_t bottom_level_node_size = 16;
+typedef uint64_t idx_type;
+const idx_type no_idx = std::numeric_limits<idx_type>::max();
+struct entry_base {
+  entry_base():idx(no_idx),ref_count(0){}
+  idx_type idx;
+  size_t ref_count;
+};
+
+template<typename ValueType>
+struct entry : public entry_base {
+  template <class... Args>
+  entry(Args&&... args):entry_base(),contents(std::forward<Args>(args)...){}
+  ValueType contents;
+};
+
+
+// TODO abstract more of this (e.g. references to "64")
+const uint32_t bottom_level_node_bits = 4;
+const idx_type bottom_level_node_size = (idx_type(1) << bottom_level_node_bits);
 const uint32_t bottom_level = 1;
-
+constexpr idx_type entry_cap(uint32_t level) {
+  return bottom_level_node_size << (level - bottom_level);
+}
+constexpr idx_type node_size(uint32_t level) {
+  return bottom_level_node_size << ((level - bottom_level) * 2);
+}
+const uint32_t max_level = bottom_level + ((64 - bottom_level_node_bits) >> 1);
 
 struct node_base {
   uint32_t level;
-  uint64_t entries;
+  idx_type entries;
   idx_type beginning;
+  // default-construct root node
+  node_base():level(max_level),entries(0),beginning(0) {}
   node_base(node_base* parent, child_idx which_child):level(parent->level - 1),entries(0),beginning(parent->beginning + node_size(level) * which_child) {}
   bool empty() {
     return entries == 0;
   }
 };
 
-struct upper_level_node {
+struct upper_level_node : public node_base {
   std::array<node_base*, 4> children;
   child_idx first_child;
   child_idx last_child;
@@ -926,10 +956,17 @@ struct upper_level_node {
   }
   void destroy_child(child_idx which) {
     assert (children[which]);
+    assert (children[which]->empty());
+    if (level - 1 == bottom_level) {}
+    else {
+      for (child_idx i = 0; i < 4; ++i) {
+        assert (!(( upper_level_node*)children[which])->children(i));
+      }
+    }
     delete children[which];
     children[which] = nullptr;
   }
-  uint64_t first_half_entries() {
+  idx_type first_half_entries() {
     return (children[0] && children[0]->entries) + (children[1] && children[1]->entries);
   }
   void push_front(entry_base* e) {
@@ -957,20 +994,20 @@ struct upper_level_node {
     }
     return result;
   }
-  void insert_after(entry_base* inserted, entry_base* relative_to) {
+  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     ++entries;
-    const child_idx which = which_child(level, relative_to->idx - beginning);
+    const child_idx which = which_child(level, existing_entry->idx - beginning);
     if ((which < 2) && (first_half_entries() >= entry_cap(level-1))) {
       const child_idx min_right_child = children[2] ? 2 : 3;
       const child_idx max_left_child = children[1] ? 1 : 0;
       min_right_child.push_front(max_left_child.pop_back());
     }
-    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert_after(inserted, relative_to); }
-    else {                           return (( upper_level_node*)children[which])->insert_after(inserted, relative_to); }
+    if (level - 1 == bottom_level) { return ((bottom_level_node*)children[which])->insert_after(inserted_entry, existing_entry, after); }
+    else {                           return (( upper_level_node*)children[which])->insert_after(inserted_entry, existing_entry, after); }
   }
 };
 
-struct bottom_level_node {
+struct bottom_level_node : public node_base {
   std::array<entry_base*, bottom_level_node_size> entries;
   child_idx first_entry;
   child_idx last_entry;
@@ -993,21 +1030,131 @@ struct bottom_level_node {
     --last_entry;
     return result;
   }
-  void insert_after(entry_base* inserted, entry_base* relative_to) {
+  void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     ++entries;
-    child_idx which = relative_to->idx - beginning;
+    child_idx which = existing_entry->idx - beginning;
     for (child_idx i = last_entry; i > which; --i) {
       ++entries[i]->idx;
       entries[i+1] = entries[i];
     }
     ++last_entry;
     assert (last_entry < bottom_level_node_size);
-    inserted->idx = relative_to->idx + 1;
-    entries[which+1] = inserted;
+    if (after) {
+      inserted_entry->idx = existing_entry->idx + 1;
+      entries[which+1] = inserted_entry;
+    }
+    else {
+      inserted_entry->idx = existing_entry->idx;
+      existing_entry->idx = existing_entry->idx + 1;
+      entries[which] = inserted_entry;
+      entries[which+1] = existing_entry;
+    }
   }
 };
 
+template<typename ValueType>
+struct NoDecRefCallback { void operator()(ValueType&, size_t)const{} };
 
+template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>> class manual_orderer;
+
+template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>>
+struct manually_orderable {
+public:
+  template <class... Args>
+  static manually_orderable construct(Args&&... args) {
+    return manually_orderable(new entry<ValueType>(std::forward<Args>(args)...));
+  }
+  manually_orderable():data(nullptr){}
+  manually_orderable(manually_orderable const& o):data(o.data) { inc_ref(); }
+  
+  bool operator< (manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <  o.data->idx;
+  }
+  bool operator> (manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >  o.data->idx;
+  }
+  bool operator<=(manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx <= o.data->idx;
+  }
+  bool operator>=(manually_orderable const& o)const {
+    caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
+    return data->idx >= o.data->idx;
+  }
+  bool operator==(manually_orderable const& o)const { return data == o.data; }
+  bool operator!=(manually_orderable const& o)const { return data != o.data; }
+  explicit operator bool()const { return bool(data); }
+  ValueType& operator*()const { return data->contents; }
+  ValueType* operator->()const { return &data->contents; }
+  manually_orderable& operator=(manually_orderable const& o) {
+    o.inc_ref(); // do this before dec_ref in case lhs and rhs are the same object
+    dec_ref();
+    data = o.data;
+    return *this;
+  }
+  ~manually_orderable() { dec_ref(); }
+private:
+  void inc_ref()const {
+    if (data) { ++data->ref_count; }
+  }
+  void dec_ref() {
+    if (data) {
+      DecRefCallback()(data->contents, data->ref_count);
+      if (data) {
+        --data->ref_count;
+      }
+    }
+  }
+  explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
+  entry<ValueType>* data;
+  friend struct std::hash<manually_orderable>;
+  friend class manual_orderer<ValueType, DecRefCallback>;
+};
+
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by manually_orderable instead of the object itself.
+template<typename ValueType, class DecRefCallback>
+class manual_orderer : public manual_orderer_base {
+private:
+  upper_level_node* root;
+public:
+  typedef manually_orderable<ValueType, DecRefCallback> entry_ref;
+
+  // put_only puts the first object in the ordering; you can't use it
+  // after it's been called once
+  void put_only(entry_ref m) {
+    root.push_front(m.data);
+  }
+
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just prior to relative_to.
+  void put_before(entry_ref moving, entry_ref relative_to) {
+    root.insert(moving.data, relative_to.data, false);
+  }
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering just after relative_to.
+  void put_after(entry_ref moving, entry_ref relative_to) {
+    root.insert(moving.data, relative_to.data, true);
+  }
+};
+} // end namespace manual_orderer_impl
+
+namespace std {
+  template<typename ValueType, class DecRefCallback>
+  struct hash<typename manual_orderer_impl::manually_orderable<ValueType, DecRefCallback>> {
+    public:
+    size_t operator()(manual_orderer_impl::manually_orderable<ValueType, DecRefCallback> const& i)const {
+      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
+      return std::hash<decltype(i.data)>()(i.data);
+    }
+  };
+}
+
+using manual_orderer_impl::manual_orderer;
 
 
 
