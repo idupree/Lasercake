@@ -893,6 +893,104 @@ struct bottom_level_node {
   }
 };
 
+
+
+bool space_count_acceptable(int64_t space, int64_t count) {
+  return count <= space;
+}
+
+struct upper_level_node {
+  std::array<node_base*, upper_level_node_max_children> children;
+  struct roller_ref {
+    roller* r;
+    int64_t initial_delta;
+    int64_t delta() { return r->delta - initial_delta; }
+    roller* operator->() { return r; }
+  }
+  std::array<roller_ref, 2> end_rollers;
+  std::array<roller_ref, 2> gap_rollers;
+  std::array<int64_t, 2> count_before_rollers;
+  int64_t space(bool side) {
+    return initial_space()            + end_rollers[side].delta() * (side ? -1 : 1);
+  }
+  int64_t count(bool side) {
+    return count_before_rollers[side] + (end_rollers[side].delta() - gap_rollers[side].delta()) * (side ? 1 : -1);
+  }
+  void move_gap(bool towards_side) {
+    gap_rollers[!towards_side]->push(gap_rollers[towards_side]->pop());
+  }
+  entry_ref* pop(bool towards_side) {
+    return end_rollers[towards_side]->pop();
+  }
+  void push(entry_ref* pushed, bool towards_side) {
+    end_rollers[towards_side]->push(pushed);
+  }
+  entry_ref* push_and_if_needed_pop(entry_ref* pushed, bool towards_side) {
+    validate();
+    entry_ref* popped = nullptr;
+    if (entries() >= cap()) {
+      popped = pop(towards_side);
+    }
+    while (space_count_acceptable(space(!towards_side)-1, count(!towards_side)+1)) {
+      move_gap(!towards_side);
+    }
+    push(pushed, !towards_side);
+    validate();
+    return popped;
+  }
+  entry_ref* insert_and_if_needed_pop(entry_ref* inserted, entry_ref* relative_to, bool towards_side) {
+    validate();
+    int32_t dir = towards_side ? 1 : -1;
+    child_idx which = which_child(level, existing_entry->idx - beginning);
+    bool side_inserted_on = TODO;
+    entry_ref* popped_here = nullptr;
+    if (entries() >= cap() || !space_count_acceptable(space(towards_side)-1, count(towards_side)+1)) {
+      popped_here = pop(towards_side);
+    }
+    
+    int64_t count_before_lower_insert = count(towards_side);
+    entry_ref* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to);
+    while (popped_below) {
+      which += dir;
+      assert (which >= 0);
+      assert (which < upper_level_node_max_children);
+      if (!children[which]) {
+        create_child(which);
+        TODO mess with the rollers;
+      }
+      if (which == 0 || which+1 == upper_level_node_max_children) {
+        if (space(towards_side) == 0) {
+          assert (!popped_here);
+          popped_here = pop(towards_side);
+        }
+      }
+      popped_below = children[which].push_and_if_needed_pop(popped_below, side_inserted_on);
+    }
+    int64_t assumed_count_after_lower_insert = count(towards_side);
+    if (assumed_count_after_lower_insert == count_before_lower_insert) {
+      ++count_before_rollers[side_inserted_on];
+    }
+    else {
+      assert (assumed_count_after_lower_insert == count_before_lower_insert + 1)
+    }
+    balance();
+    validate();
+    return popped_here;
+  }
+  void balance() {
+    for (int i = 0; i < 2; ++i) {
+      while (!space_count_acceptable(space(i), count(i))) {
+        move_gap(i);
+      }
+    }
+  }
+  void validate() {
+    assert (entries() <= cap());
+    for (int i = 0; i < 2; ++i) {
+      assert (space_count_acceptable(space(i), count(i)));
+    }
+  }
+};
  */
 
 
