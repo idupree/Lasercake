@@ -894,6 +894,88 @@ struct bottom_level_node {
 };
 
 
+node implements:
+
+push(): O(1) amortized push at either end, usable only when the node is not full
+pop(): O(1) amortized pop at either end
+push_and_if_needed_pop(): O(1) amortized push at either end and, if full, pop at the other end
+insert_and_if_needed_pop(): O(level) amortized insert anywhere and, if full, pop at a given end
+
+Each node keeps track of how much "capacity" it has at each end, meaning the number of times you can push()
+  at that end. push() always reduces that capacity by 1, and pop() always increases that capacity by 1.
+Naturally, each capacity must be <= (max entries - current entries).
+The other thing that determines capacity is the "space" at each end. Our clever algorithms will ensure that
+  there is enough space for the above <= to always be ==.
+
+an upper_level_node consists of upper_level_node_max_children (potential) children (11 as illustrated).
+Some exist, some don't. e.g.
+...CCCCC...
+Each child has no more than its own maximum entries in it, and may have less.
+There may be a gap in the middle.
+...CCC.CC..
+The children bounding the gap (G below) obey an additional rule.
+...CCG.GC..
+The left G's right-capacity and the right G's left-capacity must *total* at least one child's max entries.
+Thus, when the gap has moved all the way to the (e.g. right) end,
+  the right G has (left-capacity == max entries) and therefore is empty.
+...CCC..C..
+Effectively, this gap is always upper_level_node_gap_length_in_children (2 as illustrated) children long.
+  The length isn't usually very concrete, but at the moment when it empties a child, it is.
+  Thus, when the gap reaches the end of all the children, we know that the proper number of
+  right-end children of this whole node (_ below) are empty.
+...CCCC..__
+If there's no gap, jkdjfdkf
+In some sense, every time we move the gap all the way across, we earn that much space at the end.
+  This costs (capacity) operations and produces (child capacity * gap length in children) units of space,
+  so it produces units of space at a cost of
+  ((capacity / child capacity) / gap length in children) operations per unit, which is a constant.
+  The only difficulty is that this requires us to always be able to move the gap using the O(1) push().
+
+push_and_if_needed_pop() is never used in Gs.
+if insert_and_if_needed_pop() is used in a G, it may need a special restriction (e.g. no reducing left-capacity).
+  
+from the middle
+LLLLLLLLRRRRRRRR
+we can push() all the way up to max entries (here 4 children)
+........EEEE....
+or less (partially filled child)
+........EEEe....
+Now we might need to insert any number of times at e without reducing right-capacity(!)
+for the num-entries condition, we pop at the left
+for the space condition, good thing we have (L)eeway
+........EEEeLLLL
+push() can't move gaps, but insert can. so we start a gap that will get across before we fill the leeway
+....ggggEEEeLLLL
+....,EggggEEeLLL
+....,.EEggggEeLL
+....,..EEEggggeL
+....,...EEEegggg
+here, gggg is the new leeway, problem solved. we lose one unit of space each insert, but
+the right-space never goes below (max entries - entries). the moment it reaches that amount,
+the gap has arrived.
+RULE: Gap distance to right end <= (right-space - (max entries - entries)) * (gap speed constant)
+thus, when right-space == (max entries - entries), gap distance to right end == 0.
+push() reduces right-space but also reduces (max entries - entries), so it doesn't need to do any extra work to obey this rule.
+only insert, which might not be allowed to reduce (max entries - entries), does.
+It looks like gap length and starting leeway length should be the same.
+We can make them shorter at the cost of needing to move the gap more often / at a higher speed.
+  ( in RULE: Gap distance to right end <= (right-space - (max entries - entries)) * (gap speed constant),
+    right-space starts at gap length and the gap starts all the way to the left, so
+    max entries <= (gap length - 0) * (gap speed constant)
+    gap speed constant >= max entries / gap length )
+push_and_if_needed_pop is like insert - it's allowed to move the gap.
+
+
+space efficiency = log2 (num full children) / (log2 ((num full children + num gap children) * 2))
+gap speed = num full children / num gap children
+base movement cost = num full children
+I think
+  (16 full children + 4 gap children) * 2 sides
+  at each level is a good number to start out with.
+  (level N+1 nodes have 16 times as many entries and take up 40 times as much space)
+  It gives us a total capacity of 2^48, which is plenty, and an OK speed compromise.
+
+
 
 bool space_count_acceptable(int64_t space, int64_t count) {
   return count <= space;
@@ -903,21 +985,38 @@ struct upper_level_node {
   std::array<node_base*, upper_level_node_max_children> children;
   struct roller_ref {
     roller* r;
-    int64_t initial_delta;
-    int64_t delta() { return r->delta - initial_delta; }
+    int64_t initial_net_pushes;
+    int64_t net_pushes() { return r->net_pushes - initial_net_pushes; }
     roller* operator->() { return r; }
+    explicit operator bool() { return bool(r); }
   }
   std::array<roller_ref, 2> end_rollers;
   std::array<roller_ref, 2> gap_rollers;
   std::array<int64_t, 2> count_before_rollers;
   int64_t space(bool side) {
-    return initial_space()            + end_rollers[side].delta() * (side ? -1 : 1);
+    return initial_space() - end_rollers[side].net_pushes();
   }
   int64_t count(bool side) {
-    return count_before_rollers[side] + (end_rollers[side].delta() - gap_rollers[side].delta()) * (side ? 1 : -1);
+    if (!gap_rollers[false]) { return entries; }
+    return count_before_rollers[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
   }
   void move_gap(bool towards_side) {
+    if (!gap_rollers[false]) {
+      assert (!gap_rollers[true]);
+      int64_t old_net_pushes = end_rollers[!towards_side].net_pushes();
+      gap_rollers[towards_side].r = end_rollers[!towards_side].r;
+      gap_rollers[towards_side].initial_net_pushes = 0;
+      gap_rollers[!towards_side] = TODO;
+      end_rollers[!towards_side].r = TODO;
+      end_rollers[!towards_side].initial_net_pushes = TODO ?? end_rollers[!towards_side]->net_pushes - old_net_pushes;
+      count_before_rollers[false] = count_before_rollers[true] = 0; // TODO ?
+    }
     gap_rollers[!towards_side]->push(gap_rollers[towards_side]->pop());
+    if (count(towards_side) == 0) {
+      end_rollers[towards_side].r = gap_rollers[!towards_side].r;
+      end_rollers[towards_side].initial_net_pushes = TODO;
+      gap_rollers[false].r = gap_rollers[true].r = nullptr;
+    }
   }
   entry_ref* pop(bool towards_side) {
     return end_rollers[towards_side]->pop();
