@@ -23,6 +23,7 @@
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
 #include <list>
+#define WORST_CASE_MANUAL_ORDERER
 #define NEW_AMORTIZED_MANUAL_ORDERER
 
 #ifndef WORST_CASE_MANUAL_ORDERER
@@ -976,10 +977,55 @@ I think
   It gives us a total capacity of 2^48, which is plenty, and an OK speed compromise.
 
 
+const int64_t max_full_children = 16;
+const int64_t gap_length_in_children = 4;
+const int64_t num_potential_children = (max_full_children + gap_length_in_children) * 2;
 
-bool space_count_acceptable(int64_t space, int64_t count) {
-  return count <= space;
-}
+// The higher gap_speed is, the lower the average time (by a little).
+// The only reason to lower it is to keep down the worst case time.
+const int64_t gap_speed = 128; 
+static_assert (gap_speed >= max_full_children / gap_length_in_children);
+
+
+One tricky bit: All nodes need to know how many entries are in them,
+but push(), which must be O(1), adds an entry to a bottom level node, and its
+parent, and its parent, and so forth. Keeping an entries variable in each
+would make push() and pop() be O(log n).
+
+Instead, we keep a "roller" structure at each location that *can* be pushed/popped.
+Nodes keep pointers to the rollers they use, and when you do a push at a roller,
+it increments the roller's "net_pushes" variable. Nodes compute their number of entries
+by summing up the net_pushes of their rollers (along with some other stuff).
+
+struct roller {
+  bottom_level_node* b;
+  bool side;
+  int64_t net_pushes;
+  
+  void push(entry_base* e) {
+    ++net_pushes;
+    if (!b->full()) {
+      b->push(e);
+    }
+    else {
+      upper_level_node *u = b->parent;
+      // If this roller is used by more than one node, we need to split it: the bottom level node
+      //   (and any other node we're rolling out of) gets its own copy.
+      // If this roller is only being used by the bottom level node, no need to discard and recreate it
+      // TODO this code is kinda wrong, rethink it
+      if ((u->end_rollers[side] == this) || (u->gap_rollers[!side] == this)) {
+        roller* new_roller = new roller(*this);
+        assert (b->end_rollers[side] == this);
+        b->end_rollers[side] = new_roller;
+        upper_level_node up = u->parent;
+        while (u->full()) {
+          if 
+        }
+      }
+    }
+  }
+};
+
 
 struct upper_level_node {
   std::array<node_base*, upper_level_node_max_children> children;
@@ -993,12 +1039,17 @@ struct upper_level_node {
   std::array<roller_ref, 2> end_rollers;
   std::array<roller_ref, 2> gap_rollers;
   std::array<int64_t, 2> count_before_rollers;
-  int64_t space(bool side) {
+  int64_t space(bool side)const {
     return initial_space() - end_rollers[side].net_pushes();
   }
-  int64_t count(bool side) {
+  int64_t count(bool side)const {
     if (!gap_rollers[false]) { return entries; }
     return count_before_rollers[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
+  }
+  
+  int64_t remaining_capacity()const { return max_entries() - entries(); }
+  bool space_count_acceptable(int64_t space, int64_t count)const {
+    return count <= (space - remaining_capacity()) * gap_speed;
   }
   void move_gap(bool towards_side) {
     if (!gap_rollers[false]) {
@@ -1018,15 +1069,15 @@ struct upper_level_node {
       gap_rollers[false].r = gap_rollers[true].r = nullptr;
     }
   }
-  entry_ref* pop(bool towards_side) {
+  entry_base* pop(bool towards_side) {
     return end_rollers[towards_side]->pop();
   }
-  void push(entry_ref* pushed, bool towards_side) {
+  void push(entry_base* pushed, bool towards_side) {
     end_rollers[towards_side]->push(pushed);
   }
-  entry_ref* push_and_if_needed_pop(entry_ref* pushed, bool towards_side) {
+  entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) {
     validate();
-    entry_ref* popped = nullptr;
+    entry_base* popped = nullptr;
     if (entries() >= cap()) {
       popped = pop(towards_side);
     }
@@ -1037,18 +1088,18 @@ struct upper_level_node {
     validate();
     return popped;
   }
-  entry_ref* insert_and_if_needed_pop(entry_ref* inserted, entry_ref* relative_to, bool towards_side) {
+  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool towards_side) {
     validate();
     int32_t dir = towards_side ? 1 : -1;
     child_idx which = which_child(level, existing_entry->idx - beginning);
     bool side_inserted_on = TODO;
-    entry_ref* popped_here = nullptr;
+    entry_base* popped_here = nullptr;
     if (entries() >= cap() || !space_count_acceptable(space(towards_side)-1, count(towards_side)+1)) {
       popped_here = pop(towards_side);
     }
     
     int64_t count_before_lower_insert = count(towards_side);
-    entry_ref* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to);
+    entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to);
     while (popped_below) {
       which += dir;
       assert (which >= 0);
