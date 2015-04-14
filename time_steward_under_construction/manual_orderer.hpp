@@ -1003,32 +1003,209 @@ struct roller {
   int64_t net_pushes;
   
   void push(entry_base* e) {
-    ++net_pushes;
     if (!b->full()) {
+      ++net_pushes;
       b->push(e);
     }
     else {
       upper_level_node *u = b->parent;
-      // If this roller is used by more than one node, we need to split it: the bottom level node
-      //   (and any other node we're rolling out of) gets its own copy.
-      // If this roller is only being used by the bottom level node, no need to discard and recreate it
-      // TODO this code is kinda wrong, rethink it
-      if ((u->end_rollers[side] == this) || (u->gap_rollers[!side] == this)) {
-        roller* new_roller = new roller(*this);
-        assert (b->end_rollers[side] == this);
-        b->end_rollers[side] = new_roller;
-        upper_level_node up = u->parent;
-        while (u->full()) {
-          if 
+      // This roller is used by more than one node. We need to split it: the bottom level node
+      //   (and any other node we're rolling out of) gets the new one, and the upper level ones keep the old one.
+      // (It has to be that way because there are amortized O(1) nodes below and amortized O(log n) above.)
+      // (If this roller was only being used by the bottom level node, that would mean we tried to push
+      //   into a full node, which is forbidden.)
+      roller* new_self = new roller(this);
+      new_self->b = new bottom_level_node();
+      ++new_self->net_pushes;
+      
+      bool any_transitioned = false;
+      bool any_kept = false;
+      
+      while (true) {
+        if (u->gap_rollers[!side] == this) {
+          any_kept = true;
+          break;
         }
+        else if ((u->end_rollers[side] == this) && !u->full()) {
+          any_kept = true;
+          break;
+        }
+        else if (u->end_rollers[side] == this) {
+          any_transitioned = true;
+          u->end_rollers[side] = new_self;
+        }
+        else {
+          // there will be a keep before we ascend past where this roller is used
+          assert (false);
+        }
+        upper_level_node up = u->parent;
+        if (!up) {
+          // TODO what exactly to do at the top
+          break;
+        }
+        u = up;
       }
+      
+      assert (any_transitioned);
+      assert (any_kept);
+    }
+  }
+  void pop() {
+    --net_pushes;
+    if (!b->empty()) {
+      return b->pop(e);
+    }
+    else {
+      upper_level_node *u = b->parent;
+      // We need to destroy its current bottom_level_node
+      delete b;
+      // and put it into the next bottom_level_node. Meanwhile, any node
+      // using the next bottom_level_node's current roller must have that roller
+      // replaced with this one.
     }
   }
 };
 
+struct bottom_level_node {
+  std::array<entry_base*, num_potential_children> entries;
+  std::array<child_idx, 2> end_indices;
+  std::array<child_idx, 2> gap_indices;
+  idx_type first_idx;
+  
+  int64_t space(bool side)const {
+    return (side ? (num_potential_children-1) : 0) - end_indices[side];
+  }
+  int64_t entries()const {
+    if (gap_indices[false] == child_idx(-1)) { return end_indices[true] - end_indices[false] + 1; }
+    return end_indices[true] - gap_indices[true] + gap_indices[false] - end_indices[false] + 2;
+  }
+  int64_t count(bool side)const {
+    if (gap_indices[false] == child_idx(-1)) { return entries(); }
+    if (side) { return end_indices[ true] - gap_indices[ true] + 1; }
+    else      { return gap_indices[false] - end_indices[false] + 1; }
+  }
+  
+  int64_t remaining_capacity()const { return max_entries() - entries(); }
+  bool space_count_acceptable(int64_t space, int64_t count)const {
+    // TODO reduce duplicate definitions ID kbvckyQqw3xcz
+    return count <= (space - remaining_capacity()) * gap_speed;
+  }
+  void move_gap(bool towards_side) {
+    int64_t dir = towards_side ? 1 : -1;
+    if (gap_indices[false] == child_idx(-1)) {
+      assert (gap_indices[true] == child_idx(-1));
+      if (end_indices[true] == end_indices[false]) {
+        child_idx i = end_indices[!towards_side];
+        entry_base* e = entries[i];
+        entries[i] = nullptr;
+        e->idx = first_idx + (num_potential_children / 2);
+        entries[e->idx] = e;
+        end_indices[true] = e;
+        end_indices[false] = e;
+      }
+      else {
+        assert (space_count_acceptable(space[!towards_side] - gap_length_in_children), 1);
+        child_idx i = end_indices[!towards_side];
+        entry_base* e = entries[i];
+        entries[i] = nullptr;
+        e->idx -= gap_length_in_children * dir;
+        entries[e->idx] = e;
+        end_indices[!towards_side] = e->idx;
+        gap_indices[!towards_side] = e->idx;
+        gap_indices[towards_side] = i+dir;
+      }
+    }
+    else {
+      child_idx i = gap_indices[towards_side];
+      entry_base* e = entries[i];
+      entries[i] = nullptr;
+      e->idx -= gap_length_in_children * dir;
+      entries[e->idx] = e;
+      if (i != end_indices[towards_side]) {
+        gap_indices[!towards_side] = e->idx;
+        gap_indices[towards_side] = i+dir;
+      }
+      else {
+        end_indices[towards_side] = e->idx;
+        gap_indices[false] = gap_indices[true] = child_idx(-1);
+      }
+    }
+  }
+  entry_base* pop(bool towards_side) {
+    int64_t dir = towards_side ? 1 : -1;
+    child_idx i = end_indices[towards_side];
+    entry_base* e = entries[i];
+    entries[i] = nullptr;
+    if (end_indices[towards_side] == gap_indices[towards_side]) {
+      end_indices[towards_side] = gap_indices[!towards_side];
+      gap_indices[false] = gap_indices[true] = child_idx(-1);
+    }
+    else {
+      end_indices[towards_side] -= dir;
+    }
+    return e;
+  }
+  void push(entry_base* pushed, bool towards_side) {
+    int64_t dir = towards_side ? 1 : -1;
+    end_indices[towards_side] += dir;
+    entries[end_indices[towards_side]] = pushed;
+    validate();
+  }
+  entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) {
+    // TODO reduce duplicate definitions ID kbvckyQqw3xcz
+    validate();
+    entry_base* popped = nullptr;
+    if (entries() >= max_entries()) {
+      popped = pop(towards_side);
+    }
+    while (space_count_acceptable(space(!towards_side)-1, count(!towards_side)+1)) {
+      move_gap(!towards_side);
+    }
+    push(pushed, !towards_side);
+    validate();
+    return popped;
+  }
+  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool towards_side) {
+    validate();
+    int64_t dir = towards_side ? 1 : -1;
+    child_idx which = relative_to->idx - first_idx;
+    bool side_inserted_on;
+    if (gap_indices[false] == child_idx(-1)) {
+      side_inserted_on = space(true) > space(false);
+    }
+    else {
+      side_inserted_on = relative_to->idx > gap_indices[false];
+    } 
+    entry_base* popped_here = nullptr;
+    if (entries() >= max_entries()) { // TODO gap border restriction
+      popped_here = pop(towards_side);
+    }
+    
+    for (child_idx ) {
+    }
+    
+    balance();
+    validate();
+    return popped_here;
+  }
+  void balance() {
+    for (int i = 0; i < 2; ++i) {
+      while (!space_count_acceptable(space(i), count(i))) {
+        move_gap(i);
+      }
+    }
+  }
+  void validate() {
+    assert (entries() <= max_entries());
+    for (int i = 0; i < 2; ++i) {
+      assert (space_count_acceptable(space(i), count(i)));
+    }
+  }
+  
+}
 
 struct upper_level_node {
-  std::array<node_base*, upper_level_node_max_children> children;
+  std::array<node_base*, num_potential_children> children;
   struct roller_ref {
     roller* r;
     int64_t initial_net_pushes;
@@ -1049,6 +1226,7 @@ struct upper_level_node {
   
   int64_t remaining_capacity()const { return max_entries() - entries(); }
   bool space_count_acceptable(int64_t space, int64_t count)const {
+    // TODO reduce duplicate definitions ID kbvckyQqw3xcz
     return count <= (space - remaining_capacity()) * gap_speed;
   }
   void move_gap(bool towards_side) {
@@ -1076,9 +1254,10 @@ struct upper_level_node {
     end_rollers[towards_side]->push(pushed);
   }
   entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) {
+    // TODO reduce duplicate definitions ID kbvckyQqw3xcz
     validate();
     entry_base* popped = nullptr;
-    if (entries() >= cap()) {
+    if (entries() >= max_entries()) {
       popped = pop(towards_side);
     }
     while (space_count_acceptable(space(!towards_side)-1, count(!towards_side)+1)) {
@@ -1091,10 +1270,10 @@ struct upper_level_node {
   entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool towards_side) {
     validate();
     int32_t dir = towards_side ? 1 : -1;
-    child_idx which = which_child(level, existing_entry->idx - beginning);
+    child_idx which = which_child(level, relative_to->idx - beginning);
     bool side_inserted_on = TODO;
     entry_base* popped_here = nullptr;
-    if (entries() >= cap() || !space_count_acceptable(space(towards_side)-1, count(towards_side)+1)) {
+    if (entries() >= max_entries()) { // TODO gap border restriction
       popped_here = pop(towards_side);
     }
     
@@ -1135,7 +1314,7 @@ struct upper_level_node {
     }
   }
   void validate() {
-    assert (entries() <= cap());
+    assert (entries() <= max_entries());
     for (int i = 0; i < 2; ++i) {
       assert (space_count_acceptable(space(i), count(i)));
     }
