@@ -1091,7 +1091,7 @@ struct bottom_level_node {
     return count <= (space - remaining_capacity()) * gap_speed;
   }
   void move_gap(bool towards_side) {
-    int64_t dir = towards_side ? 1 : -1;
+    const int64_t dir = towards_side ? 1 : -1;
     if (gap_indices[false] == child_idx(-1)) {
       assert (gap_indices[true] == child_idx(-1));
       if (end_indices[true] == end_indices[false]) {
@@ -1132,7 +1132,7 @@ struct bottom_level_node {
     }
   }
   entry_base* pop(bool towards_side) {
-    int64_t dir = towards_side ? 1 : -1;
+    const int64_t dir = towards_side ? 1 : -1;
     child_idx i = end_indices[towards_side];
     entry_base* e = entries[i];
     entries[i] = nullptr;
@@ -1146,7 +1146,7 @@ struct bottom_level_node {
     return e;
   }
   void push(entry_base* pushed, bool towards_side) {
-    int64_t dir = towards_side ? 1 : -1;
+    const int64_t dir = towards_side ? 1 : -1;
     end_indices[towards_side] += dir;
     entries[end_indices[towards_side]] = pushed;
     validate();
@@ -1165,9 +1165,8 @@ struct bottom_level_node {
     validate();
     return popped;
   }
-  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool towards_side) {
+  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
     validate();
-    int64_t dir = towards_side ? 1 : -1;
     child_idx which = relative_to->idx - first_idx;
     bool side_inserted_on;
     if (gap_indices[false] == child_idx(-1)) {
@@ -1181,7 +1180,22 @@ struct bottom_level_node {
       popped_here = pop(towards_side);
     }
     
-    for (child_idx ) {
+    const int64_t dir = side_inserted_on ? 1 : -1;
+    child_idx i = which;
+    for (child_idx i = end_indices[side_inserted_on]; i != relative_to->idx; i -= dir) {
+      entries[i]->idx += dir;
+      entries[i+dir] = entries[i]
+    }
+    end_indices[towards_side] += dir;
+    if (after == side_inserted_on) {
+      inserted->idx = relative_to->idx + dir;
+      entries[inserted->idx] = inserted;
+    }
+    else {
+      inserted->idx = relative_to->idx + dir;
+      relative_to->idx += dir;
+      entries[inserted->idx] = inserted;
+      entries[relative_to->idx] = relative_to;
     }
     
     balance();
@@ -1267,7 +1281,7 @@ struct upper_level_node {
     validate();
     return popped;
   }
-  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool towards_side) {
+  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
     validate();
     int32_t dir = towards_side ? 1 : -1;
     child_idx which = which_child(level, relative_to->idx - beginning);
@@ -1278,7 +1292,7 @@ struct upper_level_node {
     }
     
     int64_t count_before_lower_insert = count(towards_side);
-    entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to);
+    entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to, after, side_inserted_on);
     while (popped_below) {
       which += dir;
       assert (which >= 0);
