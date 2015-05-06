@@ -815,6 +815,23 @@ using manual_orderer_impl::manual_orderer;
 #endif
 #else
 
+namespace manual_orderer_impl {
+
+typedef uint64_t idx_type;
+typedef uint32_t child_idx;
+const idx_type no_idx = std::numeric_limits<idx_type>::max();
+struct entry_base {
+  entry_base():idx(no_idx),ref_count(0){}
+  idx_type idx;
+  size_t ref_count;
+};
+
+template<typename ValueType>
+struct entry : public entry_base {
+  template <class... Args>
+  entry(Args&&... args):entry_base(),contents(std::forward<Args>(args)...){}
+  ValueType contents;
+};
 
 /*
 
@@ -975,6 +992,7 @@ I think
   at each level is a good number to start out with.
   (level N+1 nodes have 16 times as many entries and take up 40 times as much space)
   It gives us a total capacity of 2^48, which is plenty, and an OK speed compromise.
+*/
 
 
 const int64_t max_full_children = 16;
@@ -986,7 +1004,7 @@ const int64_t num_potential_children = (max_full_children + gap_length_in_childr
 const int64_t gap_speed = 128; 
 static_assert (gap_speed >= max_full_children / gap_length_in_children);
 
-
+/*
 One tricky bit: All nodes need to know how many entries are in them,
 but push(), which must be O(1), adds an entry to a bottom level node, and its
 parent, and its parent, and so forth. Keeping an entries variable in each
@@ -996,6 +1014,44 @@ Instead, we keep a "roller" structure at each location that *can* be pushed/popp
 Nodes keep pointers to the rollers they use, and when you do a push at a roller,
 it increments the roller's "net_pushes" variable. Nodes compute their number of entries
 by summing up the net_pushes of their rollers (along with some other stuff).
+
+*/
+
+struct node_base {
+  //uint32_t level;
+  int64_t max_entries_;
+  int64_t space_size_;
+  int64_t max_entries()const { return max_entries_; }
+  node_base* parent;
+  idx_type beginning;
+  
+  node_base()
+    //level(1),
+    max_entries_(max_full_children),
+    space_size_(num_potential_children),
+    parent(nullptr),
+    beginning(1ULL << 63)
+  {}
+  node_base(node_base* sole_child):
+    //level(sole_child->level + 1),
+    max_entries_(sole_child->max_entries_ * max_full_children),
+    space_size_(sole_child->space_size_ * num_potential_children),
+    parent(nullptr),
+    beginning(sole_child->beginning - space_size_/2)
+  {}
+  node_base(node_base* parent, child_idx which_child):
+    max_entries_(parent->max_entries_ / max_full_children),
+    space_size_(parent->space_size_ / num_potential_children),
+    parent(parent),
+    beginning(parent->beginning + space_size_*which_child)
+  {}
+  
+  
+  // TODO: I made these virtual functions to make the code simpler, but maybe there is a more optimized way.
+  virtual void push(entry_base* pushed, bool towards_side) = 0;
+  virtual entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) = 0;
+  virtual entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) = 0;
+};
 
 struct roller {
   bottom_level_node* b;
@@ -1015,7 +1071,7 @@ struct roller {
       // (If this roller was only being used by the bottom level node, that would mean we tried to push
       //   into a full node, which is forbidden.)
       roller* new_self = new roller(this);
-      new_self->b = new bottom_level_node();
+      new_self->b = new bottom_level_node(e);
       ++new_self->net_pushes;
       
       bool any_transitioned = false;
@@ -1066,21 +1122,37 @@ struct roller {
   }
 };
 
-struct bottom_level_node {
+struct bottom_level_node : public node_base {
   std::array<entry_base*, num_potential_children> entries;
   std::array<child_idx, 2> end_indices;
   std::array<child_idx, 2> gap_indices;
   idx_type first_idx;
   
+  bottom_level_node(idx_type first_idx, entry_base* e):node_base() {
+    e->idx = first_idx + (num_potential_children / 2);
+    entries[e->idx] = e;
+    end_indices[true] = e->idx;
+    end_indices[false] = e->idx;
+  }
+  
+  bool gap_exists()const {
+    assert ((gap_indices[false] != child_idx(-1)) == (gap_indices[true] != child_idx(-1)));
+    return gap_indices[false] != child_idx(-1);
+  }
+  
   int64_t space(bool side)const {
     return (side ? (num_potential_children-1) : 0) - end_indices[side];
   }
   int64_t entries()const {
-    if (gap_indices[false] == child_idx(-1)) { return end_indices[true] - end_indices[false] + 1; }
-    return end_indices[true] - gap_indices[true] + gap_indices[false] - end_indices[false] + 2;
+    if (gap_exists()) {
+      return end_indices[true] - gap_indices[true] + gap_indices[false] - end_indices[false] + 2;
+    }
+    else {
+      return end_indices[true] - end_indices[false] + 1;
+    }
   }
   int64_t count(bool side)const {
-    if (gap_indices[false] == child_idx(-1)) { return entries(); }
+    if (!gap_exists()) { return entries(); }
     if (side) { return end_indices[ true] - gap_indices[ true] + 1; }
     else      { return gap_indices[false] - end_indices[false] + 1; }
   }
@@ -1092,30 +1164,7 @@ struct bottom_level_node {
   }
   void move_gap(bool towards_side) {
     const int64_t dir = towards_side ? 1 : -1;
-    if (gap_indices[false] == child_idx(-1)) {
-      assert (gap_indices[true] == child_idx(-1));
-      if (end_indices[true] == end_indices[false]) {
-        child_idx i = end_indices[!towards_side];
-        entry_base* e = entries[i];
-        entries[i] = nullptr;
-        e->idx = first_idx + (num_potential_children / 2);
-        entries[e->idx] = e;
-        end_indices[true] = e;
-        end_indices[false] = e;
-      }
-      else {
-        assert (space_count_acceptable(space[!towards_side] - gap_length_in_children), 1);
-        child_idx i = end_indices[!towards_side];
-        entry_base* e = entries[i];
-        entries[i] = nullptr;
-        e->idx -= gap_length_in_children * dir;
-        entries[e->idx] = e;
-        end_indices[!towards_side] = e->idx;
-        gap_indices[!towards_side] = e->idx;
-        gap_indices[towards_side] = i+dir;
-      }
-    }
-    else {
+    if (gap_exists()) {
       child_idx i = gap_indices[towards_side];
       entry_base* e = entries[i];
       entries[i] = nullptr;
@@ -1128,6 +1177,28 @@ struct bottom_level_node {
       else {
         end_indices[towards_side] = e->idx;
         gap_indices[false] = gap_indices[true] = child_idx(-1);
+      }
+    }
+    else {
+      if (end_indices[true] == end_indices[false]) {
+        child_idx i = end_indices[!towards_side];
+        entry_base* e = entries[i];
+        entries[i] = nullptr;
+        e->idx = first_idx + (num_potential_children / 2);
+        entries[e->idx] = e;
+        end_indices[true] = e->idx;
+        end_indices[false] = e->idx;
+      }
+      else {
+        assert (space_count_acceptable(space[!towards_side] - gap_length_in_children), 1);
+        child_idx i = end_indices[!towards_side];
+        entry_base* e = entries[i];
+        entries[i] = nullptr;
+        e->idx -= gap_length_in_children * dir;
+        entries[e->idx] = e;
+        end_indices[!towards_side] = e->idx;
+        gap_indices[!towards_side] = e->idx;
+        gap_indices[towards_side] = i+dir;
       }
     }
   }
@@ -1169,11 +1240,11 @@ struct bottom_level_node {
     validate();
     child_idx which = relative_to->idx - first_idx;
     bool side_inserted_on;
-    if (gap_indices[false] == child_idx(-1)) {
-      side_inserted_on = space(true) > space(false);
+    if (gap_exists()) {
+      side_inserted_on = relative_to->idx > gap_indices[false];
     }
     else {
-      side_inserted_on = relative_to->idx > gap_indices[false];
+      side_inserted_on = space(true) > space(false);
     } 
     entry_base* popped_here = nullptr;
     if (entries() >= max_entries()) { // TODO gap border restriction
@@ -1186,7 +1257,7 @@ struct bottom_level_node {
       entries[i]->idx += dir;
       entries[i+dir] = entries[i]
     }
-    end_indices[towards_side] += dir;
+    end_indices[side_inserted_on] += dir;
     if (after == side_inserted_on) {
       inserted->idx = relative_to->idx + dir;
       entries[inserted->idx] = inserted;
@@ -1218,7 +1289,7 @@ struct bottom_level_node {
   
 }
 
-struct upper_level_node {
+struct upper_level_node : public node_base {
   std::array<node_base*, num_potential_children> children;
   struct roller_ref {
     roller* r;
@@ -1230,12 +1301,27 @@ struct upper_level_node {
   std::array<roller_ref, 2> end_rollers;
   std::array<roller_ref, 2> gap_rollers;
   std::array<int64_t, 2> count_before_rollers;
+  
+  bool gap_exists()const {
+    assert ((!gap_rollers[false]) == (!gap_rollers[true]));
+    return gap_rollers[false];
+  }
+  
+  
   int64_t space(bool side)const {
     return initial_space() - end_rollers[side].net_pushes();
   }
   int64_t count(bool side)const {
-    if (!gap_rollers[false]) { return entries; }
-    return count_before_rollers[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
+    if (gap_exists()) {
+      return count_before_rollers[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
+    }
+    else {
+      return entries();
+    }
+  }
+  int64_t entries()const {
+    return count_before_rollers[false] + end_rollers[false].net_pushes() +
+           count_before_rollers[true ] + end_rollers[true ].net_pushes();
   }
   
   int64_t remaining_capacity()const { return max_entries() - entries(); }
@@ -1244,8 +1330,7 @@ struct upper_level_node {
     return count <= (space - remaining_capacity()) * gap_speed;
   }
   void move_gap(bool towards_side) {
-    if (!gap_rollers[false]) {
-      assert (!gap_rollers[true]);
+    if (!gap_exists()) {
       int64_t old_net_pushes = end_rollers[!towards_side].net_pushes();
       gap_rollers[towards_side].r = end_rollers[!towards_side].r;
       gap_rollers[towards_side].initial_net_pushes = 0;
@@ -1283,7 +1368,6 @@ struct upper_level_node {
   }
   entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
     validate();
-    int32_t dir = towards_side ? 1 : -1;
     child_idx which = which_child(level, relative_to->idx - beginning);
     bool side_inserted_on = TODO;
     entry_base* popped_here = nullptr;
@@ -1291,25 +1375,23 @@ struct upper_level_node {
       popped_here = pop(towards_side);
     }
     
-    int64_t count_before_lower_insert = count(towards_side);
+    const int64_t dir = side_inserted_on ? 1 : -1;
+    int64_t count_before_lower_insert = count(side_inserted_on);
     entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to, after, side_inserted_on);
     while (popped_below) {
       which += dir;
-      assert (which >= 0);
+      assert (which != child_idx(-1));
       assert (which < upper_level_node_max_children);
       if (!children[which]) {
         create_child(which);
         TODO mess with the rollers;
+        popped_below = nullptr;
       }
-      if (which == 0 || which+1 == upper_level_node_max_children) {
-        if (space(towards_side) == 0) {
-          assert (!popped_here);
-          popped_here = pop(towards_side);
-        }
+      else {
+        popped_below = children[which].push_and_if_needed_pop(popped_below, side_inserted_on);
       }
-      popped_below = children[which].push_and_if_needed_pop(popped_below, side_inserted_on);
     }
-    int64_t assumed_count_after_lower_insert = count(towards_side);
+    int64_t assumed_count_after_lower_insert = count(side_inserted_on);
     if (assumed_count_after_lower_insert == count_before_lower_insert) {
       ++count_before_rollers[side_inserted_on];
     }
@@ -1334,26 +1416,8 @@ struct upper_level_node {
     }
   }
 };
- */
 
-
-namespace manual_orderer_impl {
-
-typedef uint64_t idx_type;
-typedef uint32_t child_idx;
-const idx_type no_idx = std::numeric_limits<idx_type>::max();
-struct entry_base {
-  entry_base():idx(no_idx),ref_count(0){}
-  idx_type idx;
-  size_t ref_count;
-};
-
-template<typename ValueType>
-struct entry : public entry_base {
-  template <class... Args>
-  entry(Args&&... args):entry_base(),contents(std::forward<Args>(args)...){}
-  ValueType contents;
-};
+/*
 
 
 // TODO abstract more of this (e.g. references to "64")
@@ -1545,6 +1609,8 @@ struct upper_level_node : public node_base {
   }
 };
 
+*/
+
 template<typename ValueType>
 struct NoDecRefCallback { void operator()(ValueType&, size_t)const{} };
 
@@ -1606,7 +1672,7 @@ private:
   friend class manual_orderer<ValueType, DecRefCallback>;
 };
 
-
+/*
 // manual_orderer is a data structure that lets you place
 // arbitrary objects in an O(1)-comparable order, but you have to refer
 // to them by manually_orderable instead of the object itself.
@@ -1636,6 +1702,59 @@ public:
     root.insert(moving.data, relative_to.data, true);
   }
 };
+*/
+
+// manual_orderer is a data structure that lets you place
+// arbitrary objects in an O(1)-comparable order, but you have to refer
+// to them by manually_orderable instead of the object itself.
+template<typename ValueType, class DecRefCallback>
+class manual_orderer {
+private:
+  node_base* root;
+  
+  void make_room() {
+    if (!root) {
+      bottom_level_node* new_root = new bottom_level_node();
+      root = new_root;
+    }
+    if (root.full()) {
+      upper_level_node* new_root = new upper_level_node(root);
+      root = new_root;
+    }
+  }
+  void push(entry_ref moving, bool towards_side) {
+    if (!root) {
+      bottom_level_node* new_root = new bottom_level_node(moving.data);
+      root = new_root;
+    }
+    else {
+      make_room();
+      root->push(moving.data, towards_side);
+    }
+  }
+public:
+  typedef manually_orderable<ValueType, DecRefCallback> entry_ref;
+  
+  manual_orderer():root(){} // default-construct root node
+  
+  // relative_to must already have been put in the ordering.
+  // Puts "moving" in the ordering next to relative_to.
+  void insert(entry_ref moving, entry_ref relative_to, bool after) {
+    make_room();
+    auto error = root->insert_and_if_needed_pop(moving.data, relative_to.data, after, false /*irrelevant*/);
+    assert (!error);
+  }
+  void push_front(entry_ref moving) { push(moving, false); }
+  void push_back (entry_ref moving) { push(moving, true ); }
+  
+
+  // backwards compatibility
+  void put_only(entry_ref m) { push_front(m); }
+  void put_before(entry_ref moving, entry_ref relative_to) { insert(moving, relative_to, false); }
+  void put_after (entry_ref moving, entry_ref relative_to) { insert(moving, relative_to, true ); }
+};
+
+
 } // end namespace manual_orderer_impl
 
 namespace std {
