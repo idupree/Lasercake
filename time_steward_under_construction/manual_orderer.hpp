@@ -1329,12 +1329,18 @@ struct upper_level_node : public node_base {
     // TODO reduce duplicate definitions ID kbvckyQqw3xcz
     return count <= (space - remaining_capacity()) * gap_speed;
   }
+  bottom_level_node* make_singleton_child(child_idx which) {
+    
+  }
   void move_gap(bool towards_side) {
     if (!gap_exists()) {
       int64_t old_net_pushes = end_rollers[!towards_side].net_pushes();
       gap_rollers[towards_side].r = end_rollers[!towards_side].r;
       gap_rollers[towards_side].initial_net_pushes = 0;
-      gap_rollers[!towards_side] = TODO;
+      child_idx new_child_idx = TODO;
+      bottom_level_node* b = make_singleton_child(new_child_idx)
+      
+      gap_rollers[!towards_side] = 
       end_rollers[!towards_side].r = TODO;
       end_rollers[!towards_side].initial_net_pushes = TODO ?? end_rollers[!towards_side]->net_pushes - old_net_pushes;
       count_before_rollers[false] = count_before_rollers[true] = 0; // TODO ?
@@ -1369,7 +1375,13 @@ struct upper_level_node : public node_base {
   entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
     validate();
     child_idx which = which_child(level, relative_to->idx - beginning);
-    bool side_inserted_on = TODO;
+    bool side_inserted_on;
+    if (gap_exists()) {
+      side_inserted_on = relative_to->idx >= gap_rollers[true]->b->beginning);
+    }
+    else {
+      side_inserted_on = space(true) > space(false);
+    } 
     entry_base* popped_here = nullptr;
     if (entries() >= max_entries()) { // TODO gap border restriction
       popped_here = pop(towards_side);
