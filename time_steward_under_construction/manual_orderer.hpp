@@ -1291,65 +1291,84 @@ struct bottom_level_node : public node_base {
 
 struct upper_level_node : public node_base {
   std::array<node_base*, num_potential_children> children;
-  struct roller_ref {
-    roller* r;
-    int64_t initial_net_pushes;
-    int64_t net_pushes() { return r->net_pushes - initial_net_pushes; }
-    roller* operator->() { return r; }
-    explicit operator bool() { return bool(r); }
-  }
-  std::array<roller_ref, 2> end_rollers;
-  std::array<roller_ref, 2> gap_rollers;
-  std::array<int64_t, 2> count_before_rollers;
+  std::array<roller*, 2> end_rollers;
+  std::array<roller*, 2> gap_rollers;
+  std::array<int64_t, 2> space_plus_net_pushes;
+  // when !gap_exists(), count_minus_net_pushes_sum[false] covers all entries and count_minus_net_pushes_sum[true] is 0
+  std::array<int64_t, 2> count_minus_net_pushes_sum;
   
   bool gap_exists()const {
-    assert ((!gap_rollers[false]) == (!gap_rollers[true]));
+    assert (bool(gap_rollers[false]) == bool(gap_rollers[true]));
     return gap_rollers[false];
   }
   
   
   int64_t space(bool side)const {
-    return initial_space() - end_rollers[side].net_pushes();
+    return space_plus_net_pushes[side] - end_rollers[side]->net_pushes;
   }
   int64_t count(bool side)const {
     if (gap_exists()) {
-      return count_before_rollers[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
+      return count_minus_net_pushes_sum[side] + end_rollers[side].net_pushes() + gap_rollers[side].net_pushes();
     }
     else {
       return entries();
     }
   }
   int64_t entries()const {
-    return count_before_rollers[false] + end_rollers[false].net_pushes() +
-           count_before_rollers[true ] + end_rollers[true ].net_pushes();
+    int64_t result = count_minus_net_pushes_sum[false] + end_rollers[false].net_pushes() +
+                     count_minus_net_pushes_sum[true ] + end_rollers[true ].net_pushes();
+    if (gap_exists()) {
+      assert (result == count(false) + count(true));
+    }
+    return result;
   }
   
   int64_t remaining_capacity()const { return max_entries() - entries(); }
+  
   bool space_count_acceptable(int64_t space, int64_t count)const {
     // TODO reduce duplicate definitions ID kbvckyQqw3xcz
     return count <= (space - remaining_capacity()) * gap_speed;
   }
-  bottom_level_node* make_singleton_child(child_idx which) {
+  
+  roller_pair make_singleton_child(child_idx which) {
     
   }
+  
   void move_gap(bool towards_side) {
     if (!gap_exists()) {
-      int64_t old_net_pushes = end_rollers[!towards_side].net_pushes();
-      gap_rollers[towards_side].r = end_rollers[!towards_side].r;
-      gap_rollers[towards_side].initial_net_pushes = 0;
-      child_idx new_child_idx = TODO;
-      bottom_level_node* b = make_singleton_child(new_child_idx)
+      int64_t entries_temp = entries();
+      int64_t new_space = space(!towards_side) - child_max_entries()*gap_length_in_children;
+      assert (new_space >= 0);
       
-      gap_rollers[!towards_side] = 
-      end_rollers[!towards_side].r = TODO;
-      end_rollers[!towards_side].initial_net_pushes = TODO ?? end_rollers[!towards_side]->net_pushes - old_net_pushes;
-      count_before_rollers[false] = count_before_rollers[true] = 0; // TODO ?
+      child_idx new_child_idx = child_idx(-1);
+      const int64_t dir = towards_side ? 1 : -1;
+      const child_idx end = towards_side ? num_potential_children : child_idx(-1);
+      for (child_idx i = towards_side ? 0 : num_potential_children-1; i != end; i += dir) {
+        if (children[i]) {
+          new_child_idx = i - dir*(gap_length_in_children + children[i]->full());
+          break;
+        }
+      }
+      assert (new_child_idx != child_idx(-1));
+        
+      roller_pair r = make_singleton_child(new_child_idx);
+      gap_rollers[towards_side] = end_rollers[!towards_side];
+      gap_rollers[!towards_side] = r[ towards_side];
+      end_rollers[!towards_side] = r[!towards_side];
+      
+      space_plus_net_pushes[!towards_side] = new_space + end_rollers[!towards_side]->net_pushes;
+      count_minus_net_pushes_sum[ towards_side] = entries_temp - (end_rollers[ towards_side]->net_pushes + gap_rollers[ towards_side]->net_pushes);
+      count_minus_net_pushes_sum[!towards_side] =            0 - (end_rollers[!towards_side]->net_pushes + gap_rollers[!towards_side]->net_pushes);
     }
     gap_rollers[!towards_side]->push(gap_rollers[towards_side]->pop());
     if (count(towards_side) == 0) {
-      end_rollers[towards_side].r = gap_rollers[!towards_side].r;
-      end_rollers[towards_side].initial_net_pushes = TODO;
-      gap_rollers[false].r = gap_rollers[true].r = nullptr;
+      int64_t new_space = space(towards_side) + child_max_entries()*gap_length_in_children;
+      int64_t entries_temp = count(!towards_side);
+      end_rollers[towards_side] = gap_rollers[!towards_side];
+      gap_rollers[false] = gap_rollers[true] = nullptr;
+      space_plus_net_pushes[towards_side] = new_space + end_rollers[towards_side]->net_pushes;
+      count_minus_net_pushes_sum[false] = entries_temp - (end_rollers[towards_side]->net_pushes + end_rollers[!towards_side]->net_pushes);
+      count_minus_net_pushes_sum[true] = 0;
     }
   }
   entry_base* pop(bool towards_side) {
@@ -1388,7 +1407,7 @@ struct upper_level_node : public node_base {
     }
     
     const int64_t dir = side_inserted_on ? 1 : -1;
-    int64_t count_before_lower_insert = count(side_inserted_on);
+    bool pushed_end_roller = false;
     entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to, after, side_inserted_on);
     while (popped_below) {
       which += dir;
@@ -1398,18 +1417,17 @@ struct upper_level_node : public node_base {
         create_child(which);
         TODO mess with the rollers;
         popped_below = nullptr;
+        pushed_end_roller = true;
       }
       else {
         popped_below = children[which].push_and_if_needed_pop(popped_below, side_inserted_on);
       }
     }
-    int64_t assumed_count_after_lower_insert = count(side_inserted_on);
-    if (assumed_count_after_lower_insert == count_before_lower_insert) {
-      ++count_before_rollers[side_inserted_on];
+    
+    if (!pushed_end_roller) {
+      ++count_minus_net_pushes_sum[gap_exists() ? side_inserted_on : false];
     }
-    else {
-      assert (assumed_count_after_lower_insert == count_before_lower_insert + 1)
-    }
+    
     balance();
     validate();
     return popped_here;
