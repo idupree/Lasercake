@@ -915,9 +915,9 @@ struct bottom_level_node {
 node implements:
 
 push(): O(1) amortized push at either end, usable only when the node is not full
-pop(): O(1) amortized pop at either end
+pop(): O(1) amortized pop at either end, usable only when the node is not empty
 push_and_if_needed_pop(): O(1) amortized push at either end and, if full, pop at the other end
-insert_and_if_needed_pop(): O(level) amortized insert anywhere and, if full, pop at a given end
+insert(): O(level) amortized insert anywhere, usable only when the node is not full
 
 Each node keeps track of how much "capacity" it has at each end, meaning the number of times you can push()
   at that end. push() always reduces that capacity by 1, and pop() always increases that capacity by 1.
@@ -950,7 +950,7 @@ In some sense, every time we move the gap all the way across, we earn that much 
   The only difficulty is that this requires us to always be able to move the gap using the O(1) push().
 
 push_and_if_needed_pop() is never used in Gs.
-if insert_and_if_needed_pop() is used in a G, it may need a special restriction (e.g. no reducing left-capacity).
+if insert() is used in a G, it may need a special restriction (e.g. no reducing left-capacity).
   
 from the middle
 LLLLLLLLRRRRRRRR
@@ -1019,38 +1019,45 @@ by summing up the net_pushes of their rollers (along with some other stuff).
 
 struct node_base {
   //uint32_t level;
-  int64_t max_entries_;
-  int64_t space_size_;
-  int64_t max_entries()const { return max_entries_; }
+  int64_t child_max_entries_;
+  int64_t child_space_size_;
   node_base* parent;
   idx_type beginning;
   
   node_base()
     //level(1),
-    max_entries_(max_full_children),
-    space_size_(num_potential_children),
+    child_max_entries_(1),
+    child_space_size_(1),
     parent(nullptr),
     beginning(1ULL << 63)
   {}
   node_base(node_base* sole_child):
     //level(sole_child->level + 1),
-    max_entries_(sole_child->max_entries_ * max_full_children),
-    space_size_(sole_child->space_size_ * num_potential_children),
+    child_max_entries_(sole_child->max_entries()),
+    child_space_size_(sole_child->space_size()),
     parent(nullptr),
-    beginning(sole_child->beginning - space_size_/2)
+    beginning(sole_child->beginning - child_space_size_*(num_potential_children/2))
   {}
   node_base(node_base* parent, child_idx which_child):
-    max_entries_(parent->max_entries_ / max_full_children),
-    space_size_(parent->space_size_ / num_potential_children),
+    child_max_entries_(parent->child_max_entries_ / max_full_children),
+    child_space_size_(parent->child_space_size_ / num_potential_children),
     parent(parent),
     beginning(parent->beginning + space_size_*which_child)
-  {}
+  {
+    assert (parent->child_max_entries_ % max_full_children == 0);
+    assert (parent->child_space_size_ % num_potential_children == 0);
+  }
   
+  int64_t max_entries()const { return child_max_entries_ * max_full_children; }
+  int64_t space_size()const { return child_space_size_ * num_potential_children; }
+  int64_t child_max_entries() { return child_max_entries_; }
+  int64_t child_space_size() { return child_space_size_; }
+  child_idx which_child_contains(idx_type i) { return (i - beginning) / child_space_size(); }
   
   // TODO: I made these virtual functions to make the code simpler, but maybe there is a more optimized way.
   virtual void push(entry_base* pushed, bool towards_side) = 0;
   virtual entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) = 0;
-  virtual entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) = 0;
+  virtual entry_base* insert(entry_base* inserted, entry_base* relative_to, bool after) = 0;
 };
 
 struct roller {
@@ -1236,7 +1243,7 @@ struct bottom_level_node : public node_base {
     validate();
     return popped;
   }
-  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
+  entry_base* insert(entry_base* inserted, entry_base* relative_to, bool after) {
     validate();
     child_idx which = relative_to->idx - first_idx;
     bool side_inserted_on;
@@ -1245,10 +1252,6 @@ struct bottom_level_node : public node_base {
     }
     else {
       side_inserted_on = space(true) > space(false);
-    } 
-    entry_base* popped_here = nullptr;
-    if (entries() >= max_entries()) { // TODO gap border restriction
-      popped_here = pop(towards_side);
     }
     
     const int64_t dir = side_inserted_on ? 1 : -1;
@@ -1271,7 +1274,6 @@ struct bottom_level_node : public node_base {
     
     balance();
     validate();
-    return popped_here;
   }
   void balance() {
     for (int i = 0; i < 2; ++i) {
@@ -1301,7 +1303,10 @@ struct upper_level_node : public node_base {
     assert (bool(gap_rollers[false]) == bool(gap_rollers[true]));
     return gap_rollers[false];
   }
-  
+  child_idx gap_child(bool side) {
+    if (!gap_exists()) { return child_idx(-1); }
+    return which_child_contains(gap_rollers[side]->b->beginning);
+  }
   
   int64_t space(bool side)const {
     return space_plus_net_pushes[side] - end_rollers[side]->net_pushes;
@@ -1330,7 +1335,7 @@ struct upper_level_node : public node_base {
     return count <= (space - remaining_capacity()) * gap_speed;
   }
   
-  roller_pair make_singleton_child(child_idx which) {
+  roller_pair make_singleton_child(child_idx which, ) {
     
   }
   
@@ -1351,7 +1356,7 @@ struct upper_level_node : public node_base {
       }
       assert (new_child_idx != child_idx(-1));
         
-      roller_pair r = make_singleton_child(new_child_idx);
+      roller_pair r = make_singleton_child(new_child_idx, );
       gap_rollers[towards_side] = end_rollers[!towards_side];
       gap_rollers[!towards_side] = r[ towards_side];
       end_rollers[!towards_side] = r[!towards_side];
@@ -1375,6 +1380,7 @@ struct upper_level_node : public node_base {
     return end_rollers[towards_side]->pop();
   }
   void push(entry_base* pushed, bool towards_side) {
+    assert (!full());
     end_rollers[towards_side]->push(pushed);
   }
   entry_base* push_and_if_needed_pop(entry_base* pushed, bool towards_side) {
@@ -1391,37 +1397,45 @@ struct upper_level_node : public node_base {
     validate();
     return popped;
   }
-  entry_base* insert_and_if_needed_pop(entry_base* inserted, entry_base* relative_to, bool after, bool towards_side) {
+  void insert(entry_base* inserted, entry_base* relative_to, bool after) {
+    assert (!full());
     validate();
-    child_idx which = which_child(level, relative_to->idx - beginning);
+    const child_idx which = which_child(level, relative_to->idx - beginning);
     bool side_inserted_on;
     if (gap_exists()) {
       side_inserted_on = relative_to->idx >= gap_rollers[true]->b->beginning);
     }
     else {
       side_inserted_on = space(true) > space(false);
-    } 
-    entry_base* popped_here = nullptr;
-    if (entries() >= max_entries()) { // TODO gap border restriction
-      popped_here = pop(towards_side);
     }
     
     const int64_t dir = side_inserted_on ? 1 : -1;
     bool pushed_end_roller = false;
-    entry_base* popped_below = children[which].insert_and_if_needed_pop(inserted, relative_to, after, side_inserted_on);
+    entry_base* popped_below = nullptr;
+    const child_idx gc = gap_child(side_inserted_on);
+    const bool gc_packed = (which == gc) && (children[which].entries() + children[gap_child(!side_inserted_on)].entries() >= child_max_entries())
+    if (gc_packed || children[which].full()) {
+      popped_below = children[which].pop(side_inserted_on);
+    }
+    children[which].insert(inserted, relative_to, after, side_inserted_on);
+    
+    child_idx i = which + dir;
     while (popped_below) {
-      which += dir;
-      assert (which != child_idx(-1));
-      assert (which < upper_level_node_max_children);
-      if (!children[which]) {
-        create_child(which);
-        TODO mess with the rollers;
+      assert (i != child_idx(-1));
+      assert (i < upper_level_node_max_children);
+      const child_idx next = which + dir;
+      if (!children[i]) {
+        end_rollers[side_inserted_on]->push(popped_below);
         popped_below = nullptr;
         pushed_end_roller = true;
       }
       else {
-        popped_below = children[which].push_and_if_needed_pop(popped_below, side_inserted_on);
+        popped_below = children[i].push_and_if_needed_pop(popped_below, side_inserted_on);
       }
+      if (!popped_below) {
+        assert (next == child_idx(-1) || next == upper_level_node_max_children || !children[next]);
+      }
+      i = next;
     }
     
     if (!pushed_end_roller) {
@@ -1430,7 +1444,6 @@ struct upper_level_node : public node_base {
     
     balance();
     validate();
-    return popped_here;
   }
   void balance() {
     for (int i = 0; i < 2; ++i) {
@@ -1771,8 +1784,7 @@ public:
   // Puts "moving" in the ordering next to relative_to.
   void insert(entry_ref moving, entry_ref relative_to, bool after) {
     make_room();
-    auto error = root->insert_and_if_needed_pop(moving.data, relative_to.data, after, false /*irrelevant*/);
-    assert (!error);
+    root->insert(moving.data, relative_to.data, after);
   }
   void push_front(entry_ref moving) { push(moving, false); }
   void push_back (entry_ref moving) { push(moving, true ); }
