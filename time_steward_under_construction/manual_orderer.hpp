@@ -298,14 +298,13 @@ namespace std {
 namespace manual_orderer_impl {
 
 const uint64_t no_idx = std::numeric_limits<uint64_t>::max();
-class manual_orderer_base;
+
+struct level_1_block;
 struct entry_base {
   entry_base():idx(no_idx),ref_count(0),prev(nullptr),next(nullptr),owner(nullptr){}
   uint64_t idx;
   size_t ref_count;
-  entry_base* prev;
-  entry_base* next;
-  manual_orderer_base* owner;
+  level_1_block* parent;
 };
 
 template<typename ValueType>
@@ -410,22 +409,35 @@ constexpr inline uint64_t which_child_is_block(uint64_t idx, uint32_t level) {
   return (block_start(idx, level) & position_in_block_mask(level+1)) / block_size(level);
 }
 
+class manual_orderer_base;
+struct level_1_block {
+  level_1_block() {
+    memset (this, 0, sizeof(level_1_block));
+  }
+
+  manual_orderer_base* owner;
+  level_1_block* prev;
+  level_1_block* next;
+  std::array<entry_base*, max_children_per_block> entries;
+  uint32_t last_child;
+};
+
 class manual_orderer_base {
 protected:
   std::unordered_map<uint64_t, entry_base*> data;
   entry_base* last_entry;
   
   entry_base* get(uint64_t idx) {
-    auto i = data.find(idx);
+    auto i = data.find(idx >> max_children_per_block_shift);
     if (i == data.end()) { return nullptr; }
-    return i->second;
+    return i->second.entries[idx & position_in_block_mask(1)];
   }
   void set(uint64_t idx, entry_base* e) {
-    if (e) {
-      data[idx] = e;
-    }
-    else {
-      data.erase(idx);
+    auto& i = data[idx >> max_children_per_block_shift];
+    uint64_t pos = idx & position_in_block_mask(1);
+    i.entries[pos] = e;
+    if (pos == i.last_child && e == nullptr) {
+      T
     }
   }
   
@@ -463,21 +475,47 @@ protected:
   
   entry_base* move_entries_up(entry_base* first, uint64_t last, uint64_t dist) {
     auto i = first;
-    for (; i && i->idx >= last; i = i->prev) {
+    level_1_block* b = first->parent;
+    uint32_t which = uint32_t(first->idx & position_in_block_mask(1));
+    while (true) {
       set(i->idx, nullptr);
       i->idx += dist;
       assert (!i->next || i->next->idx > i->idx);
       set(i->idx, i);
+      if (which == 0) {
+        b = b->prev;
+        which = b->last_child;
+      }
+      else {
+        --which;
+      }
+      i = b->entries[which];
+      if (i->idx < last) {
+        break;
+      }
     }
     return i;
   }
   entry_base* move_entries_down(entry_base* first, uint64_t last, uint64_t dist) {
     auto i = first;
+    level_1_block* b = first->parent;
+    uint32_t which = uint32_t(first->idx & position_in_block_mask(1));
     for (; i && i->idx <= last; i = i->next) {
       set(i->idx, nullptr);
       i->idx -= dist;
       assert (!i->prev || i->prev->idx < i->idx);
       set(i->idx, i);
+      if (which == b->last_child) {
+        b = b->next;
+        which = 0;
+      }
+      else {
+        ++which;
+      }
+      i = b->entries[which];
+      if (i->idx > last) {
+        break;
+      }
     }
     return i;
   }
