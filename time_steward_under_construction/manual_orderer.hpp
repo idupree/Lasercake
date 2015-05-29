@@ -424,21 +424,38 @@ struct level_1_block {
 
 class manual_orderer_base {
 protected:
-  std::unordered_map<uint64_t, entry_base*> data;
+  std::unordered_map<uint64_t, level_1_block*> data;
   entry_base* last_entry;
   
   entry_base* get(uint64_t idx) {
     auto i = data.find(idx >> max_children_per_block_shift);
     if (i == data.end()) { return nullptr; }
-    return i->second.entries[idx & position_in_block_mask(1)];
+    return i->second->entries[idx & position_in_block_mask(1)];
+  }
+  level_1_block* force_l1block(uint64_t idx) {
+    auto i = data.find(idx >> max_children_per_block_shift);
+    if (i == data.end()) {
+      level_1_block* b = new level_1_block();
+      data.insert(i, b);
+      return b;
+    }
+    else {
+      return i->second;
+    }
   }
   void set(uint64_t idx, entry_base* e) {
-    auto& i = data[idx >> max_children_per_block_shift];
+    level_1_block* b = force_l1block(idx);
     uint64_t pos = idx & position_in_block_mask(1);
-    i.entries[pos] = e;
-    if (pos == i.last_child && e == nullptr) {
-      T
+    b->entries[pos] = e;
+    cleanup(b, idx);
+  }
+  void cleanup(level_1_block* b, uint64_t former_idx) {
+    for (uint32_t i = 0; i < block_size(1); ++i) {
+      if (b->entries[i]) { return; }
     }
+    auto q = data.erase(former_idx >> max_children_per_block_shift);
+    assert (q);
+    delete b;
   }
   
   entry_base* first_in_block(uint64_t idx, uint32_t level) {
@@ -473,51 +490,207 @@ protected:
     return num_children;
   }
   
-  entry_base* move_entries_up(entry_base* first, uint64_t last, uint64_t dist) {
-    auto i = first;
-    level_1_block* b = first->parent;
-    uint32_t which = uint32_t(first->idx & position_in_block_mask(1));
+  struct move {
+    uint64_t min;
+    uint64_t max;
+    int64_t dist;
+    move():min(0),max(0),dist(0){}
+    move(uint64_t min, uint64_t max, int64_t dist):min(min),max(max),dist(dist){}
+    explicit operator bool()const { return dist == 0; }
+  };
+  struct move_collection {
+    std::array<move, max_moves> data;
+    uint32_t num_moves;
+    
+    void validate() {
+      for (uint32_t i = 0; i < max_moves; ++i) {
+        assert (bool(data[i]) == (i < num_moves));
+        if (bool(data[i])) {
+          assert (data[i].max > data[i].min);
+          if (bool(data[i]+1)) {
+            assert (data[i].max+1 == data[i+1].min);
+          }
+        }
+      }
+    }
+    
+    void ins(move m, size_t w) {
+      for (uint32_t i = num_moves; i > w; --i) {
+        data[i] = data[i-1];
+      }
+      data[w] = m;
+      ++num_moves;
+    }
+    void del(size_t w) {
+      for (uint32_t i = w; i < num_moves-1; ++i) {
+        data[i] = data[i+1];
+      }
+      --num_moves;
+      data[num_moves] = move();
+    }
+    
+    void add(move m, move_add_mode mode) {
+      assert (num_moves < max_moves);
+      if (!data[0]) {
+        ins(m, 0);
+      }
+      else if (m.min <= data[0].min && m.max >= data[0].max) {
+        for (uint32_t i = 0; i < num_moves; ++i) {
+          if ()data[i].dist += m.dist;
+        }
+        if (m.min < data[0].min) {
+          ins(move(m.min, data[0].min-1, m.dist), 0);
+        }
+        if (m.max > data[0].max) {
+          ins(move(data[0].max+1, m.max, m.dist), num_moves);
+        }
+      }
+      else {
+        if (data[0].min > m.max) {
+          ins(m, 0);
+        }
+        else {
+          for (uint32_t i = 0; i < num_moves; ++i) {
+            if (data[i].max < m.min) {
+              assert ((!data[i+1]) || data[i+1].min > m.max);
+              ins(m, i+1);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (!data[0]) {
+        ins(m, 0);
+      }
+      else if (m.max < data[0].min) {
+        ins(m, 0);
+      }
+      else if (m.min > data[0].max) {
+        ins(m, num_moves);
+      }
+      else if (mode == NO_OVERLAP) {
+        assert (false);
+      }
+      else if (mode == REPLACE) {
+        bool insed = false;
+        for (uint32_t i = 0; i < num_moves; ++i) {
+          if (data[i].max < m.min) {
+            continue;
+          }
+          if (data[i].min >= m.min && !insed) {
+            ins(m, i);
+            insed = true;
+            ++i;
+          }
+          if (data[i].min > m.max) {
+            break;
+          }
+          
+          if (data[i].min >= m.min && data[i].max <= m.max) {
+            del(i);
+            --i;
+          }
+          else if (data[i].min >= m.min) {
+            data[i].min = m.max+1;
+          }
+          else if (data[i].max <= m.max) {
+            data[i].min = m.min-1;
+          }
+        }
+      }
+      else if (mode == ADD) {
+        for (uint32_t i = 0; i < num_moves; ++i) {
+          if (data[i].max < m.min) {
+            continue;
+          }
+          if (data[i].min > m.max) {
+            break;
+          }
+          
+          if (data[i].min >= m.min && data[i].max <= m.max) {
+            data[i].dist += m.dist;
+          }
+          else if (data[i].min >= m.min) {
+            data[i].min = m.max+1;
+            ins(move(data[0].min, m.max, data[i].dist + m.dist), i);
+            ++i;
+          }
+          else if (data[i].max <= m.max) {
+            data[i].min = m.min-1;
+            ins(move(m.min, data[0].max, data[i].dist + m.dist), i+1);
+            ++i;
+          }
+        }
+        if (m.min < data[0].min) {
+          ins(move(m.min, data[0].min-1, m.dist), 0);
+        }
+        if (m.max > data[0].max) {
+          ins(move(data[0].max+1, m.max, m.dist), num_moves);
+        }
+      }
+    }
+  };
+  
+  void do_moves(move_collection const& moves) {
+    if (!moves.data[0]) {
+      return;
+    }
+    const bool up = (moves.data[0].dist > 0);
+    const int64_t idir = up ? -1 : 1;
+    const uint32_t mi = up ? moves.num_moves-1 : 0;
+    const uint32_t mistop = up ? uint32_t(-1) : moves.num_moves;
+    if (up) {
+      level_1_block* b
+      for ()
+    }
     while (true) {
-      set(i->idx, nullptr);
-      i->idx += dist;
-      assert (!i->next || i->next->idx > i->idx);
-      set(i->idx, i);
-      if (which == 0) {
-        b = b->prev;
-        which = b->last_child;
+      uint64_t bmin = b->entries[0]->idx;
+      uint64_t bmax = bmin + block_size(1)-1;
+      move const& m = moves.data[mi];
+      bool cleanup_b = true;
+      
+      if (m.min <= bmin && m.max >= bmax && ((m.dist & position_in_block_mask(1)) == 0)) {
+        for (entry_base* e : b->entries) {
+          if (!e) break;
+          e->idx += m.dist;
+        }
+        auto p = data.insert(std::make_pair((bmin + m.dist) >> max_children_per_block_shift, b));
+        assert (p.second);
+        auto q = data.erase(bmin >> max_children_per_block_shift);
+        assert (q);
+        cleanup_b = false;
       }
       else {
-        --which;
+        const uint64_t max = std::min(m.max, bmax);
+        const uint64_t min = std::max(m.min, bmin);
+        const int64_t istop = up ? min-1 : max+1;
+        for (uint64_t i = up ? max : min; i != istop; i += idir) {
+          b->entries[i-bmin] = nullptr;
+          e->idx += m.dist;
+          const uint64_t b2min = block_start(e->idx, 1);
+          level_1_block* b2 = force_l1block(e->idx);
+          assert (!b2->entries[e->idx-b2min]);
+          b2->entries[e->idx-b2min] = e;
+        }
       }
-      i = b->entries[which];
-      if (i->idx < last) {
-        break;
+      
+      bool advance_b = up ? (m.min <= bmin) : (m.max >= bmax);
+      bool advance_m = up ? (m.min >= bmin) : (m.max <= bmax);
+      if (advance_b) {
+        level_1_block* b2 = up ? b->prev : b->next;
+        if (cleanup_b) {
+          cleanup(b, bmin);
+        }
+        b = b2;
+        if (!b) { break; }
+      }
+      if (advance_m) {
+        mi += idir;
+        if (mi == istop) { break; }
+        assert (moves.data[mi].min == m.max+1 || m.min == moves.data[mi].max+1)
       }
     }
-    return i;
-  }
-  entry_base* move_entries_down(entry_base* first, uint64_t last, uint64_t dist) {
-    auto i = first;
-    level_1_block* b = first->parent;
-    uint32_t which = uint32_t(first->idx & position_in_block_mask(1));
-    for (; i && i->idx <= last; i = i->next) {
-      set(i->idx, nullptr);
-      i->idx -= dist;
-      assert (!i->prev || i->prev->idx < i->idx);
-      set(i->idx, i);
-      if (which == b->last_child) {
-        b = b->next;
-        which = 0;
-      }
-      else {
-        ++which;
-      }
-      i = b->entries[which];
-      if (i->idx > last) {
-        break;
-      }
-    }
-    return i;
   }
   
   ~manual_orderer_base() {
@@ -563,24 +736,29 @@ protected:
 public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
     validate();
-    uint32_t nonfull_level = 1;
-    while (block_is_full(existing_entry->idx, nonfull_level)) {
-      ++nonfull_level;
-      caller_correct_if(nonfull_level*max_children_per_block_shift < 64, "manual_orderer overflowed");
-    }
-    
-    for (uint32_t level = nonfull_level; level != 0; --level) {
-      uint64_t shove_dist = block_size(level-1);
-      uint64_t split_dist = shove_dist >> 1;
-      uint64_t last_shoved = next_block_start(existing_entry->idx, level-1);
-      uint64_t last_split = last_shoved - split_dist;
-      if (level == 1 && !after) {
-        --last_shoved;
+    move_collection moves;
+    uint32_t level = 0;
+    do {
+      caller_correct_if(level*max_children_per_block_shift < 64, "manual_orderer overflowed");
+      
+      uint64_t shove_dist = block_size(level);
+      uint64_t max_shoved = next_block_start(existing_entry->idx, level+1)-1;
+      uint64_t min_shoved = next_block_start(existing_entry->idx, level);
+      if (level == 0 && !after) {
+        --min_shoved;
       }
-      auto i = last_in_block(existing_entry->idx, level);
-      i = move_entries_up(i, last_shoved, shove_dist);
-      move_entries_up(i, last_split, split_dist);
+      moves.add(move(min_shoved, max_shoved, shove_dist), NO_OVERLAP);
+      if (level > 0) {
+        uint64_t split_dist = shove_dist >> 1;
+        uint64_t min_split = min_shoved - split_dist;
+        moves.add(move(min_split, min_shoved-1, split_dist), (existing_entry->idx < min_split) ? REPLACE : ADD);
+      }
+      
+      ++level;
     }
+    while (block_is_full(existing_entry->idx, level));
+    
+    do_moves(moves);
     
     if (after) {
       set(existing_entry->idx+1, inserted_entry);
@@ -623,6 +801,7 @@ public:
     erased_entry->next = nullptr;
     erased_entry->owner = nullptr;
     set(idx, nullptr);
+    // TODO fix issues
     
     for (uint32_t level = 1; ; ++level) {
       move_entries_down(first_in_block(idx+block_size(level-1), level-1), next_block_start(idx, level)-1, block_size(level-1));
