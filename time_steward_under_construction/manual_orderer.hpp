@@ -1048,11 +1048,13 @@ struct node_base {
     assert (parent->child_space_size_ % num_potential_children == 0);
   }
   
+  bool is_bottom_level()const { return child_max_entries_ == 1; }
+  bool is_second_level()const { return child_max_entries_ == max_full_children; }
   int64_t max_entries()const { return child_max_entries_ * max_full_children; }
   int64_t space_size()const { return child_space_size_ * num_potential_children; }
-  int64_t child_max_entries() { return child_max_entries_; }
-  int64_t child_space_size() { return child_space_size_; }
-  child_idx which_child_contains(idx_type i) { return (i - beginning) / child_space_size(); }
+  int64_t child_max_entries()const { return child_max_entries_; }
+  int64_t child_space_size()const { return child_space_size_; }
+  child_idx which_child_contains(idx_type i)const { return (i - beginning) / child_space_size(); }
   
   // TODO: I made these virtual functions to make the code simpler, but maybe there is a more optimized way.
   virtual void push(entry_base* pushed, bool towards_side) = 0;
@@ -1078,19 +1080,23 @@ struct roller {
       // (If this roller was only being used by the bottom level node, that would mean we tried to push
       //   into a full node, which is forbidden.)
       roller* new_self = new roller(this);
-      new_self->b = new bottom_level_node(e);
+      roller* new_opposite = nullptr;
       ++new_self->net_pushes;
       
       bool any_transitioned = false;
       bool any_kept = false;
+      const int64_t dir = side ? 1 : -1;
+      child_idx which_child = child_idx(-1);
       
       while (true) {
         if (u->gap_rollers[!side] == this) {
           any_kept = true;
+          which_child = u->gap_child(!side) + dir;
           break;
         }
         else if ((u->end_rollers[side] == this) && !u->full()) {
           any_kept = true;
+          which_child = u->gap_child(!side) + dir;
           break;
         }
         else if (u->end_rollers[side] == this) {
@@ -1102,11 +1108,35 @@ struct roller {
           assert (false);
         }
         upper_level_node up = u->parent;
-        if (!up) {
-          // TODO what exactly to do at the top
+        assert (up);
+        u = up;
+      }
+      
+      while (true) {
+        if (u->is_second_level()) {
+          new_self->b = new bottom_level_node(u, which_child);
+          if (new_opposite) {
+            new_opposite->b = new_self->b;
+          }
           break;
         }
-        u = up;
+        else {
+          if (!new_opposite) {
+            new_opposite = new roller();
+            new_opposite->side = !side;
+          }
+          upper_level_node* new_child = new upper_level_node(u, which_child);
+          new_child->end_rollers[side] = new_self;
+          new_child->end_rollers[!side] = new_opposite;
+          new_child->gap_rollers[side] = new_child->gap_rollers[!side] = nullptr;
+          new_child->space_plus_net_pushes[false] = new_child->child_max_entries()*num_potential_children/2     + new_child->end_rollers[false]->net_pushes;
+          new_child->space_plus_net_pushes[ true] = new_child->child_max_entries()*num_potential_children()/2 - 1 + new_child->end_rollers[ true]->net_pushes;
+          new_child->count_minus_net_pushes_sum[false] = 1 - (new_child->end_rollers[false]->net_pushes + new_child->end_rollers[true]->net_pushes)
+          new_child->count_minus_net_pushes_sum[true] = 0;
+          u->children[which_child] = new_child;
+          u = new_child;
+        }
+        which_child = (num_potential_children/2);
       }
       
       assert (any_transitioned);
@@ -1133,14 +1163,15 @@ struct bottom_level_node : public node_base {
   std::array<entry_base*, num_potential_children> entries;
   std::array<child_idx, 2> end_indices;
   std::array<child_idx, 2> gap_indices;
-  idx_type first_idx;
   
-  bottom_level_node(idx_type first_idx, entry_base* e):node_base() {
-    e->idx = first_idx + (num_potential_children / 2);
+  void init(entry_base* e) {
+    e->idx = beginning + (num_potential_children / 2);
     entries[e->idx] = e;
-    end_indices[true] = e->idx;
-    end_indices[false] = e->idx;
+    end_indices[true] = end_indices[false] = e->idx;
+    gap_indices[true] = gap_indices[false] = child_idx(-1);
   }
+  bottom_level_node(entry_base* e):node_base() { init(e); }
+  bottom_level_node(entry_base* e, node_base* parent, child_idx which_child):node_base(parent, which_child) { init(e); }
   
   bool gap_exists()const {
     assert ((gap_indices[false] != child_idx(-1)) == (gap_indices[true] != child_idx(-1)));
@@ -1191,7 +1222,7 @@ struct bottom_level_node : public node_base {
         child_idx i = end_indices[!towards_side];
         entry_base* e = entries[i];
         entries[i] = nullptr;
-        e->idx = first_idx + (num_potential_children / 2);
+        e->idx = beginning + (num_potential_children / 2);
         entries[e->idx] = e;
         end_indices[true] = e->idx;
         end_indices[false] = e->idx;
@@ -1245,7 +1276,7 @@ struct bottom_level_node : public node_base {
   }
   entry_base* insert(entry_base* inserted, entry_base* relative_to, bool after) {
     validate();
-    child_idx which = relative_to->idx - first_idx;
+    child_idx which = relative_to->idx - beginning;
     bool side_inserted_on;
     if (gap_exists()) {
       side_inserted_on = relative_to->idx > gap_indices[false];
@@ -1306,6 +1337,9 @@ struct upper_level_node : public node_base {
   child_idx gap_child(bool side) {
     if (!gap_exists()) { return child_idx(-1); }
     return which_child_contains(gap_rollers[side]->b->beginning);
+  }
+  child_idx end_child(bool side) {
+    return which_child_contains(end_rollers[side]->b->beginning);
   }
   
   int64_t space(bool side)const {
