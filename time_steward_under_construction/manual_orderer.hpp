@@ -425,7 +425,7 @@ struct level_1_block {
 class manual_orderer_base {
 protected:
   std::unordered_map<uint64_t, level_1_block*> data;
-  entry_base* last_entry;
+  uint64_t last_idx;
   
   entry_base* get(uint64_t idx) {
     auto i = data.find(idx >> max_children_per_block_shift);
@@ -490,6 +490,7 @@ protected:
     return num_children;
   }
   
+  enum move_add_mode { NO_OVERLAP, REPLACE, ADD };
   struct move {
     uint64_t min;
     uint64_t max;
@@ -507,6 +508,7 @@ protected:
         assert (bool(data[i]) == (i < num_moves));
         if (bool(data[i])) {
           assert (data[i].max > data[i].min);
+          assert (sign(data[i].dist) > sign(data[0].dist));
           if (bool(data[i]+1)) {
             assert (data[i].max+1 == data[i+1].min);
           }
@@ -530,35 +532,7 @@ protected:
     }
     
     void add(move m, move_add_mode mode) {
-      assert (num_moves < max_moves);
-      if (!data[0]) {
-        ins(m, 0);
-      }
-      else if (m.min <= data[0].min && m.max >= data[0].max) {
-        for (uint32_t i = 0; i < num_moves; ++i) {
-          if ()data[i].dist += m.dist;
-        }
-        if (m.min < data[0].min) {
-          ins(move(m.min, data[0].min-1, m.dist), 0);
-        }
-        if (m.max > data[0].max) {
-          ins(move(data[0].max+1, m.max, m.dist), num_moves);
-        }
-      }
-      else {
-        if (data[0].min > m.max) {
-          ins(m, 0);
-        }
-        else {
-          for (uint32_t i = 0; i < num_moves; ++i) {
-            if (data[i].max < m.min) {
-              assert ((!data[i+1]) || data[i+1].min > m.max);
-              ins(m, i+1);
-              break;
-            }
-          }
-        }
-      }
+      validate();
       
       if (!data[0]) {
         ins(m, 0);
@@ -629,6 +603,7 @@ protected:
           ins(move(data[0].max+1, m.max, m.dist), num_moves);
         }
       }
+      validate();
     }
   };
   
@@ -640,10 +615,34 @@ protected:
     const int64_t idir = up ? -1 : 1;
     const uint32_t mi = up ? moves.num_moves-1 : 0;
     const uint32_t mistop = up ? uint32_t(-1) : moves.num_moves;
+    
+    level_1_block* b = nullptr;
     if (up) {
-      level_1_block* b
+      uint64_t idx = moves.data[moves.num_moves-1].max
+      uint32_t level = 0;
       for ()
+      uint64_t after_this = next_block_start(idx, level);
+      auto i = data.find(after_this >> max_children_per_block_shift);
+      while (i == data.end()) {
+        if (last_idx < after_this) {
+          i = data.find(last_idx >> max_children_per_block_shift);
+          assert (i != data.end());
+          break;
+        }
+        ++level;
+        after_this = next_block_start(idx, level);
+        a = get(after_this);
+      }
+      assert (i != data.end());
+      b = i->second;
     }
+    else {
+      auto i = data.find(moves.data[0].min >> max_children_per_block_shift);
+      assert (i != data.end());
+      b = i->second;
+    }
+    assert (b);
+    
     while (true) {
       uint64_t bmin = b->entries[0]->idx;
       uint64_t bmax = bmin + block_size(1)-1;
@@ -803,11 +802,12 @@ public:
     set(idx, nullptr);
     // TODO fix issues
     
+    move_collection moves;
     for (uint32_t level = 1; ; ++level) {
-      move_entries_down(first_in_block(idx+block_size(level-1), level-1), next_block_start(idx, level)-1, block_size(level-1));
+      moves.add(move(next_block_start(idx, level-1), next_block_start(idx, level)-1, -int64_t(block_size(level-1))), NO_OVERLAP);
       
-      uint64_t num_children = num_children_in_block(idx, level, true);
-      if (num_children >= min_children_per_block) {
+      uint64_t new_num_children = num_children_in_block(idx, level, true) - 1;
+      if (new_num_children >= min_children_per_block) {
         break;
       }
       else {
@@ -822,51 +822,48 @@ public:
         if (which_child_are_we < max_children_per_block-1) {
           next_num_children = num_children_in_block(somewhere_in_next, level);
         }
-        assert (prev_num_children || next_num_children);
+        if (!(prev_num_children || next_num_children)) {
+          break;
+        }
         bool prefer_prev = prev_num_children && ((!next_num_children) || (prev_num_children < next_num_children));
         if (prefer_prev) {
-          if (prev_num_children + num_children <= max_children_per_block) {
-            uint64_t retract_dist = block_size(level) - prev_num_children*block_size(level-1);
-            uint64_t last_retracted = next_block_start(idx, level)-1;
-            move_entries_down(first_in_block(idx, level), last_retracted, retract_dist);
-            assert (first_in_block(somewhere_in_prev, level));
+          if (prev_num_children + new_num_children <= max_children_per_block) {
+            int64_t retract_dist = block_size(level) - prev_num_children*block_size(level-1);
+            moves.add(move(block_start(idx, level), next_block_start(idx, level)-1, -retract_dist), ADD);
           }
           else {
-            uint64_t transferred_children = (prev_num_children - num_children) >> 1;
+            uint64_t transferred_children = (prev_num_children - new_num_children) >> 1;
             assert (prev_num_children - transferred_children >= max_children_per_block/2);
-            assert (num_children + transferred_children >= max_children_per_block/2);
-            auto i = last_in_block(idx, level);
-            i = move_entries_up(i, block_start(idx, level), transferred_children*block_size(level-1));
-            uint64_t steal_end = block_start(somewhere_in_prev, level) + (prev_num_children-transferred_children)*block_size(level-1);
-            move_entries_up(i, steal_end, block_start(idx, level) - steal_end);
-            assert (first_in_block(idx, level));
-            assert (first_in_block(somewhere_in_prev, level));
+            assert (new_num_children + transferred_children >= max_children_per_block/2);
+            uint64_t steal_min = block_start(somewhere_in_prev, level) + (prev_num_children-transferred_children)*block_size(level-1);
+            moves.add(move(block_start(idx, level), next_block_start(idx, level)-1, transferred_children*block_size(level-1)), ADD);
+            moves.add(move(steal_min, block_start(idx, level)-1, block_start(idx, level) - steal_min), NO_OVERLAP);
             break;
           }
         }
         else {
-          if (next_num_children + num_children <= max_children_per_block) {
-            uint64_t retract_dist = block_size(level) - num_children*block_size(level-1);
+          if (next_num_children + new_num_children <= max_children_per_block) {
+            int64_t retract_dist = block_size(level) - new_num_children*block_size(level-1);
             uint64_t last_retracted = next_block_start(somewhere_in_next, level)-1;
-            move_entries_down(first_in_block(somewhere_in_next, level), last_retracted, retract_dist);
-            assert (first_in_block(idx, level));
-            idx = somewhere_in_next;
+            moves.add(move(block_start(somewhere_in_next, level), next_block_start(somewhere_in_next, level)-1, -retract_dist), NO_OVERLAP);
           }
           else {
-            uint64_t transferred_children = (next_num_children - num_children) >> 1;
+            uint64_t transferred_children = (next_num_children - new_num_children) >> 1;
             assert (next_num_children - transferred_children >= max_children_per_block/2);
-            assert (num_children + transferred_children >= max_children_per_block/2);
-            uint64_t steal_end = block_start(somewhere_in_next, level) + transferred_children*block_size(level-1) - 1;
-            auto i = first_in_block(somewhere_in_next, level);
-            i = move_entries_down(i, steal_end, block_size(level) - num_children*block_size(level-1));
-            move_entries_down(i, next_block_start(somewhere_in_next, level)-1, transferred_children*block_size(level-1));
-            assert (first_in_block(idx, level));
-            assert (first_in_block(somewhere_in_next, level));
+            assert (new_num_children + transferred_children >= max_children_per_block/2);
+            uint64_t steal_max = block_start(somewhere_in_next, level) + transferred_children*block_size(level-1) - 1;
+            int64_t steal_dist = block_size(level) - new_num_children*block_size(level-1);
+            int64_t retract_dist = transferred_children*block_size(level-1);
+            moves.add(move(block_start(somewhere_in_next, level), steal_max, -steal_dist), NO_OVERLAP);
+            moves.add(move(steal_max+1, next_block_start(somewhere_in_next, level)-1, -retract_dist), NO_OVERLAP);
             break;
           }
         }
       }
     }
+    
+    do_moves(moves);
+    
     validate();
   }
 };
