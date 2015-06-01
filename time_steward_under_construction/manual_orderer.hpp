@@ -23,7 +23,7 @@
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
 #include <list>
-#define WORST_CASE_MANUAL_ORDERER
+//#define WORST_CASE_MANUAL_ORDERER
 #define NEW_AMORTIZED_MANUAL_ORDERER
 
 #ifndef WORST_CASE_MANUAL_ORDERER
@@ -301,7 +301,7 @@ const uint64_t no_idx = std::numeric_limits<uint64_t>::max();
 
 struct level_1_block;
 struct entry_base {
-  entry_base():idx(no_idx),ref_count(0),prev(nullptr),next(nullptr),owner(nullptr){}
+  entry_base():idx(no_idx),ref_count(0),parent(nullptr){}
   uint64_t idx;
   size_t ref_count;
   level_1_block* parent;
@@ -367,8 +367,8 @@ private:
       if (data) {
         --data->ref_count;
         if (data->ref_count == 0) {
-          if (data->owner) {
-            data->owner->erase(data);
+          if (data->parent) {
+            data->parent->owner->erase(data);
           }
           entry<ValueType>* was_data = data;
           data = nullptr;
@@ -419,24 +419,30 @@ struct level_1_block {
   level_1_block* prev;
   level_1_block* next;
   std::array<entry_base*, max_children_per_block> entries;
-  uint32_t last_child;
+  //uint32_t last_child;
 };
 
 class manual_orderer_base {
 protected:
   std::unordered_map<uint64_t, level_1_block*> data;
-  uint64_t last_idx;
+  level_1_block* last_l1block;
   
   entry_base* get(uint64_t idx) {
     auto i = data.find(idx >> max_children_per_block_shift);
     if (i == data.end()) { return nullptr; }
     return i->second->entries[idx & position_in_block_mask(1)];
   }
-  level_1_block* force_l1block(uint64_t idx) {
+  level_1_block* force_l1block(uint64_t idx, level_1_block* prev, level_1_block* next) {
     auto i = data.find(idx >> max_children_per_block_shift);
     if (i == data.end()) {
       level_1_block* b = new level_1_block();
-      data.insert(i, b);
+      b->owner = this;
+      b->prev = prev;
+      b->next = next;
+      if (prev) { prev->next = b; }
+      if (next) { next->prev = b; }
+      if (!next) { last_l1block = b; }
+      data.insert(std::make_pair(idx >> max_children_per_block_shift, b));
       return b;
     }
     else {
@@ -444,47 +450,84 @@ protected:
     }
   }
   void set(uint64_t idx, entry_base* e) {
-    level_1_block* b = force_l1block(idx);
+    auto i = data.find(idx >> max_children_per_block_shift);
+    assert (i != data.end());
+    level_1_block* b = i->second;
     uint64_t pos = idx & position_in_block_mask(1);
     b->entries[pos] = e;
-    cleanup(b, idx);
+    if (e) { e->parent = b; }
+    cleanup_check(b, idx);
   }
-  void cleanup(level_1_block* b, uint64_t former_idx) {
+  void cleanup_check(level_1_block* b, uint64_t former_idx) {
     for (uint32_t i = 0; i < block_size(1); ++i) {
       if (b->entries[i]) { return; }
     }
+    cleanup(b, former_idx);
+  }
+  void cleanup(level_1_block* b, uint64_t former_idx) {
+    if (last_l1block == b) { last_l1block = b->prev; }
+    if (b->prev) { b->prev->next = b->next; }
+    if (b->next) { b->next->prev = b->prev; }
     auto q = data.erase(former_idx >> max_children_per_block_shift);
     assert (q);
     delete b;
   }
   
+  
   entry_base* first_in_block(uint64_t idx, uint32_t level) {
     return get(block_start(idx, level));
   }
-  entry_base* last_in_block(uint64_t idx, uint32_t level) {
-    uint64_t after_this = next_block_start(idx, level);
-    auto a = get(after_this);
-    while (!a) {
-      if (last_entry->idx < after_this) { return last_entry; }
+//   entry_base* last_in_block(uint64_t idx, uint32_t level) {
+//     uint64_t after_this = next_block_start(idx, level);
+//     auto a = get(after_this);
+//     while (!a) {
+//       if (last_entry->idx < after_this) { return last_entry; }
+//       ++level;
+//       after_this = next_block_start(idx, level);
+//       a = get(after_this);
+//     }
+//     assert (a->prev->idx < after_this);
+//     return a->prev;
+//   }
+  level_1_block* last_l1block_not_after(uint64_t idx) {
+    uint32_t level = 1;
+    
+    auto i = data.find(next_block_start(idx, level) >> max_children_per_block_shift);
+    while (true) {
+      uint64_t after_this = next_block_start(idx, level);
+      if (last_l1block->entries[0]->idx < after_this) {
+        return last_l1block;
+      }
+      i = data.find(next_block_start(idx, level) >> max_children_per_block_shift);
+      if (i != data.end()) {
+        return i->second->prev;
+      }
       ++level;
-      after_this = next_block_start(idx, level);
-      a = get(after_this);
     }
-    assert (a->prev->idx < after_this);
-    return a->prev;
   }
   bool block_is_full(uint64_t idx, uint32_t level) {
-    uint64_t after_this = next_block_start(idx, level);
-    bool result = last_in_block(idx, level)->idx >= after_this - block_size(level-1);
+    //uint64_t after_this = next_block_start(idx, level);
+    //bool result = last_in_block(idx, level)->idx >= after_this - block_size(level-1);
+    bool result = bool(get(next_block_start(idx, level) - block_size(level-1)));
     assert (result == (num_children_in_block(idx, level) == max_children_per_block));
     return result;
   }
   uint64_t num_children_in_block(uint64_t idx, uint32_t level, bool lenient = false) {
-    entry_base* l = last_in_block(idx, level);
-    if (l->idx < block_start(idx, level)) { return 0; }
-    uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
-    assert (num_children <= max_children_per_block);
-    if (l->next) {
+//     entry_base* l = last_in_block(idx, level);
+//     if (l->idx < block_start(idx, level)) { return 0; }
+//     uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
+//     assert (num_children <= max_children_per_block);
+//     if (l->next) {
+//       assert (num_children >= min_children_per_block - lenient);
+//     }
+//     return num_children;
+    uint64_t num_children = 0;
+    for (; num_children < max_children_per_block; ++num_children) {
+      if (!get(block_start(idx, level) + num_children*block_size(level-1))) {
+        break;
+      }
+    }
+    if (get(next_block_start(idx, level))) {
       assert (num_children >= min_children_per_block - lenient);
     }
     return num_children;
@@ -497,11 +540,15 @@ protected:
     int64_t dist;
     move():min(0),max(0),dist(0){}
     move(uint64_t min, uint64_t max, int64_t dist):min(min),max(max),dist(dist){}
-    explicit operator bool()const { return dist == 0; }
+    explicit operator bool()const { return dist != 0; }
   };
   struct move_collection {
+    static const uint32_t max_moves = 80; //TODO
     std::array<move, max_moves> data;
     uint32_t num_moves;
+    move_collection() {
+      memset (this, 0, sizeof(move_collection));
+    }
     
     void validate() {
       for (uint32_t i = 0; i < max_moves; ++i) {
@@ -509,7 +556,7 @@ protected:
         if (bool(data[i])) {
           assert (data[i].max > data[i].min);
           assert (sign(data[i].dist) > sign(data[0].dist));
-          if (bool(data[i]+1)) {
+          if (bool(data[i+1])) {
             assert (data[i].max+1 == data[i+1].min);
           }
         }
@@ -613,28 +660,12 @@ protected:
     }
     const bool up = (moves.data[0].dist > 0);
     const int64_t idir = up ? -1 : 1;
-    const uint32_t mi = up ? moves.num_moves-1 : 0;
+    uint32_t mi = up ? moves.num_moves-1 : 0;
     const uint32_t mistop = up ? uint32_t(-1) : moves.num_moves;
     
     level_1_block* b = nullptr;
     if (up) {
-      uint64_t idx = moves.data[moves.num_moves-1].max
-      uint32_t level = 0;
-      for ()
-      uint64_t after_this = next_block_start(idx, level);
-      auto i = data.find(after_this >> max_children_per_block_shift);
-      while (i == data.end()) {
-        if (last_idx < after_this) {
-          i = data.find(last_idx >> max_children_per_block_shift);
-          assert (i != data.end());
-          break;
-        }
-        ++level;
-        after_this = next_block_start(idx, level);
-        a = get(after_this);
-      }
-      assert (i != data.end());
-      b = i->second;
+      b = last_l1block_not_after(moves.data[moves.num_moves-1].max);
     }
     else {
       auto i = data.find(moves.data[0].min >> max_children_per_block_shift);
@@ -663,14 +694,19 @@ protected:
       else {
         const uint64_t max = std::min(m.max, bmax);
         const uint64_t min = std::max(m.min, bmin);
-        const int64_t istop = up ? min-1 : max+1;
+        const uint64_t istop = up ? min-1 : max+1;
         for (uint64_t i = up ? max : min; i != istop; i += idir) {
+          entry_base* e = b->entries[i-bmin];
           b->entries[i-bmin] = nullptr;
           e->idx += m.dist;
           const uint64_t b2min = block_start(e->idx, 1);
-          level_1_block* b2 = force_l1block(e->idx);
+          level_1_block* b2 = force_l1block(e->idx,
+            up ? b : b->prev,
+            up ? b->next : b
+          );
           assert (!b2->entries[e->idx-b2min]);
           b2->entries[e->idx-b2min] = e;
+          e->parent = b2;
         }
       }
       
@@ -679,57 +715,58 @@ protected:
       if (advance_b) {
         level_1_block* b2 = up ? b->prev : b->next;
         if (cleanup_b) {
-          cleanup(b, bmin);
+          cleanup_check(b, bmin);
         }
         b = b2;
         if (!b) { break; }
       }
       if (advance_m) {
         mi += idir;
-        if (mi == istop) { break; }
-        assert (moves.data[mi].min == m.max+1 || m.min == moves.data[mi].max+1)
+        if (mi == mistop) { break; }
+        assert (moves.data[mi].min == m.max+1 || m.min == moves.data[mi].max+1);
       }
     }
   }
   
   ~manual_orderer_base() {
     for (auto p : data) {
-      entry_base* e = p.second;
-      e->idx = no_idx;
-      e->prev = nullptr;
-      e->next = nullptr;
-      e->owner = nullptr;
+      level_1_block* b = p.second;
+      for (auto e : b->entries) {
+        e->idx = no_idx;
+        e->parent = nullptr;
+      }
+      delete b;
     }
   }
   
   void validate() {
     return;
-    for (auto p : data) {
-      entry_base* e = p.second;
-      if (e->prev) {
-        assert (e->prev->next == e);
-        assert (e->prev->idx < e->idx);
-      }
-      if (e->next) {
-        assert (e->next->prev == e);
-        assert (e->next->idx > e->idx);
-      }
-      else {
-        assert (e == last_entry);
-      }
-      assert (e->idx != no_idx);
-      assert (e->owner == this);
-    }
-    
-    for (uint32_t level = 1; level < 15; ++level) {
-      for (uint64_t start = 0; start <= last_entry->idx; start += block_size(level)) {
-        bool f = true;
-        for (uint64_t cstart = start; cstart < start + block_size(level); cstart += block_size(level-1)) {
-          if (!get(cstart)) { f = false; }
-          else { assert(f); }
-        }
-      }
-    }
+//     for (auto p : data) {
+//       entry_base* e = p.second;
+//       if (e->prev) {
+//         assert (e->prev->next == e);
+//         assert (e->prev->idx < e->idx);
+//       }
+//       if (e->next) {
+//         assert (e->next->prev == e);
+//         assert (e->next->idx > e->idx);
+//       }
+//       else {
+//         assert (e == last_entry);
+//       }
+//       assert (e->idx != no_idx);
+//       assert (e->owner == this);
+//     }
+//     
+//     for (uint32_t level = 1; level < 15; ++level) {
+//       for (uint64_t start = 0; start <= last_entry->idx; start += block_size(level)) {
+//         bool f = true;
+//         for (uint64_t cstart = start; cstart < start + block_size(level); cstart += block_size(level-1)) {
+//           if (!get(cstart)) { f = false; }
+//           else { assert(f); }
+//         }
+//       }
+//     }
   }
 
 public:
@@ -762,43 +799,22 @@ public:
     if (after) {
       set(existing_entry->idx+1, inserted_entry);
       inserted_entry->idx = existing_entry->idx+1;
-      inserted_entry->prev = existing_entry;
-      inserted_entry->next = existing_entry->next;
-      if (existing_entry->next) { existing_entry->next->prev = inserted_entry; }
-      existing_entry->next = inserted_entry;
-      if (last_entry == existing_entry) { last_entry = inserted_entry; }
-      
-      assert (inserted_entry->idx > existing_entry->idx);
-      assert (!inserted_entry->next || inserted_entry->idx < inserted_entry->next->idx);
     }
     else {
       set(existing_entry->idx-1, inserted_entry);
       inserted_entry->idx = existing_entry->idx-1;
-      inserted_entry->prev = existing_entry->prev;
-      inserted_entry->next = existing_entry;
-      if (existing_entry->prev) { existing_entry->prev->next = inserted_entry; }
-      existing_entry->prev = inserted_entry;
-      
-      assert (inserted_entry->idx < existing_entry->idx);
-      assert (!inserted_entry->prev || inserted_entry->idx > inserted_entry->prev->idx);
     }
-    inserted_entry->owner = this;
-    for (uint32_t level = nonfull_level; level != 0; --level) {
-      assert (first_in_block(existing_entry->idx, level));
-    }
+//     for (uint32_t level = nonfull_level; level != 0; --level) {
+//       assert (first_in_block(existing_entry->idx, level));
+//     }
     validate();
   }
   
   void erase(entry_base* erased_entry) {
     validate();
     uint64_t idx = erased_entry->idx;
-    if (last_entry == erased_entry) { last_entry = erased_entry->prev; }
-    if (erased_entry->prev) { erased_entry->prev->next = erased_entry->next; }
-    if (erased_entry->next) { erased_entry->next->prev = erased_entry->prev; }
     erased_entry->idx = no_idx;
-    erased_entry->prev = nullptr;
-    erased_entry->next = nullptr;
-    erased_entry->owner = nullptr;
+    erased_entry->parent = nullptr;
     set(idx, nullptr);
     // TODO fix issues
     
@@ -844,7 +860,6 @@ public:
         else {
           if (next_num_children + new_num_children <= max_children_per_block) {
             int64_t retract_dist = block_size(level) - new_num_children*block_size(level-1);
-            uint64_t last_retracted = next_block_start(somewhere_in_next, level)-1;
             moves.add(move(block_start(somewhere_in_next, level), next_block_start(somewhere_in_next, level)-1, -retract_dist), NO_OVERLAP);
           }
           else {
@@ -866,6 +881,15 @@ public:
     
     validate();
   }
+  
+  void insert_only(entry_base* inserted_entry) {
+    level_1_block *b = new level_1_block();
+    b->owner = this;
+    b->entries[0] = inserted_entry;
+    inserted_entry->idx = 0;
+    last_l1block = b;
+    data.insert(std::make_pair(0, b));
+  }
 };
 
 
@@ -880,12 +904,7 @@ public:
   // put_only puts the first object in the ordering; you can't use it
   // after it's been called once
   void put_only(entry_ref m) {
-    m.data->prev = nullptr;
-    m.data->next = nullptr;
-    m.data->owner = this;
-    m.data->idx = 0;
-    last_entry = m.data;
-    set(0, m.data);
+    insert_only(m.data);
   }
 
   // relative_to must already have been put in the ordering.
@@ -1442,7 +1461,7 @@ struct bottom_level_node : public node_base {
         end_indices[false] = e->idx;
       }
       else {
-        assert (space_count_acceptable(space[!towards_side] - gap_length_in_children), 1);
+        assert (space_count_acceptable(space[!towards_side] - gap_length_in_children, 1));
         child_idx i = end_indices[!towards_side];
         entry_base* e = entries[i];
         entries[i] = nullptr;
