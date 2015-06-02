@@ -22,7 +22,16 @@
 #ifndef LASERCAKE_MANUAL_ORDERER_HPP__
 #define LASERCAKE_MANUAL_ORDERER_HPP__
 
+#include <assert.h>
+#include <array>
+#include <iostream>
+#include <unordered_map>
+#include <unordered_set>
 #include <list>
+#include <cstring>
+#include <boost/integer.hpp>
+#include "../data_structures/numbers.hpp"
+
 //#define WORST_CASE_MANUAL_ORDERER
 #define NEW_AMORTIZED_MANUAL_ORDERER
 
@@ -425,9 +434,9 @@ struct level_1_block {
 class manual_orderer_base {
 protected:
   std::unordered_map<uint64_t, level_1_block*> data;
-  level_1_block* last_l1block;
+  level_1_block* last_l1block = nullptr;
   
-  entry_base* get(uint64_t idx) {
+  entry_base* get(uint64_t idx)const {
     auto i = data.find(idx >> max_children_per_block_shift);
     if (i == data.end()) { return nullptr; }
     return i->second->entries[idx & position_in_block_mask(1)];
@@ -441,8 +450,10 @@ protected:
       b->next = next;
       if (prev) { prev->next = b; }
       if (next) { next->prev = b; }
+      assert ((prev == last_l1block) == !next);
       if (!next) { last_l1block = b; }
-      data.insert(std::make_pair(idx >> max_children_per_block_shift, b));
+      auto p = data.insert(std::make_pair(idx >> max_children_per_block_shift, b));
+      assert (p.second);
       return b;
     }
     else {
@@ -454,6 +465,7 @@ protected:
     assert (i != data.end());
     level_1_block* b = i->second;
     uint64_t pos = idx & position_in_block_mask(1);
+    assert (bool(b->entries[pos]) != bool(e));
     b->entries[pos] = e;
     if (e) { e->parent = b; }
     cleanup_check(b, idx);
@@ -474,7 +486,7 @@ protected:
   }
   
   
-  entry_base* first_in_block(uint64_t idx, uint32_t level) {
+  entry_base* first_in_block(uint64_t idx, uint32_t level)const {
     return get(block_start(idx, level));
   }
 //   entry_base* last_in_block(uint64_t idx, uint32_t level) {
@@ -489,30 +501,29 @@ protected:
 //     assert (a->prev->idx < after_this);
 //     return a->prev;
 //   }
-  level_1_block* last_l1block_not_after(uint64_t idx) {
+  level_1_block* last_l1block_not_after(uint64_t idx)const {
     uint32_t level = 1;
     
-    auto i = data.find(next_block_start(idx, level) >> max_children_per_block_shift);
     while (true) {
       uint64_t after_this = next_block_start(idx, level);
       if (last_l1block->entries[0]->idx < after_this) {
         return last_l1block;
       }
-      i = data.find(next_block_start(idx, level) >> max_children_per_block_shift);
+      auto i = data.find(after_this >> max_children_per_block_shift);
       if (i != data.end()) {
         return i->second->prev;
       }
       ++level;
     }
   }
-  bool block_is_full(uint64_t idx, uint32_t level) {
+  bool block_is_full(uint64_t idx, uint32_t level)const {
     //uint64_t after_this = next_block_start(idx, level);
     //bool result = last_in_block(idx, level)->idx >= after_this - block_size(level-1);
     bool result = bool(get(next_block_start(idx, level) - block_size(level-1)));
     assert (result == (num_children_in_block(idx, level) == max_children_per_block));
     return result;
   }
-  uint64_t num_children_in_block(uint64_t idx, uint32_t level, bool lenient = false) {
+  uint64_t num_children_in_block(uint64_t idx, uint32_t level)const {
 //     entry_base* l = last_in_block(idx, level);
 //     if (l->idx < block_start(idx, level)) { return 0; }
 //     uint64_t num_children = which_child_is_block(l->idx, level-1) + 1;
@@ -527,8 +538,8 @@ protected:
         break;
       }
     }
-    if (get(next_block_start(idx, level))) {
-      assert (num_children >= min_children_per_block - lenient);
+    if (num_children && get(next_block_start(idx, level))) {
+      assert (num_children >= min_children_per_block);
     }
     return num_children;
   }
@@ -554,8 +565,8 @@ protected:
       for (uint32_t i = 0; i < max_moves; ++i) {
         assert (bool(data[i]) == (i < num_moves));
         if (bool(data[i])) {
-          assert (data[i].max > data[i].min);
-          assert (sign(data[i].dist) > sign(data[0].dist));
+          assert (data[i].max >= data[i].min);
+          assert (sign(data[i].dist) == sign(data[0].dist));
           if (bool(data[i+1])) {
             assert (data[i].max+1 == data[i+1].min);
           }
@@ -587,7 +598,7 @@ protected:
       else if (m.max < data[0].min) {
         ins(m, 0);
       }
-      else if (m.min > data[0].max) {
+      else if (m.min > data[num_moves-1].max) {
         ins(m, num_moves);
       }
       else if (mode == NO_OVERLAP) {
@@ -616,8 +627,11 @@ protected:
             data[i].min = m.max+1;
           }
           else if (data[i].max <= m.max) {
-            data[i].min = m.min-1;
+            data[i].max = m.min-1;
           }
+        }
+        if (!insed) {
+          ins(m, num_moves);
         }
       }
       else if (mode == ADD) {
@@ -634,20 +648,20 @@ protected:
           }
           else if (data[i].min >= m.min) {
             data[i].min = m.max+1;
-            ins(move(data[0].min, m.max, data[i].dist + m.dist), i);
+            ins(move(data[i].min, m.max, data[i].dist + m.dist), i);
             ++i;
           }
           else if (data[i].max <= m.max) {
             data[i].min = m.min-1;
-            ins(move(m.min, data[0].max, data[i].dist + m.dist), i+1);
+            ins(move(m.min, data[i].max, data[i].dist + m.dist), i+1);
             ++i;
           }
         }
         if (m.min < data[0].min) {
           ins(move(m.min, data[0].min-1, m.dist), 0);
         }
-        if (m.max > data[0].max) {
-          ins(move(data[0].max+1, m.max, m.dist), num_moves);
+        if (m.max > data[num_moves-1].max) {
+          ins(move(data[num_moves-1].max+1, m.max, m.dist), num_moves);
         }
       }
       validate();
@@ -656,6 +670,9 @@ protected:
   
   void do_moves(move_collection const& moves) {
     if (!moves.data[0]) {
+      return;
+    }
+    if (data.empty()) {
       return;
     }
     const bool up = (moves.data[0].dist > 0);
@@ -669,18 +686,32 @@ protected:
     }
     else {
       auto i = data.find(moves.data[0].min >> max_children_per_block_shift);
-      assert (i != data.end());
-      b = i->second;
+      
+      // hack
+      if (i == data.end()) {
+        i = data.find((moves.data[0].min >> max_children_per_block_shift) - 1);
+        assert (i != data.end());
+        b = i->second->next;
+      }
+      
+      else {
+        assert (i != data.end());
+        b = i->second;
+      }
     }
-    assert (b);
+    if (!b) { return; }
+    // hack to appease erase() removing the first entry first
+    // TODO reduce duplicate code ID hxTobJFx25cYhg
+    //uint64_t bmin = b->entries[0]->idx;
+    uint64_t bmin = b->entries[0] ? b->entries[0]->idx : b->entries[1]->idx - 1;
     
     while (true) {
-      uint64_t bmin = b->entries[0]->idx;
+      
       uint64_t bmax = bmin + block_size(1)-1;
       move const& m = moves.data[mi];
       bool cleanup_b = true;
       
-      if (m.min <= bmin && m.max >= bmax && ((m.dist & position_in_block_mask(1)) == 0)) {
+      if (m.min <= bmin && m.max >= bmax && ((m.dist & position_in_block_mask(1)) == 0) && (data.find((bmin + m.dist) >> max_children_per_block_shift) == data.end())) {
         for (entry_base* e : b->entries) {
           if (!e) break;
           e->idx += m.dist;
@@ -691,22 +722,27 @@ protected:
         assert (q);
         cleanup_b = false;
       }
-      else {
-        const uint64_t max = std::min(m.max, bmax);
-        const uint64_t min = std::max(m.min, bmin);
+      else if (m.min <= bmax && m.max >= bmin) {
+        const uint64_t max = m.max < bmax ? m.max : bmax;
+        const uint64_t min = m.min > bmin ? m.min : bmin;
         const uint64_t istop = up ? min-1 : max+1;
         for (uint64_t i = up ? max : min; i != istop; i += idir) {
+          assert (i >= bmin);
+          assert (i <= bmax);
+          assert (i-bmin < block_size(1));
           entry_base* e = b->entries[i-bmin];
-          b->entries[i-bmin] = nullptr;
-          e->idx += m.dist;
-          const uint64_t b2min = block_start(e->idx, 1);
-          level_1_block* b2 = force_l1block(e->idx,
-            up ? b : b->prev,
-            up ? b->next : b
-          );
-          assert (!b2->entries[e->idx-b2min]);
-          b2->entries[e->idx-b2min] = e;
-          e->parent = b2;
+          if (e) {
+            b->entries[i-bmin] = nullptr;
+            e->idx += m.dist;
+            const uint64_t b2min = block_start(e->idx, 1);
+            level_1_block* b2 = force_l1block(e->idx,
+              up ? b : b->prev,
+              up ? b->next : b
+            );
+            assert (!b2->entries[e->idx-b2min]);
+            b2->entries[e->idx-b2min] = e;
+            e->parent = b2;
+          }
         }
       }
       
@@ -719,6 +755,9 @@ protected:
         }
         b = b2;
         if (!b) { break; }
+        
+        // TODO reduce duplicate code ID hxTobJFx25cYhg
+        bmin = b->entries[0] ? b->entries[0]->idx : b->entries[1]->idx - 1;
       }
       if (advance_m) {
         mi += idir;
@@ -732,15 +771,73 @@ protected:
     for (auto p : data) {
       level_1_block* b = p.second;
       for (auto e : b->entries) {
-        e->idx = no_idx;
-        e->parent = nullptr;
+        if (e) {
+          e->idx = no_idx;
+          e->parent = nullptr;
+        }
       }
       delete b;
     }
   }
   
+  void dump() {
+    
+  }
+  
+  bool contains_impl(entry_base* e)const {
+    return get(e->idx) == e;
+  }
+  
+  void validate_block(uint64_t idx, uint32_t level) {
+    if (level > 0) {
+      bool f = true;
+      uint32_t children = 0;
+      for (uint64_t i = 0; i < max_children_per_block; ++i) {
+        uint64_t s = idx + i*block_size(level-1);
+        if (get(s)) {
+          assert(f);
+          validate_block(s, level-1);
+          children = i+1;
+        }
+        else {
+          f = false;
+        }
+      }
+      if (children < min_children_per_block) {
+        assert (idx == 0);
+        assert ((level == 16) || !get(next_block_start(idx, level)));
+      }
+    }
+  }
+  
   void validate() {
-    return;
+    std::unordered_set<level_1_block*> l1bs1;
+    std::unordered_set<level_1_block*> l1bs2;
+    for (auto p : data) {
+      l1bs1.insert(p.second);
+    }
+    for (level_1_block* b = last_l1block; b; b = b->prev) {
+      l1bs2.insert(b);
+      assert (l1bs1.find(b) != l1bs1.end());
+    }
+    for (auto p : data) {
+      assert (l1bs2.find(p.second) != l1bs1.end());
+    }
+    for (auto p : data) {
+      level_1_block* b = p.second;
+      assert (b->entries[0]);
+      assert (b->entries[0]->idx == block_start(b->entries[0]->idx, 1));
+      assert (data.find(b->entries[0]->idx >> max_children_per_block_shift)->second == b);
+      for (uint32_t i = 0; i < block_size(1); ++i) {
+        if (b->entries[i]) {
+          assert (b->entries[i]->idx == b->entries[0]->idx + i);
+          assert (b->entries[i]->parent == b);
+        }
+      }
+    }
+    validate_block(0, 16);
+    
+//     return;
 //     for (auto p : data) {
 //       entry_base* e = p.second;
 //       if (e->prev) {
@@ -771,7 +868,9 @@ protected:
 
 public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+#ifdef AUDIT_ORDERED_STUFF
     validate();
+#endif
     move_collection moves;
     uint32_t level = 0;
     do {
@@ -783,7 +882,9 @@ public:
       if (level == 0 && !after) {
         --min_shoved;
       }
-      moves.add(move(min_shoved, max_shoved, shove_dist), NO_OVERLAP);
+      if (min_shoved <= max_shoved) {
+        moves.add(move(min_shoved, max_shoved, shove_dist), NO_OVERLAP);
+      }
       if (level > 0) {
         uint64_t split_dist = shove_dist >> 1;
         uint64_t min_split = min_shoved - split_dist;
@@ -807,22 +908,26 @@ public:
 //     for (uint32_t level = nonfull_level; level != 0; --level) {
 //       assert (first_in_block(existing_entry->idx, level));
 //     }
+#ifdef AUDIT_ORDERED_STUFF
     validate();
+#endif
   }
   
   void erase(entry_base* erased_entry) {
+#ifdef AUDIT_ORDERED_STUFF
     validate();
+#endif
     uint64_t idx = erased_entry->idx;
-    erased_entry->idx = no_idx;
-    erased_entry->parent = nullptr;
-    set(idx, nullptr);
-    // TODO fix issues
     
     move_collection moves;
     for (uint32_t level = 1; ; ++level) {
-      moves.add(move(next_block_start(idx, level-1), next_block_start(idx, level)-1, -int64_t(block_size(level-1))), NO_OVERLAP);
+      uint64_t min_unshoved = next_block_start(idx, level-1);
+      uint64_t max_unshoved = next_block_start(idx, level)-1;
+      if (min_unshoved <= max_unshoved) {
+        moves.add(move(min_unshoved, max_unshoved, -int64_t(block_size(level-1))), NO_OVERLAP);
+      }
       
-      uint64_t new_num_children = num_children_in_block(idx, level, true) - 1;
+      uint64_t new_num_children = num_children_in_block(idx, level) - 1;
       if (new_num_children >= min_children_per_block) {
         break;
       }
@@ -861,6 +966,7 @@ public:
           if (next_num_children + new_num_children <= max_children_per_block) {
             int64_t retract_dist = block_size(level) - new_num_children*block_size(level-1);
             moves.add(move(block_start(somewhere_in_next, level), next_block_start(somewhere_in_next, level)-1, -retract_dist), NO_OVERLAP);
+            idx = somewhere_in_next; // it's now as if next is the one deleted
           }
           else {
             uint64_t transferred_children = (next_num_children - new_num_children) >> 1;
@@ -877,18 +983,32 @@ public:
       }
     }
     
+    set(erased_entry->idx, nullptr);
+    erased_entry->idx = no_idx;
+    erased_entry->parent = nullptr;
+    
     do_moves(moves);
     
+#ifdef AUDIT_ORDERED_STUFF
     validate();
+#endif
   }
   
   void insert_only(entry_base* inserted_entry) {
+#ifdef AUDIT_ORDERED_STUFF
+    validate();
+#endif
+    assert (data.empty());
     level_1_block *b = new level_1_block();
     b->owner = this;
     b->entries[0] = inserted_entry;
     inserted_entry->idx = 0;
+    inserted_entry->parent = b;
     last_l1block = b;
     data.insert(std::make_pair(0, b));
+#ifdef AUDIT_ORDERED_STUFF
+    validate();
+#endif
   }
 };
 
@@ -916,6 +1036,10 @@ public:
   // Puts "moving" in the ordering just after relative_to.
   void put_after(entry_ref moving, entry_ref relative_to) {
     insert(moving.data, relative_to.data, true);
+  }
+  
+  bool contains(entry_ref m)const {
+    return contains_impl(m.data);
   }
 };
   
