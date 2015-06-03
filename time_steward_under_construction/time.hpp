@@ -84,7 +84,7 @@ struct extended_time_metadata {
     base_time(base_time),parent(parent),id(id),trigger_iteration(trigger_iteration){}
   
   struct sort_sibling_extended_times_by_id_and_trigger_iteration {
-    bool operator()(extended_time a, extended_time b)const {
+    bool operator()(extended_time const& a, extended_time const& b)const {
       if (a->trigger_iteration != b->trigger_iteration) { return a->trigger_iteration < b->trigger_iteration; }
       return a->id < b->id;
     }
@@ -118,10 +118,10 @@ public:
   static extended_time event_time(time_type t, siphash_id id) {
     return make_extended_time_impl(get_base_time_root(t), id);
   }
-  static extended_time event_time(extended_time t, siphash_id id) {
+  static extended_time event_time(extended_time const& t, siphash_id id) {
     return make_extended_time_impl(t->is_trigger() ? t->parent : t, id);
   }
-  static extended_time trigger_call_time(trigger_id tid, extended_time when_triggered) {
+  static extended_time trigger_call_time(trigger_id tid, extended_time const& when_triggered) {
     const extended_time t = when_triggered->is_trigger() ? when_triggered->parent : when_triggered;
     uint32_t trigger_iteration = (when_triggered->trigger_iteration == not_a_trigger) ? 0 : when_triggered->trigger_iteration;
     
@@ -139,8 +139,8 @@ public:
   static extended_time max_time() {
     return get_base_time_root(max_base_time);
   }
-  static extended_time after_all_calls_triggered_at(extended_time when_triggered) {
-    const extended_time t = when_triggered->is_trigger() ? when_triggered->parent : when_triggered;
+  static extended_time after_all_calls_triggered_at(extended_time const& when_triggered) {
+    extended_time const& t = when_triggered->is_trigger() ? when_triggered->parent : when_triggered;
     return require_sentinel_child(t);
   }
   static extended_time base_time_end(time_type t) {
@@ -149,7 +149,7 @@ public:
   }
 private:
   struct sort_extended_times_by_base_time {
-    bool operator()(extended_time a, extended_time b)const {
+    bool operator()(extended_time const& a, extended_time const& b)const {
       return a->base_time < b->base_time;
     }
   };
@@ -159,7 +159,7 @@ private:
   static std::set<extended_time, sort_extended_times_by_base_time>& base_time_roots() {
     static std::set<extended_time, sort_extended_times_by_base_time> a; return a;
   }
-  static extended_time require_sentinel_child(extended_time t) {
+  static extended_time require_sentinel_child(extended_time const& t) {
     if (!t->children) {
       // create a sentinel with no children at the end
       t->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
@@ -190,7 +190,7 @@ private:
     return result;
   }
   template <class... Args>
-  static extended_time make_extended_time_impl(extended_time parent, Args&&... args) {
+  static extended_time make_extended_time_impl(extended_time const& parent, Args&&... args) {
     require_sentinel_child(parent);
     const extended_time result = extended_time::construct(time_type(never), parent, std::forward<Args>(args)...);
     const auto i = parent->children->lower_bound(result);

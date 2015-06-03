@@ -641,7 +641,7 @@ private:
 
   siphash_id create_id() { return rng_.random_id(); }
     
-  time_steward_accessor(TimeSteward const* ts, extended_time time, trigger_id trigger_id_ = trigger_id::null())
+  time_steward_accessor(TimeSteward const* ts, extended_time const& time, trigger_id trigger_id_ = trigger_id::null())
     :ts_(ts),time_(time),trigger_id_(trigger_id_),rng_(time_->id){}
   void process_event(event const* e) {
     (*e)(this);
@@ -758,7 +758,7 @@ private:
   std::set<extended_time> event_piles_needing_unexecution;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
   
-  void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time new_trigger_call_time) {
+  void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time const& new_trigger_call_time) {
     const auto cut_off_call_ptr = last_scheduled_trigger_call(tid, new_trigger_call_time);
     if (cut_off_call_ptr) {
       const auto next_call_ptr = next_scheduled_trigger_call(tid, new_trigger_call_time);
@@ -796,7 +796,7 @@ private:
       }
     }
   }
-  void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
+  void update_trigger(bool undoing, trigger_id tid, extended_time const& field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
     // with undoing==false: Either a trigger was created/replaced, or an entity a trigger-call accessed changed.
     //   We need to do two things:
     //   1) Create a new trigger-call soon after the current time (if it doesn't already exist);
@@ -867,7 +867,7 @@ private:
       }
     }
   }
-  void update_triggers(bool undoing, field_metadata_throughout_time const& metadata, extended_time field_change_time) {
+  void update_triggers(bool undoing, field_metadata_throughout_time const& metadata, extended_time const& field_change_time) {
     for (auto v : metadata.triggers_pointing_at_this.range_containing(field_change_time)) {
       // bidirectional_interval_map acts as if its intervals are closed intervals but we treat them as right-open ones.
       // if a trigger checks a field and then changes it, it retriggers itself.
@@ -877,7 +877,7 @@ private:
       }
     }
   }
-  void invalidate_events(field_metadata_throughout_time const& metadata, extended_time field_change_time, extended_time field_change_end_time) {
+  void invalidate_events(field_metadata_throughout_time const& metadata, extended_time const& field_change_time, extended_time const& field_change_end_time) {
     for (auto incorrect_event_time = metadata.event_piles_which_accessed_this.upper_bound(field_change_time); // upper_bound:
         // don't paradoxically cancel the event that changed this field
          (incorrect_event_time != metadata.event_piles_which_accessed_this.end()) && (*incorrect_event_time <= field_change_end_time); // <=:
@@ -906,7 +906,7 @@ private:
     }
     
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time time, decltype(accessor::entity_info::fields)& src) {
+    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time const& time, decltype(accessor::entity_info::fields)& src) {
       auto& f = ts->get_field_throughout_time<FieldID>(id);
       const auto p = f.insert(std::make_pair(time, get_field<FieldID>(src, id)));
       assert(p.second);
@@ -915,7 +915,7 @@ private:
   };
   struct undo_field_change {
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time time) {
+    static void func(time_steward* ts, entity_field_id const& id, field_metadata_throughout_time const& metadata, extended_time const& time) {
       auto& f = ts->get_field_throughout_time<FieldID>(id);
       const auto i = f.find(time);
       assert(i != f.end());
@@ -923,7 +923,7 @@ private:
       f.erase(i);
     }
   };
-  std::pair<const extended_time, trigger_call_info> const* next_executed_trigger_call(trigger_id tid, extended_time time)const {
+  std::pair<const extended_time, trigger_call_info> const* next_executed_trigger_call(trigger_id tid, extended_time const& time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -932,7 +932,7 @@ private:
     if (next_call_iter == trigger_info.end()) { return nullptr; }
     return &*next_call_iter;
   }
-  std::pair<const extended_time, trigger_call_info> const* last_executed_trigger_call(trigger_id tid, extended_time time)const {
+  std::pair<const extended_time, trigger_call_info> const* last_executed_trigger_call(trigger_id tid, extended_time const& time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -941,7 +941,7 @@ private:
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
     return &*boost::prior(last_call_iter);
   }
-  std::pair<const extended_time, trigger_call_info> const* next_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+  std::pair<const extended_time, trigger_call_info> const* next_scheduled_trigger_call(trigger_id tid, extended_time const& time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -950,7 +950,7 @@ private:
     if (next_call_iter == trigger_info.end()) { return nullptr; }
     return &*next_call_iter;
   }
-  std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+  std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time const& time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -959,7 +959,7 @@ private:
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
     return &*boost::prior(last_call_iter);
   }
-  std::pair<const extended_time, trigger_call_info> const* last_valid_trigger_call(trigger_id tid, extended_time time)const {
+  std::pair<const extended_time, trigger_call_info> const* last_valid_trigger_call(trigger_id tid, extended_time const& time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
@@ -968,10 +968,10 @@ private:
     if (last_call_iter == trigger_info.begin()) { return nullptr; }
     return &*boost::prior(last_call_iter);
   }
-  void delete_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time time, trigger_id tid) {
+  void delete_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time const& time, trigger_id tid) {
     update_trigger_access_record(id, metadata, time, tid, bool(), true);
   }
-  void update_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time time, trigger_id tid, bool undoing, bool force_erase = false) {
+  void update_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time const& time, trigger_id tid, bool undoing, bool force_erase = false) {
     maybe_assert (event_piles.find(time)->second.tid == tid);
     
     auto next_call_ptr = next_executed_trigger_call(tid, time);
@@ -1000,7 +1000,7 @@ private:
   }
   struct update_future_trigger_calls {
     template<typename FieldID>
-    static void func(time_steward* ts, entity_field_id const& id, extended_time change_start, extended_time change_end, trigger_id tid, bool undoing) {
+    static void func(time_steward* ts, entity_field_id const& id, extended_time const& change_start, extended_time const& change_end, trigger_id tid, bool undoing) {
       auto const& f = ts->get_field_throughout_time<FieldID>(id);
       for (auto i = f.upper_bound(change_start); i != f.end(); ++i) { // upper_bound: we handle f[time], if any, in the regular update_triggers.
         if (i->first >= change_end) { break; } // >=:
@@ -1205,7 +1205,7 @@ private:
     }
   }
   
-  void update_through_time(extended_time time) {
+  void update_through_time(extended_time const& time) {
     while (!is_updated_through(time)) {
       if (!event_piles_needing_unexecution.empty() && (event_piles_needing_execution.empty() ||
         (*event_piles_needing_unexecution.begin() <= *event_piles_needing_execution.begin()))) {
@@ -1217,12 +1217,12 @@ private:
       }
     }
   }
-  bool is_updated_through(extended_time time)const {
+  bool is_updated_through(extended_time const& time)const {
     return (event_piles_needing_execution  .empty() || *event_piles_needing_execution  .begin() > time)
         && (event_piles_needing_unexecution.empty() || *event_piles_needing_unexecution.begin() > time);
   }
   template<typename FieldID, typename... Ext>
-  field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time time, Ext... ext)const {
+  field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time const& time, Ext... ext)const {
     auto const* fd = field_values.template find<FieldID>(ext...);
     if (fd) {
       const auto e = fd->find(id);
@@ -1239,7 +1239,7 @@ private:
     return entity_fields::template get_null_const_ref<FieldID>();
   }
   
-  void insert_instigating_event(extended_time time, event_pile_info const& e) {
+  void insert_instigating_event(extended_time const& time, event_pile_info const& e) {
     /*if (event_piles_needing_unexecution.find(time) != event_piles_needing_unexecution.end()) {
       // TODO: is it safe to unexecute an event in the future during execute_event_pile?
       const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(time);
@@ -1254,7 +1254,7 @@ private:
       assert(p2.second);
     }
   }
-  void erase_instigating_event(extended_time time) {
+  void erase_instigating_event(extended_time const& time) {
     const auto event_pile_iter = event_piles.find(time);
     if (event_pile_iter != event_piles.end()) {
       event_pile_info& pile_info = event_pile_iter->second;
@@ -1278,7 +1278,7 @@ private:
   // execute_event_pile() is a safe operation.
   // If you execute a change that won't actually happen, it will just end
   // up getting invalidated later.
-  void execute_event_pile(extended_time time) {
+  void execute_event_pile(extended_time const& time) {
     validate();
     const auto event_pile_iter = event_piles.find(time);
     assert(event_pile_iter != event_piles.end());
@@ -1395,7 +1395,7 @@ private:
   // So it too is a "safe" operation (no amount of calling it
   // with bogus values will change us from valid to invalid),
   // because if you undo anything, it's slated to be redone.
-  bool unexecute_event_pile(extended_time time) {
+  bool unexecute_event_pile(extended_time const& time) {
     validate();
     const auto event_pile_iter = event_piles.find(time);
     assert (event_pile_iter != event_piles.end());
@@ -1424,7 +1424,7 @@ private:
         }
       }
     }
-    for (extended_time t : pile_info.anticipated_events) {
+    for (extended_time const& t : pile_info.anticipated_events) {
       erase_instigating_event(t);
     }
     pile_info.anticipated_events.clear();
