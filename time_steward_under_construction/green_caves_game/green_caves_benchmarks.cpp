@@ -90,12 +90,10 @@ void do_benchmark() {
 
   const microseconds_t microseconds_before_benchmark = get_this_process_microseconds();
   
-  int64_t ms = 0;
-  ms += 1000;
   backend.screen_size = fd_vector(120, 100);
   dont_draw d;
   backend.draw(d);
-  for (int i = 0; i < 50000; i += 10) {
+  for (int64_t i = 0; i < 50000; i += 10) {
     backend.update_to_real_time(i);
     if (i == 1000) { backend.set_key(i, LEFT, true); }
     if (i == 1100) { backend.set_key(i, DOWN, true); }
