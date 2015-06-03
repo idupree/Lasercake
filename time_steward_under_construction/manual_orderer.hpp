@@ -519,8 +519,17 @@ protected:
   bool block_is_full(uint64_t idx, uint32_t level)const {
     //uint64_t after_this = next_block_start(idx, level);
     //bool result = last_in_block(idx, level)->idx >= after_this - block_size(level-1);
-    bool result = bool(get(next_block_start(idx, level) - block_size(level-1)));
+    bool result;
+    const uint64_t check_idx = next_block_start(idx, level) - block_size(level-1);
+    if (level == 1) {
+      result = bool(get(check_idx));
+    }
+    else {
+      result = data.find(check_idx >> max_children_per_block_shift) != data.end();
+    }
+#ifdef AUDIT_ORDERED_STUFF
     assert (result == (num_children_in_block(idx, level) == max_children_per_block));
+#endif
     return result;
   }
   uint64_t num_children_in_block(uint64_t idx, uint32_t level)const {
@@ -533,14 +542,28 @@ protected:
 //     }
 //     return num_children;
     uint64_t num_children = 0;
-    for (; num_children < max_children_per_block; ++num_children) {
-      if (!get(block_start(idx, level) + num_children*block_size(level-1))) {
-        break;
+    if (level == 1) {
+      auto i = data.find(idx >> max_children_per_block_shift);
+      if (i == data.end()) { return 0; }
+      for (; num_children < max_children_per_block; ++num_children) {
+        if (!i->second->entries[num_children]) {
+          break;
+        }
       }
     }
+    else {
+      for (; num_children < max_children_per_block; ++num_children) {
+        auto i = data.find((block_start(idx, level) + num_children*block_size(level-1)) >> max_children_per_block_shift);
+        if (i == data.end()) {
+          break;
+        }
+      }
+    }
+#ifdef AUDIT_ORDERED_STUFF
     if (num_children && get(next_block_start(idx, level))) {
       assert (num_children >= min_children_per_block);
     }
+#endif
     return num_children;
   }
   
@@ -590,7 +613,9 @@ protected:
     }
     
     void add(move m, move_add_mode mode) {
+#ifdef AUDIT_ORDERED_STUFF
       validate();
+#endif
       
       if (!data[0]) {
         ins(m, 0);
@@ -664,7 +689,9 @@ protected:
           ins(move(data[num_moves-1].max+1, m.max, m.dist), num_moves);
         }
       }
+#ifdef AUDIT_ORDERED_STUFF
       validate();
+#endif
     }
   };
   

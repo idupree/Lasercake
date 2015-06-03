@@ -91,7 +91,7 @@ struct tester {
         check();
       }
     }
-    for (int i = 0; i < 30; ++i) {
+    for (int i = 0; i < 20; ++i) {
       assert (all.empty());
       for (int64_t j = 0; j < (1LL << i); ++j) {
         add();
