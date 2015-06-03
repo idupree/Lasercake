@@ -304,16 +304,16 @@ namespace std {
 }
 #else
 
+template<typename ValueType> class manual_orderer;
+
 namespace manual_orderer_impl {
 
 const uint64_t no_idx = std::numeric_limits<uint64_t>::max();
 
 struct level_1_block;
 struct entry_base {
-  entry_base():idx(no_idx),ref_count(0),parent(nullptr){}
+  entry_base():idx(no_idx){}
   uint64_t idx;
-  size_t ref_count;
-  level_1_block* parent;
 };
 
 template<typename ValueType>
@@ -326,9 +326,7 @@ struct entry : public entry_base {
 template<typename ValueType>
 struct NoDecRefCallback { void operator()(ValueType&, size_t)const{} };
 
-template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>> class manual_orderer;
-
-template<typename ValueType, class DecRefCallback = NoDecRefCallback<ValueType>>
+template<typename ValueType>
 struct manually_orderable {
 public:
   template <class... Args>
@@ -336,7 +334,6 @@ public:
     return manually_orderable(new entry<ValueType>(std::forward<Args>(args)...));
   }
   manually_orderable():data(nullptr){}
-  manually_orderable(manually_orderable const& o):data(o.data) { inc_ref(); }
   
   bool operator< (manually_orderable const& o)const {
     caller_correct_if(data->idx != no_idx && o.data->idx != no_idx, "comparing not-yet-ordered item(s)");
@@ -359,37 +356,11 @@ public:
   explicit operator bool()const { return bool(data); }
   ValueType& operator*()const { return data->contents; }
   ValueType* operator->()const { return &data->contents; }
-  manually_orderable& operator=(manually_orderable const& o) {
-    o.inc_ref(); // do this before dec_ref in case lhs and rhs are the same object
-    dec_ref();
-    data = o.data;
-    return *this;
-  }
-  ~manually_orderable() { dec_ref(); }
 private:
-  void inc_ref()const {
-    if (data) { ++data->ref_count; }
-  }
-  void dec_ref() {
-    if (data) {
-      DecRefCallback()(data->contents, data->ref_count);
-      if (data) {
-        --data->ref_count;
-        if (data->ref_count == 0) {
-          if (data->parent) {
-            data->parent->owner->erase(data);
-          }
-          entry<ValueType>* was_data = data;
-          data = nullptr;
-          delete was_data;
-        }
-      }
-    }
-  }
-  explicit manually_orderable(entry<ValueType>* data):data(data){ inc_ref(); }
+  explicit manually_orderable(entry<ValueType>* data):data(data){}
   entry<ValueType>* data;
   friend struct std::hash<manually_orderable>;
-  friend class manual_orderer<ValueType, DecRefCallback>;
+  friend class manual_orderer<ValueType>;
 };
 
 const uint32_t max_children_per_block_shift = 4;
@@ -467,7 +438,6 @@ protected:
     uint64_t pos = idx & position_in_block_mask(1);
     assert (bool(b->entries[pos]) != bool(e));
     b->entries[pos] = e;
-    if (e) { e->parent = b; }
     cleanup_check(b, idx);
   }
   void cleanup_check(level_1_block* b, uint64_t former_idx) {
@@ -768,7 +738,6 @@ protected:
             );
             assert (!b2->entries[e->idx-b2min]);
             b2->entries[e->idx-b2min] = e;
-            e->parent = b2;
           }
         }
       }
@@ -800,7 +769,6 @@ protected:
       for (auto e : b->entries) {
         if (e) {
           e->idx = no_idx;
-          e->parent = nullptr;
         }
       }
       delete b;
@@ -811,7 +779,7 @@ protected:
     
   }
   
-  bool contains_impl(entry_base* e)const {
+  bool contains(entry_base* e)const {
     return get(e->idx) == e;
   }
   
@@ -858,7 +826,6 @@ protected:
       for (uint32_t i = 0; i < block_size(1); ++i) {
         if (b->entries[i]) {
           assert (b->entries[i]->idx == b->entries[0]->idx + i);
-          assert (b->entries[i]->parent == b);
         }
       }
     }
@@ -895,6 +862,8 @@ protected:
 
 public:
   void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) {
+    caller_correct_if(contains(existing_entry), "You can't insert relative to an element that's not present in the manual_orderer");
+    caller_correct_if(inserted_entry->idx == no_idx, "You can't insert an element that is already in a manual_orderer");
 #ifdef AUDIT_ORDERED_STUFF
     validate();
 #endif
@@ -941,6 +910,7 @@ public:
   }
   
   void erase(entry_base* erased_entry) {
+    caller_correct_if(contains(erased_entry), "You can't erase an element that's not present in the manual_orderer");
 #ifdef AUDIT_ORDERED_STUFF
     validate();
 #endif
@@ -1012,7 +982,6 @@ public:
     
     set(erased_entry->idx, nullptr);
     erased_entry->idx = no_idx;
-    erased_entry->parent = nullptr;
     
     do_moves(moves);
     
@@ -1030,7 +999,6 @@ public:
     b->owner = this;
     b->entries[0] = inserted_entry;
     inserted_entry->idx = 0;
-    inserted_entry->parent = b;
     last_l1block = b;
     data.insert(std::make_pair(0, b));
 #ifdef AUDIT_ORDERED_STUFF
@@ -1039,34 +1007,48 @@ public:
   }
 };
 
+} // end namespace manual_orderer_impl
+
+namespace std {
+  template<typename ValueType>
+  struct hash<typename manual_orderer_impl::manually_orderable<ValueType>> {
+    public:
+    size_t operator()(manual_orderer_impl::manually_orderable<ValueType> const& i)const {
+      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
+      return std::hash<decltype(i.data)>()(i.data);
+    }
+  };
+}
+
+
 
 // manual_orderer is a data structure that lets you place
 // arbitrary objects in an O(1)-comparable order, but you have to refer
 // to them by manually_orderable instead of the object itself.
-template<typename ValueType, class DecRefCallback>
-class manual_orderer : public manual_orderer_base {
+template<typename ValueType>
+class manual_orderer : public manual_orderer_impl::manual_orderer_base {
 public:
-  typedef manually_orderable<ValueType, DecRefCallback> entry_ref;
+  typedef manual_orderer_impl::manually_orderable<ValueType> manually_orderable;
 
-  // put_only puts the first object in the ordering; you can't use it
-  // after it's been called once
-  void put_only(entry_ref m) {
-    insert_only(m.data);
+  // put_only puts the first object in the ordering;
+  // you can't use it unless the manual_orderer is empty.
+  void insert_only(manually_orderable m) {
+    manual_orderer_base::insert_only(m.data);
   }
 
   // relative_to must already have been put in the ordering.
-  // Puts "moving" in the ordering just prior to relative_to.
-  void put_before(entry_ref moving, entry_ref relative_to) {
-    insert(moving.data, relative_to.data, false);
-  }
-  // relative_to must already have been put in the ordering.
-  // Puts "moving" in the ordering just after relative_to.
-  void put_after(entry_ref moving, entry_ref relative_to) {
-    insert(moving.data, relative_to.data, true);
+  // Puts "moving" in the ordering just after/prior to relative_to.
+  void insert_adjacent(manually_orderable moving, manually_orderable relative_to, bool after) {
+    manual_orderer_base::insert(moving.data, relative_to.data, after);
   }
   
-  bool contains(entry_ref m)const {
-    return contains_impl(m.data);
+  // m must already have been put in the ordering.
+  void erase(manually_orderable m) {
+    manual_orderer_base::erase(m.data);
+  }
+  
+  bool contains(manually_orderable m)const {
+    return manual_orderer_base::contains(m.data);
   }
 };
   
@@ -1182,20 +1164,7 @@ void insert(entry_base* inserted_entry, entry_base* existing_entry, bool after) 
 }
 
 */
-} // end namespace manual_orderer_impl
 
-namespace std {
-  template<typename ValueType, class DecRefCallback>
-  struct hash<typename manual_orderer_impl::manually_orderable<ValueType, DecRefCallback>> {
-    public:
-    size_t operator()(manual_orderer_impl::manually_orderable<ValueType, DecRefCallback> const& i)const {
-      // Nondeterministic - but the ordering of STL hash tables is already nondeterministic.
-      return std::hash<decltype(i.data)>()(i.data);
-    }
-  };
-}
-
-using manual_orderer_impl::manual_orderer;
 #endif
 #else
 

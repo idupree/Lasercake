@@ -24,56 +24,56 @@
 
 struct metadata {
   typedef manual_orderer<metadata> orderer;
-  typedef orderer::entry_ref entry_ref;
+  typedef orderer::manually_orderable manually_orderable;
   
-  entry_ref prev;
-  entry_ref next;
+  manually_orderable prev;
+  manually_orderable next;
 };
 typedef metadata::orderer orderer;
-typedef metadata::entry_ref entry_ref;
+typedef metadata::manually_orderable manually_orderable;
 
 struct tester {
   
   orderer o;
-  std::vector<entry_ref> all;
+  std::vector<manually_orderable> all;
   void add() {
-    entry_ref a = entry_ref::construct();
+    manually_orderable a = manually_orderable::construct();
     if (all.empty()) {
-      o.put_only(a);
+      o.insert_only(a);
     }
     else {
-      entry_ref rel = all[rand()%all.size()];
+      manually_orderable rel = all[rand()%all.size()];
       bool after = rand()%2;
       if (after) {
         a->prev = rel;
         a->next = rel->next;
         rel->next = a;
         if (a->next) { a->next->prev = a; }
-        o.put_after(a, rel);
       }
       else {
         a->next = rel;
         a->prev = rel->prev;
         rel->prev = a;
         if (a->prev) { a->prev->next = a; }
-        o.put_before(a, rel);
       }
+      o.insert_adjacent(a, rel, after);
     }
     all.push_back(a);
   }
   void del() {
     size_t d = rand()%all.size();
-    entry_ref a = all[d];
+    manually_orderable a = all[d];
     all[d] = all.back();
     all.pop_back();
     if (a->next) { a->next->prev = a->prev; }
     if (a->prev) { a->prev->next = a->next; }
+    o.erase(a);
   }
   void check() {
-    for (entry_ref& a : all) {
+    for (manually_orderable& a : all) {
       assert (o.contains(a));
     }
-    for (entry_ref& a : all) {
+    for (manually_orderable& a : all) {
       if (a->next) { assert (a < a->next); }
       if (a->prev) { assert (a->prev < a); }
     }
