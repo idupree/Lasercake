@@ -846,7 +846,7 @@ private:
     else {
       const auto i = trigger_info.find(new_trigger_call_time);
       assert(i != trigger_info.end());
-      assert(&*i == next_scheduled_trigger_call(tid, field_change_andor_creation_time));
+      maybe_assert(&*i == next_scheduled_trigger_call(tid, field_change_andor_creation_time));
       const auto pile_iter = event_piles.find(i->first);
       assert(pile_iter != event_piles.end());
       new_trigger = pile_iter->second.instigating_event;
@@ -992,7 +992,7 @@ private:
     
     if (force_erase) { undoing = !metadata.triggers_pointing_at_this.key_active_before(tid, time); }
     const bool changed = (undoing == metadata.triggers_pointing_at_this.key_active_after(tid, time));
-    assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, change_end));
+    maybe_assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, change_end));
     
     if (changed) {
       if (undoing) {
@@ -1006,9 +1006,9 @@ private:
       // needs to be updated.
       (*update_future_trigger_calls_funcs[id.f.base])(this, id, time, change_end, tid, undoing);
     }
-    assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, change_end));
+    maybe_assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, change_end));
     if (force_erase) {
-      assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, time));
+      maybe_assert (metadata.triggers_pointing_at_this.key_active_after(tid, time) == metadata.triggers_pointing_at_this.key_active_before(tid, time));
     }
   }
   struct update_future_trigger_calls {

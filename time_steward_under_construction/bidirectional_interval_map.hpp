@@ -496,17 +496,18 @@ private:
       //validate_tree(n, &values_to_erase);
       assert (n->children[1]);
       if (n->num_descendant_intervals <= max_leaf_size) {
-      //std::cerr << "E";
-        for (value_type const* v : values_to_erase) {
-          assert (value_in_tree(*v, n.get()));
+        if(canny) {
+          for (value_type const* v : values_to_erase) {
+            assert (value_in_tree(*v, n.get()));
+          }
         }
         collapse_node(n, n->children[0]);
         collapse_node(n, n->children[1]);
-      //std::cerr << "Q";
-        for (value_type const* v : values_to_erase) {
-          assert (value_in_tree(*v, n.get()));
+        if(canny) {
+          for (value_type const* v : values_to_erase) {
+            assert (value_in_tree(*v, n.get()));
+          }
         }
-      //std::cerr << "W";
       }
       else {
         std::array<std::vector<value_type const*>, 2> values_to_insert_by_child;
@@ -521,14 +522,14 @@ private:
           values_to_insert_by_child[is_higher(*v, n->child_separator)].push_back(v);
         }
         for (value_type const* v : values_to_erase) {
-          assert (value_in_tree(*v, n.get()));
+          maybe_assert (value_in_tree(*v, n.get()));
           assert (tiebroken_domain_type(
                   v->interval.bounds[n->splits_based_on_which_bound],
                   get_tiebreaker(v->key)) != n->child_separator);
           uint32_t which_child = is_higher(*v, n->child_separator);
-          assert (!is_in_unsorted_vector(*v, values_to_erase_by_child[which_child]));
+          maybe_assert (!is_in_unsorted_vector(*v, values_to_erase_by_child[which_child]));
           values_to_erase_by_child[which_child].push_back(v);
-          assert (value_in_tree(*v, n->children[which_child].get()));
+          maybe_assert (value_in_tree(*v, n->children[which_child].get()));
         }
   #define NEW_NUM_DESCENDANTS(which_child) (n->children[which_child]->num_descendant_intervals \
     + values_to_insert_by_child[which_child].size() \
@@ -583,10 +584,10 @@ private:
                 assert (closest_to_steal_bound != n->child_separator);
                 if (!is_in_sorted_vector(*thief, values_to_erase_by_child[which_child], is_closer_to_separator)) {
                   assert (is_further_from_separator(closest_to_steal_bound, n->child_separator));
-                  assert (!is_in_unsorted_vector(*thief, values_to_erase_by_child[which_child]));
-                  assert (!is_in_unsorted_vector(*thief, stolen));
+                  maybe_assert (!is_in_unsorted_vector(*thief, values_to_erase_by_child[which_child]));
+                  maybe_assert (!is_in_unsorted_vector(*thief, stolen));
                   stolen.push_back(*thief);
-                  assert (value_in_tree(*thief, n->children[which_child].get()));
+                  maybe_assert (value_in_tree(*thief, n->children[which_child].get()));
                   n->child_separator = closest_to_steal_bound;
                   n->child_separator.tiebreaker += not_quite_as_close;
                   assert (is_further_from_separator(n->child_separator, closest_to_steal_bound));
@@ -628,11 +629,11 @@ private:
       }
       for (value_type const* v : values_to_insert) {
         n->insert_value(*v);
-        assert (value_in_tree(*v, root.get()));
-        assert (key_active_before(v->key, v->interval.bounds[0]) == false);
-        assert (key_active_after (v->key, v->interval.bounds[0]) == true);
-        assert (key_active_before(v->key, v->interval.bounds[1]) == true);
-        assert (key_active_after (v->key, v->interval.bounds[1]) == false);
+        maybe_assert (value_in_tree(*v, root.get()));
+        maybe_assert (key_active_before(v->key, v->interval.bounds[0]) == false);
+        maybe_assert (key_active_after (v->key, v->interval.bounds[0]) == true);
+        maybe_assert (key_active_before(v->key, v->interval.bounds[1]) == true);
+        maybe_assert (key_active_after (v->key, v->interval.bounds[1]) == false);
       }
       assert (n->num_descendant_intervals == n->values_here.size());
       if (n->num_descendant_intervals > max_leaf_size) {
@@ -741,13 +742,13 @@ private:
     }
     if (already_filled != inserting) {
       m.transitions.insert(std::make_pair(v.interval.bounds[0], inserting));
-      assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
-      // assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+      maybe_assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
+      // maybe_assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
       // If the insert fails, we need to delete instead, which we will do below.
     }
     else {
-      assert (key_active_before(v.key, v.interval.bounds[0]) ==  inserting);
-      //assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+      maybe_assert (key_active_before(v.key, v.interval.bounds[0]) ==  inserting);
+      //maybe_assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
       // Relying on the delete below
     }
     
@@ -760,8 +761,8 @@ private:
         }
         if ((i->first == v.interval.bounds[0]) && (i->second == inserting)) {
           assert (false);
-          assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
-          assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
+          maybe_assert (key_active_before(v.key, v.interval.bounds[0]) == !inserting);
+          maybe_assert (key_active_after (v.key, v.interval.bounds[0]) ==  inserting);
           ++i;
         }
         else {
@@ -777,12 +778,12 @@ private:
             assert (i->first != v.interval.bounds[1]);
             queue_insert(value_type(v.key, v.interval.bounds[1], i->first));
           }
-          assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
-          assert (key_active_after (v.key, v.interval.bounds[1]) == !inserting);
+          maybe_assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
+          maybe_assert (key_active_after (v.key, v.interval.bounds[1]) == !inserting);
         }
         else {
-          assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
-          assert (key_active_after (v.key, v.interval.bounds[1]) ==  inserting);
+          maybe_assert (key_active_before(v.key, v.interval.bounds[1]) ==  inserting);
+          maybe_assert (key_active_after (v.key, v.interval.bounds[1]) ==  inserting);
           if (inserting) {
             assert (i != m.transitions.end());
             new_internal_value.interval.bounds[1] = i->first;
@@ -797,8 +798,8 @@ private:
     if (m.transitions.empty()) {
       keys_maybe_gone.push_back(v.key);
     }
-    assert (key_active_after (v.key, v.interval.bounds[0]) == inserting);
-    assert (key_active_before(v.key, v.interval.bounds[1]) == inserting);
+    maybe_assert (key_active_after (v.key, v.interval.bounds[0]) == inserting);
+    maybe_assert (key_active_before(v.key, v.interval.bounds[1]) == inserting);
   }
   uint64_t get_tiebreaker(KeyType k)const {
     auto m_iter = metadata_by_key.find(k);
