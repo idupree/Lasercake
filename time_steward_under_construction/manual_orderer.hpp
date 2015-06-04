@@ -333,6 +333,9 @@ public:
   static manually_orderable construct(Args&&... args) {
     return manually_orderable(new entry<ValueType>(std::forward<Args>(args)...));
   }
+  void destroy()const {
+    delete data;
+  }
   manually_orderable():data(nullptr){}
   
   bool operator< (manually_orderable const& o)const {
