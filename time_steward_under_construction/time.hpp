@@ -50,29 +50,12 @@ struct extended_time_metadata {
   typedef typename manual_orderer<extended_time_metadata>::manually_orderable extended_time;
   typedef typename TimeTypeInfo::time_type time_type;
   
-  void delete_from_parent() {
-    //auto e = parent->children->erase(t);
-    //assert (e);
-    // hack
-    auto parent_ = parent;
-    parent = extended_time(); // prevent dec_ref_callback recursion
-    const extended_time twin = extended_time::construct(time_type(TimeTypeInfo::never), parent_, id, trigger_iteration);
-    const auto i = parent_->children->lower_bound(twin);
-    assert (i != parent_->children->end());
-    if (**i == *this) {
-      parent_->children->erase(i);
-      if (parent_->children->size() == 1) {
-        parent_->children = nullptr;
-      }
-    }
-  }
-  
-  extended_time_metadata(time_type base_time):
-    base_time(base_time),parent(),id(),trigger_iteration(not_a_trigger),claims(0){}
-  extended_time_metadata(time_type base_time, extended_time parent, siphash_id id):
-    base_time(base_time),parent(parent),id(id),trigger_iteration(not_a_trigger),claims(0){}
-  extended_time_metadata(time_type base_time, extended_time parent, siphash_id id, uint32_t trigger_iteration):
-    base_time(base_time),parent(parent),id(id),trigger_iteration(trigger_iteration),claims(0){}
+  extended_time_metadata(time_type base_time, siphash_id id):
+    base_time(base_time),parent(),id(id),trigger_iteration(not_a_trigger),claims(0){}
+  extended_time_metadata(extended_time parent, siphash_id id):
+    base_time(parent->base_time),parent(parent),id(id),trigger_iteration(not_a_trigger),claims(0){}
+  extended_time_metadata(extended_time parent, siphash_id id, uint32_t trigger_iteration):
+    base_time(parent->base_time),parent(parent),id(id),trigger_iteration(trigger_iteration),claims(0){}
   
   struct sort_sibling_extended_times_by_id_and_trigger_iteration {
     bool operator()(extended_time a, extended_time b)const {
@@ -108,7 +91,7 @@ public:
   
   typedef typename extended_time_metadata<TimeTypeInfo>::extended_time extended_time;
   static extended_time make_event_time(time_type t, siphash_id id) {
-    return make_extended_time_impl(get_base_time_root(t), id);
+    return make_extended_time_impl(t, id);
   }
   static extended_time make_event_time(extended_time t, siphash_id id) {
     return make_extended_time_impl(t->is_trigger() ? t->parent : t, id);
@@ -129,14 +112,14 @@ public:
     return result;
   }
   static extended_time max_time() {
-    return get_base_time_root(max_base_time);
+    return require_top_level_sentinel();
   }
   static extended_time get_first_after(time_type t) {
-    const extended_time hack = extended_time::construct(t);
-    const auto i = base_time_roots().upper_bound(hack);
-    if (i == base_time_roots().end()) {
-      return max_time();
-    }
+    require_top_level_sentinel();
+    const extended_time hack = extended_time::construct(t, siphash_id::greatest());
+    const auto i = top_level_times().upper_bound(hack);
+    hack.destroy();
+    assert (i != top_level_times().end());
     return *i;
   }
 
@@ -158,11 +141,7 @@ public:
     // TODO delete unused base_time_roots (also base_time_roots are a hack, can we remove them?)
     caller_error_if(t->claims == 0, "released an extended_time too many times");
     --t->claims;
-    if (t->claims == 0 && t->parent) {
-      t->delete_from_parent();
-      all_extended_times().erase(t);
-      t.destroy();
-    }
+    delete_if_unused(t);
   }
   class scoped {
   public:
@@ -173,64 +152,100 @@ public:
     extended_time data;
   };
 private:
-  struct sort_extended_times_by_base_time {
+  struct sort_top_level_extended_times_by_base_time_and_id {
     bool operator()(extended_time a, extended_time b)const {
-      return a->base_time < b->base_time;
+      if (a->base_time != b->base_time) { return a->base_time < b->base_time; }
+      return a->id < b->id;
     }
   };
   static manual_orderer<extended_time_metadata<TimeTypeInfo>>& all_extended_times() {
     static manual_orderer<extended_time_metadata<TimeTypeInfo>> a; return a;
   }
-  static std::set<extended_time, sort_extended_times_by_base_time>& base_time_roots() {
-    static std::set<extended_time, sort_extended_times_by_base_time> a; return a;
+  static std::set<extended_time, sort_top_level_extended_times_by_base_time_and_id>& top_level_times() {
+    static std::set<extended_time, sort_top_level_extended_times_by_base_time_and_id> a; return a;
   }
   static extended_time require_sentinel_child(extended_time t) {
     if (!t->children) {
       // create a sentinel with no children at the end
       t->children.reset(new typename extended_time_metadata<TimeTypeInfo>::children_set());
-      const extended_time sentinel = extended_time::construct(time_type(never), t, siphash_id::greatest());
+      const extended_time sentinel = extended_time::construct(t, siphash_id::greatest());
       all_extended_times().insert_adjacent(sentinel, t, true);
       t->children->insert(sentinel);
-      assert (sentinel->parent == t);
-      sentinel->base_time = t->base_time;
       return sentinel;
     }
     return *boost::prior(t->children->end());
   }
-  
-  static extended_time get_base_time_root(time_type t) {
-    if (base_time_roots().empty()) {
+  static extended_time require_top_level_sentinel() {
+    if (top_level_times().empty()) {
       // create a sentinel with no children at the end
       // time_type() is a hack - without it, compiler tries to pass max_base_time as reference and gets undefined reference
-      const extended_time sentinel = extended_time::construct(time_type(max_base_time));
+      const extended_time sentinel = extended_time::construct(time_type(max_base_time), siphash_id::greatest());
       all_extended_times().insert_only(sentinel);
-      base_time_roots().insert(sentinel);
+      top_level_times().insert(sentinel);
+      ++sentinel->claims; // never delete it
     }
-    const extended_time result = extended_time::construct(t);
-    const auto i = base_time_roots().lower_bound(result);
-    assert(i != base_time_roots().end());
-    if ((*i)->base_time == t) { return *i; }
-    all_extended_times().insert_adjacent(result, *i, false);
-    base_time_roots().emplace_hint(i, result);
-    return result;
+    return *boost::prior(top_level_times().end());
   }
+  
   template <class... Args>
   static extended_time make_extended_time_impl(extended_time parent, Args&&... args) {
+    extended_time result = extended_time::construct(parent, std::forward<Args>(args)...);
+
     require_sentinel_child(parent);
-    extended_time result = extended_time::construct(time_type(never), parent, std::forward<Args>(args)...);
     const auto i = parent->children->lower_bound(result);
     assert(i != parent->children->end());
+    
     if (**i == *result) {
+      result.destroy();
       result = *i;
     }
     else {
       all_extended_times().insert_adjacent(result, *i, false);
       parent->children->emplace_hint(i, result);
-      assert (result->parent);
-      result->base_time = parent->base_time;
     }
     ++result->claims;
     return result;
+  }
+  static extended_time make_extended_time_impl(time_type base_time, siphash_id id) {
+    extended_time result = extended_time::construct(base_time, id);
+    
+    require_top_level_sentinel();
+    const auto i = top_level_times().lower_bound(result);
+    assert(i != top_level_times().end());
+    
+    if (**i == *result) {
+      result.destroy();
+      result = *i;
+    }
+    else {
+      all_extended_times().insert_adjacent(result, *i, false);
+      top_level_times().emplace_hint(i, result);
+    }
+    ++result->claims;
+    return result;
+  }
+  static void delete_exttime(extended_time t) {
+    all_extended_times().erase(t);
+    t.destroy();
+  }
+  static void delete_if_unused(extended_time t) {
+    if (t->claims == 0 && !t->children) {
+      if (t->parent) {
+        auto q = t->parent->children->erase(t);
+        assert (q);
+        if (t->parent->children->size() == 1) {
+          delete_exttime(*t->parent->children->begin());
+          t->parent->children = nullptr;
+          delete_if_unused(t->parent);
+        }
+      }
+      else {
+        assert (t != require_top_level_sentinel());
+        auto q = top_level_times().erase(t);
+        assert (q);
+      }
+      delete_exttime(t);
+    }
   }
 };
 

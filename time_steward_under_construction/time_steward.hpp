@@ -1030,6 +1030,11 @@ private:
   /*static*/ const fields_list_impl::function_array<entity_fields, update_future_trigger_calls> update_future_trigger_calls_funcs;
 public:
   time_steward() {}
+  ~time_steward() {
+    for (auto& e : event_piles) {
+      extended_time_manager::release(e.first);
+    }
+  }
   
   void insert_fiat_event(time_type time, uint64_t distinguisher, std::shared_ptr<const event> e) {
     // This function is one of exactly two places where
