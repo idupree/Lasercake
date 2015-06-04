@@ -697,6 +697,7 @@ private:
     uint32_t field_changes_andor_creations_triggering_this;
     bool replaced;
   };
+  enum execution_or_unexecution { EXECUTION = 0, UNEXECUTION = 1 };
   struct event_pile_info {
     event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id::null()) :
       instigating_event (instigating_event),
@@ -712,6 +713,7 @@ private:
     std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
     bool creation_cut_off;
     bool has_been_executed;
+    bool needs_unexecution;
     bool should_be_executed()const { return instigating_event && !creation_cut_off; }
   };
   
@@ -761,9 +763,46 @@ private:
   fields_list_impl::foreach_field<entity_fields, false, field_info_by_entity> field_values; // TODO rename this to be more explanatory
   field_metadata_map field_metadata;
   event_piles_map event_piles;
-  std::set<extended_time> event_piles_needing_execution;
-  std::set<extended_time> event_piles_needing_unexecution;
+//   std::set<extended_time> event_piles_needing_execution;
+//   std::set<extended_time> event_piles_needing_unexecution;
   std::unordered_map<trigger_id, trigger_throughout_time_info> triggers;
+  mutable std::array<std::priority_queue<extended_time, std::vector<extended_time>, std::greater<extended_time> >, 2> event_piles_needing;
+  extended_time next_event_needing(execution_or_unexecution e)const {
+    while (true) {
+      if (event_piles_needing[e].empty()) { return extended_time_manager::max_time(); }
+      extended_time t = event_piles_needing[e].top();
+      auto i = event_piles.find(t);
+      if (i != event_piles.end()) {
+        if (e == EXECUTION) {
+          if (i->second.should_be_executed() && !i->second.has_been_executed) {
+            return t;
+          }
+        }
+        else {
+          if (i->second.needs_unexecution) {
+            assert (i->second.has_been_executed);
+            return t;
+          }
+        }
+      }
+      event_piles_needing[e].pop();
+      extended_time_manager::release(t);
+    }
+  }
+  void event_needs(execution_or_unexecution e, extended_time t) {
+    extended_time_manager::claim(t);
+    auto i = event_piles.find(t);
+    assert (i != event_piles.end());
+    if (e == EXECUTION) {
+      assert (i->second.should_be_executed() && !i->second.has_been_executed);
+    }
+    else {
+      assert (i->second.has_been_executed);
+      assert (!i->second.needs_unexecution);
+      i->second.needs_unexecution = true;
+    }
+    event_piles_needing[e].push(t);
+  }
   
   void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time new_trigger_call_time) {
     const auto cut_off_call_ptr = last_scheduled_trigger_call(tid, new_trigger_call_time);
@@ -792,13 +831,13 @@ private:
           pile_info.creation_cut_off = false;
           assert (pile_info.should_be_executed());
           if (pile_info.has_been_executed) { /*could've been invalidated, so no. event_piles_needing_unexecution.erase (*i);*/ }
-          else                             { event_piles_needing_execution  .insert(*i); }
+          else                             { event_needs(EXECUTION, *i); }
         }
         else {
           assert (pile_info.creation_cut_off == false);
           pile_info.creation_cut_off = true;
-          if (pile_info.has_been_executed) { event_piles_needing_unexecution.insert(*i); }
-          else                             { event_piles_needing_execution  .erase (*i); }
+          if (pile_info.has_been_executed) { event_needs(UNEXECUTION, *i); }
+          //else                             { event_piles_needing_execution  .erase (*i); }
         }
       }
     }
@@ -839,7 +878,7 @@ private:
           assert (pile_iter != event_piles.end());
           assert (pile_iter->second.instigating_event == old_trigger);
           pile_iter->second.instigating_event = new_trigger;
-          if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
+          if (pile_iter->second.has_been_executed) { event_needs(UNEXECUTION, pile_iter->first); }
         }
       }
     }
@@ -861,7 +900,7 @@ private:
               assert (pile_iter->second.instigating_event == new_trigger);
               if (old_trigger) {
                 pile_iter->second.instigating_event = old_trigger;
-                if (pile_iter->second.has_been_executed) { event_piles_needing_unexecution.insert(pile_iter->first); }
+                if (pile_iter->second.has_been_executed) { event_needs(UNEXECUTION, pile_iter->first); }
               }
               else {
                 erase_instigating_event(j->first);
@@ -897,7 +936,7 @@ private:
          // if the event that changed this field examined this field, it needs redoing
          ++incorrect_event_time) {
       assert(*incorrect_event_time > field_change_time);
-      event_piles_needing_unexecution.insert(*incorrect_event_time);
+      event_needs(UNEXECUTION, *incorrect_event_time);
     }
   }
   template<typename Iterator, typename Map>
@@ -1043,7 +1082,9 @@ public:
     // TODO
     const extended_time t = extended_time_manager::make_event_time(time, combine_hash_with_time_type_func_type()(siphash_id::combining(distinguisher), time));
     // TODO throw an exception if the user inserts two events at the same time with the same distinguisher
-    if (event_piles_needing_unexecution.find(t) != event_piles_needing_unexecution.end()) {
+    auto i = event_piles.find(t);
+    if (i != event_piles.end() && i->second.has_been_executed) {
+      assert (!i->second.should_be_executed());
       const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(t);
       assert (event_pile_deleted_for_being_out_of_date);
     }
@@ -1077,28 +1118,29 @@ public:
     update_through_time_impl(time);
   }
   void debug__randomly_update_through_time(time_type const& time) {
-    while (!is_updated_through(time)) {
-      auto iter = event_piles_needing_execution.begin();
-      bool unexecute = false;
-      while (true) {
-        if ((iter == event_piles_needing_execution.end()) ||
-          ((!unexecute) && (!event_piles_needing_unexecution.empty()) && (*event_piles_needing_unexecution.begin() <= *iter))) {
-          unexecute = true;
-          iter = event_piles_needing_unexecution.begin();
-        }
-        if (!(rand()&3)) { break; }
-        
-        auto next_iter = boost::next(iter);
-        if (next_iter == event_piles_needing_execution.end()) { break; }
-        if (next_iter == event_piles_needing_unexecution.end()) { break; }
-        iter = next_iter;
-      }
-      assert (iter != event_piles_needing_execution.end());
-      assert (iter != event_piles_needing_unexecution.end());
-      const extended_time t = *iter;
-      if (unexecute) { unexecute_event_pile(t); }
-      else           {   execute_event_pile(t); }
-    }
+    assert (false);
+//     while (!is_updated_through(time)) {
+//       auto iter = event_piles_needing_execution.begin();
+//       bool unexecute = false;
+//       while (true) {
+//         if ((iter == event_piles_needing_execution.end()) ||
+//           ((!unexecute) && (!event_piles_needing_unexecution.empty()) && (*event_piles_needing_unexecution.begin() <= *iter))) {
+//           unexecute = true;
+//           iter = event_piles_needing_unexecution.begin();
+//         }
+//         if (!(rand()&3)) { break; }
+//         
+//         auto next_iter = boost::next(iter);
+//         if (next_iter == event_piles_needing_execution.end()) { break; }
+//         if (next_iter == event_piles_needing_unexecution.end()) { break; }
+//         iter = next_iter;
+//       }
+//       assert (iter != event_piles_needing_execution.end());
+//       assert (iter != event_piles_needing_unexecution.end());
+//       const extended_time t = *iter;
+//       if (unexecute) { unexecute_event_pile(t); }
+//       else           {   execute_event_pile(t); }
+//     }
   }
   void debug__check_equivalence(time_steward const& other)const {
     std::unordered_set<siphash_id> time_ids0;
@@ -1128,12 +1170,12 @@ private:
   }
   void validate()const {
     return;
-    for (auto const& t : event_piles_needing_execution) {
-      assert (event_piles.find(t) != event_piles.end());
-    }
-    for (auto const& t : event_piles_needing_unexecution) {
-      assert (event_piles.find(t) != event_piles.end());
-    }
+//     for (auto const& t : event_piles_needing_execution) {
+//       assert (event_piles.find(t) != event_piles.end());
+//     }
+//     for (auto const& t : event_piles_needing_unexecution) {
+//       assert (event_piles.find(t) != event_piles.end());
+//     }
     for (auto const& p : triggers) {
       for (auto const& p2 : p.second) {
         const auto e = event_piles.find(p2.first);
@@ -1150,23 +1192,23 @@ private:
     }
     for (auto const& p : event_piles) {
       if (p.second.has_been_executed) {
-        if (!p.second.should_be_executed()) {
-          assert (event_piles_needing_unexecution.find(p.first) != event_piles_needing_unexecution.end());
-          assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
-        }
+//         if (!p.second.should_be_executed()) {
+//           assert (event_piles_needing_unexecution.find(p.first) != event_piles_needing_unexecution.end());
+//           assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
+//         }
       }
       else {
         assert (p.second.entity_fields_pile_accessed.empty());
         assert (p.second.entity_fields_pile_modified.empty());
         assert (p.second.triggers_changed.empty());
         assert (p.second.anticipated_events.empty());
-        if (p.second.should_be_executed()) {
-          assert (event_piles_needing_execution.find(p.first) != event_piles_needing_execution.end());
-        }
-        else {
-          assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
-        }
-        assert (event_piles_needing_unexecution.find(p.first) == event_piles_needing_unexecution.end());
+//         if (p.second.should_be_executed()) {
+//           assert (event_piles_needing_execution.find(p.first) != event_piles_needing_execution.end());
+//         }
+//         else {
+//           assert (event_piles_needing_execution.find(p.first) == event_piles_needing_execution.end());
+//         }
+//        assert (event_piles_needing_unexecution.find(p.first) == event_piles_needing_unexecution.end());
       }
       for (auto et : p.second.anticipated_events) {
         const auto e = event_piles.find(et);
@@ -1225,19 +1267,21 @@ private:
   
   void update_through_time_impl(time_type const& time) {
     while (!is_updated_through(time)) {
-      if (!event_piles_needing_unexecution.empty() && (event_piles_needing_execution.empty() ||
-        (*event_piles_needing_unexecution.begin() <= *event_piles_needing_execution.begin()))) {
-        unexecute_event_pile(*event_piles_needing_unexecution.begin());
+      extended_time a = next_event_needing(EXECUTION);
+      extended_time b = next_event_needing(UNEXECUTION);
+      if (b < a) {
+        unexecute_event_pile(b);
       }
       else {
-        assert(!event_piles_needing_execution.empty());
-        execute_event_pile(*event_piles_needing_execution.begin());
+        assert(a != extended_time_manager::max_time());
+        execute_event_pile(a);
       }
     }
   }
   bool is_updated_through(time_type const& time)const {
-    return (event_piles_needing_execution  .empty() || (*event_piles_needing_execution  .begin())->base_time > time)
-        && (event_piles_needing_unexecution.empty() || (*event_piles_needing_unexecution.begin())->base_time > time);
+    extended_time a = next_event_needing(EXECUTION);
+    extended_time b = next_event_needing(UNEXECUTION);
+    return (a->base_time > time) && (b->base_time > time);
   }
   template<typename FieldID, typename... Ext>
   field_data<entity_fields, FieldID> const& get_provisional_entity_field_before(entity_id id, extended_time time, Ext... ext)const {
@@ -1267,9 +1311,7 @@ private:
     const auto p1 = event_piles.insert(std::make_pair(time, e));
     assert(p1.second);
     if (e.should_be_executed()) {
-      const auto p2 = event_piles_needing_execution.insert(time);
-      assert(*p2.first == time);
-      assert(p2.second);
+      event_needs(EXECUTION, time);
     }
   }
   void erase_instigating_event(extended_time time) {
@@ -1279,20 +1321,20 @@ private:
       
       pile_info.instigating_event = nullptr;
       if (pile_info.has_been_executed) {
-        event_piles_needing_unexecution.insert(time);
+        event_needs(UNEXECUTION, time);
       }
       else {
-        erase_event_impl(time, pile_info, event_pile_iter, true);
+        erase_event_impl(time, pile_info, event_pile_iter);
       }
     }
   }
-  void erase_event_impl(extended_time time, event_pile_info const& pile_info, decltype(event_piles.find(extended_time())) const& event_pile_iter, bool was_needing_execution) {
+  void erase_event_impl(extended_time time, event_pile_info const& pile_info, decltype(event_piles.find(extended_time())) const& event_pile_iter) {
     if (pile_info.tid) {
       cut_off_trigger_events(true, pile_info.tid, time);
       auto& trigger_info = triggers.find(pile_info.tid)->second;
       trigger_info.erase(time);
     }
-    if (was_needing_execution) { event_piles_needing_execution.erase(time); }
+    //if (was_needing_execution) { event_piles_needing_execution.erase(time); }
     event_piles.erase(event_pile_iter);
     
   }
@@ -1307,7 +1349,7 @@ private:
     assert(event_pile_iter != event_piles.end());
     event_pile_info& pile_info = event_pile_iter->second;
     
-    assert(event_piles_needing_unexecution.empty() || (*event_piles_needing_unexecution.begin() > time));
+    assert(next_event_needing(UNEXECUTION) > time);
     
     // If the event already has been carried out in a different way,
     // we need to undo that before proceeding.
@@ -1335,15 +1377,16 @@ private:
       
       // We might create events (triggers that trigger now, and anticipated_events).
       // Out-of-date versions of those events need to be cleared before we start applying any of the new changes.
-      while ((!event_piles_needing_unexecution.empty()) && !extended_time_manager::is_after_all_calls_triggered_at(*event_piles_needing_unexecution.begin(), time)) {
-        unexecute_event_pile(*event_piles_needing_unexecution.begin());
+      while (!extended_time_manager::is_after_all_calls_triggered_at(next_event_needing(UNEXECUTION), time)) {
+        unexecute_event_pile(next_event_needing(UNEXECUTION));
       }
       bool done = false;
       while (!done) {
         // TODO: more efficient?
         done = true;
         for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
-          if (event_piles_needing_unexecution.find(ev.first) != event_piles_needing_unexecution.end()) {
+          auto evi = event_piles.find(ev.first);
+          if (evi != event_piles.end() && evi->second.needs_unexecution) {
             const bool event_pile_deleted_for_being_out_of_date = unexecute_event_pile(ev.first);
             assert (event_pile_deleted_for_being_out_of_date);
             done = false;
@@ -1407,7 +1450,7 @@ private:
     }
     
     pile_info.has_been_executed = true;
-    event_piles_needing_execution.erase(time);
+    //event_piles_needing_execution.erase(time);
     validate();
   }
   
@@ -1463,12 +1506,13 @@ private:
     pile_info.triggers_changed.clear();
     
     pile_info.has_been_executed = false;
-    event_piles_needing_unexecution.erase(time);
+    pile_info.needs_unexecution = false;
+    //event_piles_needing_unexecution.erase(time);
     if (pile_info.should_be_executed()) {
-      event_piles_needing_execution.insert(time);
+      event_needs(EXECUTION, time);
     }
     if (!pile_info.instigating_event) {
-      erase_event_impl(time, pile_info, event_pile_iter, false);
+      erase_event_impl(time, pile_info, event_pile_iter);
       validate();
       return true;
     }
