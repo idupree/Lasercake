@@ -710,7 +710,30 @@ private:
     std::vector<entity_field_id> entity_fields_pile_accessed;
     std::vector<entity_field_id> entity_fields_pile_modified;
     std::vector<trigger_id> triggers_changed;
-    std::set<extended_time> anticipated_events; // TODO: this can be a sorted runtime-sized array
+    std::vector<extended_time> anticipated_events; // TODO: this can just be a runtime-sized array
+    size_t first_anticipated_event_idx_after(extended_time t)const {
+      int64_t min = -1;
+      int64_t max = anticipated_events.size();
+      while(min + 1 < max) {
+        const int64_t mid = (min+max)>>1;
+        if (anticipated_events[mid] <= t) { min = mid; }
+        else                              { max = mid; }
+      }
+      
+      if (max == int64_t(anticipated_events.size())) {
+        if (min >= 0) {
+          assert (anticipated_events.back() < t);
+        }
+      }
+      else {
+        assert (anticipated_events[max] > t);
+        if (min >= 0) {
+          assert (anticipated_events[min] < t);
+        }
+      }
+      
+      return max;
+    }
     bool creation_cut_off;
     bool has_been_executed;
     bool needs_unexecution;
@@ -811,14 +834,15 @@ private:
       const auto cut_off_pile_iter = event_piles.find(cut_off_call_ptr->first);
       assert(cut_off_pile_iter != event_piles.end());
       auto const& cut_off_pile_info = cut_off_pile_iter->second;
-      for (auto i = cut_off_pile_info.anticipated_events.upper_bound(new_trigger_call_time); // upper vs lower shouldn't matter: triggers are never anticipated events
-                i != cut_off_pile_info.anticipated_events.end(); ++i) {
-        const auto pile_iter = event_piles.find(*i);
+      for (size_t i = cut_off_pile_info.first_anticipated_event_idx_after(new_trigger_call_time); // upper vs lower shouldn't matter: triggers are never anticipated events
+                i != cut_off_pile_info.anticipated_events.size(); ++i) {
+        const extended_time t = cut_off_pile_info.anticipated_events[i];
+        const auto pile_iter = event_piles.find(t);
         assert(pile_iter != event_piles.end());
         auto& pile_info = pile_iter->second;
         if (next_call_ptr) {
-          assert (*i != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
-          if (*i > next_call_ptr->first) {
+          assert (t != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
+          if (t > next_call_ptr->first) {
             // We can skip these because they are cut off by the later trigger regardless.
             assert (pile_info.creation_cut_off == true);
             // TODO uncomment:
@@ -830,14 +854,14 @@ private:
           assert (pile_info.creation_cut_off == true);
           pile_info.creation_cut_off = false;
           assert (pile_info.should_be_executed());
-          if (pile_info.has_been_executed) { /*could've been invalidated, so no. event_piles_needing_unexecution.erase (*i);*/ }
-          else                             { event_needs(EXECUTION, *i); }
+          if (pile_info.has_been_executed) { /*could've been invalidated, so no. event_piles_needing_unexecution.erase (t);*/ }
+          else                             { event_needs(EXECUTION, t); }
         }
         else {
           assert (pile_info.creation_cut_off == false);
           pile_info.creation_cut_off = true;
-          if (pile_info.has_been_executed) { event_needs(UNEXECUTION, *i); }
-          //else                             { event_piles_needing_execution  .erase (*i); }
+          if (pile_info.has_been_executed) { event_needs(UNEXECUTION, t); }
+          //else                             { event_piles_needing_execution  .erase (t); }
         }
       }
     }
@@ -1410,8 +1434,7 @@ private:
         next_call_ptr = next_scheduled_trigger_call(pile_info.tid, time);
       }
       for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
-        const auto p = pile_info.anticipated_events.insert(ev.first);
-        assert (p.second);
+        pile_info.anticipated_events.push_back(ev.first);
         event_pile_info e(ev.second);
         if (next_call_ptr) {
           assert (ev.first != next_call_ptr->first); // > vs >= shouldn't matter: anticipated events are never triggers
@@ -1421,6 +1444,8 @@ private:
         }
         insert_instigating_event(ev.first, e);
       }
+      std::sort(pile_info.anticipated_events.begin(), pile_info.anticipated_events.end());
+      
       if (pile_info.tid) {
         const auto last_call_ptr = last_executed_trigger_call(pile_info.tid, time);
         if (last_call_ptr) {
