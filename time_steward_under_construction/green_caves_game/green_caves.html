@@ -46,7 +46,24 @@ Your browser does not support the canvas element.
     <!--<script type="text/javascript" src="underscore.js"></script>-->
     <script type="text/javascript">
       Module = {};
+      window.green_caves = {};
+      window.green_caves.holding_mouse_down_ingame = false;
       Module.TOTAL_MEMORY = 100000000 // 100 MB, about six times the default
+      var game_canvas = document.getElementById("game_canvas");
+      window.green_caves.gl = null;
+      try {
+        window.green_caves.gl = game_canvas.getContext("webgl") || game_canvas.getContext("experimental-webgl");
+      }
+      catch(e) {}
+      if (window.green_caves.gl) {
+        alert("WebGL yay.");
+        Module.canvas = game_canvas;
+      }
+      else {
+        window.green_caves.gl = null;
+        alert("Unable to initialize WebGL. Falling back to canvas-2d.");
+        window.green_caves.canvas_context = game_canvas.getContext("2d");
+      }
     </script>
     <script type="text/javascript" src="green_caves.js"></script>
     <!--<script type="text/javascript" src="new_collision_detection.js"></script>-->
@@ -60,14 +77,15 @@ document.addEventListener('DOMContentLoaded', function(){
 setTimeout(function(){
 
 var game_canvas = document.getElementById("game_canvas");
-var canvas_context = game_canvas.getContext("2d");
-window.green_caves = {};
-window.green_caves.canvas_context = canvas_context;
-window.green_caves.holding_mouse_down_ingame = false;
+
+if (window.green_caves.gl) {
+  var h = GL.createContext(game_canvas, {});
+  GL.makeContextCurrent(h);
+}
 
 /*  (function(window){
     var green_caves = {
-      canvas_context: game_canvas.getContext("2d"),
+      window.green_caves.canvas_context: game_canvas.getContext("2d"),
     };
     window.green_caves = green_caves;
   })(window);*/
@@ -146,9 +164,14 @@ window.green_caves.holding_mouse_down_ingame = false;
   
   var draw = (function(){
     update_canvas_rect();
-    canvas_context.fillStyle = "black";
-    canvas_context.fillRect(0,0,640,640);
-    window._draw();
+    if (window.green_caves.gl) {
+      
+    }
+    else {
+      window.green_caves.canvas_context.fillStyle = "black";
+      window.green_caves.canvas_context.fillRect(0,0,640,640);
+    }
+    window._draw(window.green_caves.gl ? true : false);
   });
   
   var tick_finished = true;

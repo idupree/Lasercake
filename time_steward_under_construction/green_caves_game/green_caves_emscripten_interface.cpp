@@ -20,7 +20,7 @@
 */
 
 
-#include "green_caves.cpp"
+#include "green_caves_gl.hpp"
 
 green_caves_ui_backend backend;
 
@@ -54,7 +54,7 @@ extern "C" {
 // when you add something here, you need to also add to the EXPORTED_FUNCTIONS
 // in the build script
 
-void draw() { draw_funcs draw; backend.draw(draw); }
+void draw(bool gl) { if (gl) { do_gl(backend); } else { draw_funcs draw; backend.draw(draw); } }
 void update_to_real_time(double milliseconds) { backend.update_to_real_time(int64_t(milliseconds)); }
 void mouse_down(double milliseconds, int x, int y) { backend.mouse_down(int64_t(milliseconds), x, y); }
 void mouse_up(double milliseconds, int x, int y) { backend.mouse_up(int64_t(milliseconds), x, y); }
