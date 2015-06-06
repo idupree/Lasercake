@@ -77,7 +77,7 @@ struct extended_time_metadata {
     return trigger_iteration != not_a_trigger;
   }
   bool operator==(extended_time_metadata const& o)const {
-    return id == o.id;
+    return id == o.id && base_time == o.base_time;
   }
 };
 
@@ -114,13 +114,16 @@ public:
   static extended_time max_time() {
     return require_top_level_sentinel();
   }
-  static extended_time get_first_after(time_type t) {
-    require_top_level_sentinel();
-    const extended_time hack = extended_time::construct(t, siphash_id::greatest());
-    const auto i = top_level_times().upper_bound(hack);
-    hack.destroy();
-    assert (i != top_level_times().end());
-    return *i;
+//   static extended_time get_first_after(time_type t) {
+//     require_top_level_sentinel();
+//     const extended_time hack = extended_time::construct(t, siphash_id::greatest());
+//     const auto i = top_level_times().upper_bound(hack);
+//     hack.destroy();
+//     assert (i != top_level_times().end());
+//     return *i;
+//   }
+  static extended_time make_max_at(time_type t) {
+    return make_extended_time_impl(t, siphash_id::greatest());
   }
 
   static bool is_after_all_calls_triggered_at(extended_time t, extended_time when_triggered) {

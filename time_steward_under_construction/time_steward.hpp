@@ -749,10 +749,11 @@ private:
       {}
     std::shared_ptr<const event> instigating_event;
     trigger_id tid;
+    // TODO: these can just be runtime-sized arrays
     std::vector<entity_field_id> entity_fields_pile_accessed;
     std::vector<entity_field_id> entity_fields_pile_modified;
     std::vector<trigger_id> triggers_changed;
-    std::vector<extended_time> anticipated_events; // TODO: this can just be a runtime-sized array
+    std::vector<extended_time> anticipated_events;
     size_t first_anticipated_event_idx_after(extended_time t)const {
       int64_t min = -1;
       int64_t max = anticipated_events.size();
@@ -872,7 +873,7 @@ private:
     }
     else {
       assert (i->second.has_been_executed);
-      assert (!i->second.needs_unexecution);
+      //assert (!i->second.needs_unexecution);
       i->second.needs_unexecution = true;
     }
     event_piles_needing[e].push(t);
@@ -1182,9 +1183,11 @@ public:
       get_actual_entity_data_before(id, extended_time(time, extended_time::last))));
   }*/
   std::unique_ptr<accessor> accessor_after(time_type const& time) {
-    const extended_time end_time = extended_time_manager::get_first_after(time);
+    const extended_time end_time = extended_time_manager::make_max_at(time);
     update_through_time_impl(time);
-    return std::unique_ptr<accessor>(new accessor(this, end_time));
+    auto temp = new accessor(this, end_time);
+    extended_time_manager::release(end_time);
+    return std::unique_ptr<accessor>(temp);
   }
   
   // Some functions for external client code to regulate how much processing the time_steward
@@ -1193,40 +1196,43 @@ public:
     update_through_time_impl(time);
   }
   void debug__randomly_update_through_time(time_type const& time) {
-    assert (false);
-//     while (!is_updated_through(time)) {
-//       auto iter = event_piles_needing_execution.begin();
-//       bool unexecute = false;
-//       while (true) {
-//         if ((iter == event_piles_needing_execution.end()) ||
-//           ((!unexecute) && (!event_piles_needing_unexecution.empty()) && (*event_piles_needing_unexecution.begin() <= *iter))) {
-//           unexecute = true;
-//           iter = event_piles_needing_unexecution.begin();
-//         }
-//         if (!(rand()&3)) { break; }
-//         
-//         auto next_iter = boost::next(iter);
-//         if (next_iter == event_piles_needing_execution.end()) { break; }
-//         if (next_iter == event_piles_needing_unexecution.end()) { break; }
-//         iter = next_iter;
-//       }
-//       assert (iter != event_piles_needing_execution.end());
-//       assert (iter != event_piles_needing_unexecution.end());
-//       const extended_time t = *iter;
-//       if (unexecute) { unexecute_event_pile(t); }
-//       else           {   execute_event_pile(t); }
-//     }
+    while (!is_updated_through(time)) {
+      std::array<std::vector<extended_time>, 2> hidden;
+      extended_time stop = next_event_needing(UNEXECUTION);
+      for (int i = 0; i < 2; ++i) {
+        next_event_needing(execution_or_unexecution(i));
+        while (event_piles_needing[i].size() > 1 && (rand()&3)) {
+          hidden[i].push_back(event_piles_needing[i].top());
+          event_piles_needing[i].pop();
+          next_event_needing(execution_or_unexecution(i));
+        }
+      }
+      extended_time a = next_event_needing(EXECUTION);
+      extended_time b = next_event_needing(UNEXECUTION);
+      for (int i = 0; i < 2; ++i) {
+        for (extended_time j : hidden[i]) {
+          event_piles_needing[i].push(j);
+        }
+      }
+      
+      if (stop >= a && a < extended_time_manager::max_time() && (rand()&3)) {
+        execute_event_pile(a);
+      }
+      else if (b < extended_time_manager::max_time()) {
+        unexecute_event_pile(b);
+      }
+    }
   }
   void debug__check_equivalence(time_steward const& other)const {
     std::unordered_set<siphash_id> time_ids0;
     std::unordered_set<siphash_id> time_ids1;
     for (auto const& p : event_piles) {
-      if (is_updated_through(p.first) && other.is_updated_through(p.first)) {
+      if (is_updated_through(p.first->base_time) && other.is_updated_through(p.first->base_time)) {
         time_ids0.insert(p.first->id);
       }
     }
     for (auto const& p : other.event_piles) {
-      if (is_updated_through(p.first) && other.is_updated_through(p.first)) {
+      if (is_updated_through(p.first->base_time) && other.is_updated_through(p.first->base_time)) {
         time_ids1.insert(p.first->id);
       }
     }
