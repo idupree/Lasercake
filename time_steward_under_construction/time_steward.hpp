@@ -1474,8 +1474,13 @@ private:
       pile_info.entity_fields_pile_accessed = std::move(a.entity_fields_preexisting_state_accessed);
       for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
         auto& metadata = require_field_metadata_throughout_time(id);
-        const auto p = metadata.event_piles_which_accessed_this.insert(time);
-        assert(p.second);
+        if (metadata.event_piles_which_accessed_this.empty() || time > *boost::prior(metadata.event_piles_which_accessed_this.end())) {
+          metadata.event_piles_which_accessed_this.insert(metadata.event_piles_which_accessed_this.end(), time);
+        }
+        else {
+          const auto p = metadata.event_piles_which_accessed_this.insert(time);
+          assert(p.second);
+        }
 #ifdef TRACKER_A
         tracker_a.track(metadata.event_piles_which_accessed_this);
 #endif
