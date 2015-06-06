@@ -234,8 +234,50 @@ in a rocket
  
  */
 
+struct container_size_tracker {
+  std::vector<int64_t> data;
+  template<class C> void track(C const& c) {
+    if (c.size() >= data.size()) {
+      data.resize(c.size()+1);
+    }
+    ++data[c.size()];
+  }
+  void dump() {
+    size_t b = 0;
+    int64_t v = data[0];
+    std::vector<size_t> halves;
+    halves.push_back(0);
+    for (size_t i = 1; i < data.size(); ++i) {
+      if (data[i] <= data[halves.back()] / 2) {
+        halves.push_back(i);
+      }
+    }
+    for (size_t i = 0; i <= data.size(); ++i) {
+      if (i == data.size() || data[i] != v) {
+        if (b == i-1) {
+          std::cerr << i-1 << ": " << data[i-1] << "\n";
+        }
+        else {
+          std::cerr << b << "-" << i-1 << ": " << data[i-1] << "\n";
+        }
+        b = i;
+        v = data[i];
+      }
+    }
+    std::cerr << "halves\n";
+    for (auto i : halves) {
+      std::cerr << i << "\n";
+    }
+  }
+  ~container_size_tracker() {
+    dump();
+  }
+};
 
 namespace time_steward_system {
+#ifdef TRACKER_A
+container_size_tracker tracker_a;
+#endif
 
 typedef siphash_id entity_id;
 const entity_id global_object_id = siphash_id::least();
@@ -765,7 +807,16 @@ private:
     return get_field_throughout_time<FieldID>(id.e, id.f.which);
   }
   field_metadata_throughout_time& require_field_metadata_throughout_time(entity_field_id const& id) {
-    return field_metadata[id];
+#ifdef TRACKER_A
+    auto i = field_metadata.find(id);
+#endif
+    field_metadata_throughout_time& result = field_metadata[id];
+#ifdef TRACKER_A
+    if (i == field_metadata.end()) {
+      tracker_a.track(result.event_piles_which_accessed_this);
+    }
+#endif
+    return result;
   }
   field_metadata_throughout_time const& get_field_metadata_throughout_time(entity_field_id const& id)const {
     auto i = field_metadata.find(id);
@@ -1425,6 +1476,9 @@ private:
         auto& metadata = require_field_metadata_throughout_time(id);
         const auto p = metadata.event_piles_which_accessed_this.insert(time);
         assert(p.second);
+#ifdef TRACKER_A
+        tracker_a.track(metadata.event_piles_which_accessed_this);
+#endif
         if (pile_info.tid) {
           update_trigger_access_record(id, metadata, time, pile_info.tid, false);
         }
@@ -1521,6 +1575,9 @@ private:
     for (entity_field_id const& id : pile_info.entity_fields_pile_accessed) {
       auto& metadata = get_mut_field_metadata_throughout_time(id);
       const auto j = metadata.event_piles_which_accessed_this.erase(time);
+#ifdef TRACKER_A
+      tracker_a.track(metadata.event_piles_which_accessed_this);
+#endif
       assert(j);
       if (pile_info.tid) {
         delete_trigger_access_record(id, metadata, time, pile_info.tid);
