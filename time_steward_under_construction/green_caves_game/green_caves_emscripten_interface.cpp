@@ -59,7 +59,7 @@ void update_to_real_time(double milliseconds) { backend.update_to_real_time(int6
 void mouse_down(double milliseconds, int x, int y) { backend.mouse_down(int64_t(milliseconds), x, y); }
 void mouse_up(double milliseconds, int x, int y) { backend.mouse_up(int64_t(milliseconds), x, y); }
 void mouse_moves(double milliseconds, int x, int y) { backend.mouse_moves(int64_t(milliseconds), x, y); }
-void set_display_size(int x, int y) { backend.screen_size = fd_vector(x, y); }
+void set_display_size(int x, int y, bool gl) { backend.screen_size = fd_vector(x, y); if (gl) { gl_reshape(x, y); } }
 void set_left(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), LEFT, b); }
 void set_right(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), RIGHT, b); }
 void set_up(double milliseconds, bool b) { backend.set_key(int64_t(milliseconds), UP, b); }

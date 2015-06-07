@@ -93,7 +93,7 @@ if (window.green_caves.gl) {
   var canvas_rect = game_canvas.getBoundingClientRect();
   function update_canvas_rect() {
     canvas_rect = game_canvas.getBoundingClientRect();
-    window._set_display_size(canvas_rect.right - canvas_rect.left, canvas_rect.bottom - canvas_rect.top);
+    window._set_display_size(canvas_rect.right - canvas_rect.left, canvas_rect.bottom - canvas_rect.top, window.green_caves.gl ? true : false);
   }
   update_canvas_rect();
   
