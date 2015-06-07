@@ -22,6 +22,7 @@
 
 
 #define GLM_FORCE_RADIANS
+//#define GLM_PRECISION_MEDIUMP_FLOAT
 
 #include <iostream>
 #include <cstddef>
@@ -145,12 +146,15 @@ void add_shaders() {
 #ifdef EMSCRIPTEN
 "precision mediump float;\n"
 #endif
+"uniform mat4 transformation;\n"
 "attribute vec3 position;\n"
 "attribute vec4 color;\n"
 "varying vec4 colorV;\n"
 "void main() {\n"
 "  colorV = color;\n"
-"  gl_Position = gl_ModelViewProjectionMatrix * vec4(position, 1.0);\n"
+// This is the deprecated way to do it that doesn't work at all in OpenGL ES 2.0 / WebGL:
+//"  gl_Position = gl_ModelViewProjectionMatrix * vec4(position, 1.0);\n"
+"  gl_Position = transformation * vec4(position, 1.0);\n"
 "}\n"
 ;
   const char* fs =
@@ -235,6 +239,10 @@ void do_gl(green_caves_ui_backend& backend) {
 
 void gl_reshape(int width, int height) {
   glViewport(0,0,width,height);
-  glLoadIdentity();
-  gluOrtho2D(0, GLdouble(width), 0, GLdouble(height));
+  const GLint uniform_id = glGetUniformLocation(shader_program_name, "transformation");
+  const glm::mat4 transformation = glm::ortho(0.0f, GLfloat(width), 0.0f, GLfloat(height));
+  glUniformMatrix4fv(uniform_id, 1, GL_FALSE, glm::value_ptr(transformation));
+// This is the deprecated way to do it that doesn't work at all in OpenGL ES 2.0 / WebGL:
+//  glLoadIdentity();
+//  gluOrtho2D(0, GLdouble(width), 0, GLdouble(height));
 }
