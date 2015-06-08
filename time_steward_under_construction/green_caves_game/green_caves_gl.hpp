@@ -73,14 +73,17 @@ struct gl_draw_funcs {
       gl_data_format::vertex_with_color(x1, y1, 0, c) }}});
   }
   void segment(double x0, double y0, double x1, double y1, double width) {
+    double m = std::sqrt((x0-x1)*(x0-x1)+(y0-y1)*(y0-y1));
+    double dx = (y1-y0)*width/m/2;
+    double dy = -(x1-x0)*width/m/2;
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0+width, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x0-width, y0, 0, green_color),
-      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+      gl_data_format::vertex_with_color(x0+dx, y0+dy, 0, green_color),
+      gl_data_format::vertex_with_color(x0-dx, y0-dy, 0, green_color),
+      gl_data_format::vertex_with_color(x1+dx, y1+dy, 0, green_color) }}});
     triangles.push_back(gl_triangle{{{
-      gl_data_format::vertex_with_color(x0, y0+width, 0, green_color),
-      gl_data_format::vertex_with_color(x0, y0-width, 0, green_color),
-      gl_data_format::vertex_with_color(x1, y1, 0, green_color) }}});
+      gl_data_format::vertex_with_color(x1+dx, y1+dy, 0, green_color),
+      gl_data_format::vertex_with_color(x1-dx, y1-dy, 0, green_color),
+      gl_data_format::vertex_with_color(x0-dx, y0-dy, 0, green_color) }}});
   }
 };
 
