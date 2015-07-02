@@ -725,20 +725,15 @@ public:
   };
   typedef event trigger;
 private:
-  class nothing_happens : public event {
-  public:
-    void operator()(accessor*)const override {}
-  };
-  static std::shared_ptr<const event> const& nothing_happens_ptr() {
-    static std::shared_ptr<const event> a(new nothing_happens()); return a;
-  }
+//   class nothing_happens : public event {
+//   public:
+//     void operator()(accessor*)const override {}
+//   };
+//   static std::shared_ptr<const event> const& nothing_happens_ptr() {
+//     static std::shared_ptr<const event> a(new nothing_happens()); return a;
+//   }
   typedef typename TimeTypeInfo::combine_hash_with_time_type_func_type combine_hash_with_time_type_func_type;
   
-  struct trigger_call_info {
-    trigger_call_info():field_changes_andor_creations_triggering_this(0),replaced(false){}
-    uint32_t field_changes_andor_creations_triggering_this;
-    bool replaced;
-  };
   enum execution_or_unexecution { EXECUTION = 0, UNEXECUTION = 1 };
   struct event_pile_info {
     event_pile_info(std::shared_ptr<const event> instigating_event, trigger_id tid = trigger_id::null()) :
@@ -791,7 +786,25 @@ private:
   using field_throughout_time = std::map<extended_time, FieldData>;
   template<typename FieldData>
   using field_info_by_entity = std::unordered_map<entity_id, field_throughout_time<FieldData>>;
-  typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
+//   struct trigger_call_info {
+//     trigger_call_info():field_changes_andor_creations_triggering_this(0),replaced(false){}
+//     uint32_t field_changes_andor_creations_triggering_this;
+//     bool replaced;
+//   };
+//   typedef std::map<extended_time, trigger_call_info> trigger_throughout_time_info;
+  struct trigger_call_info {
+    trigger_call_info():field_changes_andor_creations_triggering_this(0){}
+    uint32_t field_changes_andor_creations_triggering_this;
+  };
+  struct trigger_throughout_time_info {
+    std::map<extended_time, trigger_call_info> calls;
+    std::map<extended_time, std::shared_ptr<const event>> impositions;
+    
+    std::shared_ptr<const event> eventfunc_active_before(extended_time t)const {
+      auto next = impositions.lower_bound(t);
+      return (next == impositions.begin()) ? nullptr : boost::prior(next)->second;
+    }
+  };
   
   template<typename FieldID, typename... Ext>
   field_throughout_time<field_data<entity_fields, FieldID>>& get_field_throughout_time(entity_id const& id, Ext... ext) {
@@ -879,14 +892,14 @@ private:
     event_piles_needing[e].push(t);
   }
   
-  void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time new_trigger_call_time) {
-    const auto cut_off_call_ptr = last_scheduled_trigger_call(tid, new_trigger_call_time);
+  void cut_off_trigger_events(bool undoing, trigger_id tid, extended_time trigger_call_time) {
+    const auto cut_off_call_ptr = last_executed_trigger_call(tid, trigger_call_time);
     if (cut_off_call_ptr) {
-      const auto next_call_ptr = next_scheduled_trigger_call(tid, new_trigger_call_time);
+      const auto next_call_ptr = next_executed_trigger_call(tid, trigger_call_time);
       const auto cut_off_pile_iter = event_piles.find(cut_off_call_ptr->first);
       assert(cut_off_pile_iter != event_piles.end());
       auto const& cut_off_pile_info = cut_off_pile_iter->second;
-      for (size_t i = cut_off_pile_info.first_anticipated_event_idx_after(new_trigger_call_time); // upper vs lower shouldn't matter: triggers are never anticipated events
+      for (size_t i = cut_off_pile_info.first_anticipated_event_idx_after(trigger_call_time); // upper vs lower shouldn't matter: triggers are never anticipated events
                 i != cut_off_pile_info.anticipated_events.size(); ++i) {
         const extended_time t = cut_off_pile_info.anticipated_events[i];
         const auto pile_iter = event_piles.find(t);
@@ -918,7 +931,43 @@ private:
       }
     }
   }
-  void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time, bool force_trigger_change = false, std::shared_ptr<const trigger> new_trigger = nullptr) {
+    
+  void impose_trigger_eventfunc(bool undoing, trigger_throughout_time_info& trigger_info, extended_time t, std::shared_ptr<const event> new_eventfunc = nullptr) {
+    auto next = trigger_info.impositions.upper_bound(t);
+    std::shared_ptr<const event> old_eventfunc = (next == trigger_info.impositions.begin()) ? nullptr : boost::prior(next)->second;
+    if (undoing) {
+      assert (next != trigger_info.impositions.begin());
+      auto l = boost::prior(next);
+      assert (l->first == t);
+      if (l == trigger_info.impositions.begin()) { new_eventfunc = nullptr; }
+      else                          { new_eventfunc = boost::prior(l)->second; }
+      trigger_info.impositions.erase(l);
+    }
+    else {
+      auto p = trigger_info.impositions.insert(std::make_pair(t, new_eventfunc));
+      assert (p.second);
+    }
+    
+    extended_time next_time = (next == trigger_info.impositions.end()) ? extended_time_manager::max_time() : next->first;
+    if (new_eventfunc != old_eventfunc) {
+      for (auto i = trigger_info.calls.upper_bound(t); (i != trigger_info.calls.end()) && (i->first <= next_time); ++i) {
+        const auto pile_iter = event_piles.find(i->first);
+        assert (pile_iter != event_piles.end());
+        if (pile_iter->second.instigating_event) {
+          //assert (trigger_info.eventfunc_active_before(i->first) == old_eventfunc);
+          assert (pile_iter->second.instigating_event == old_eventfunc);
+          if (new_eventfunc) {
+            pile_iter->second.instigating_event = new_eventfunc;
+            if (pile_iter->second.has_been_executed) { event_needs(UNEXECUTION, pile_iter->first); }
+          }
+          else {
+            erase_instigating_event(i->first);
+          }
+        }
+      }
+    }
+  }
+  void update_trigger(bool undoing, trigger_id tid, extended_time field_change_andor_creation_time) {
     // with undoing==false: Either a trigger was created/replaced, or an entity a trigger-call accessed changed.
     //   We need to do two things:
     //   1) Create a new trigger-call soon after the current time (if it doesn't already exist);
@@ -930,61 +979,20 @@ private:
     bool time_claimed = false;
     
     if (!undoing) {
-      const auto l = last_valid_trigger_call(tid, new_trigger_call_time);
-      std::shared_ptr<const trigger> old_trigger = l ? event_piles.find(l->first)->second.instigating_event : nullptr;
-      if (!force_trigger_change) { assert(l); assert(old_trigger); new_trigger = old_trigger; }
-      if (!new_trigger) { new_trigger = nothing_happens_ptr(); }
+      std::shared_ptr<const trigger> new_trigger = trigger_info.eventfunc_active_before(new_trigger_call_time);
       
-      const auto p = trigger_info.insert(std::make_pair(new_trigger_call_time, trigger_call_info()));
+      const auto p = trigger_info.calls.insert(std::make_pair(new_trigger_call_time, trigger_call_info()));
       if (p.second && new_trigger) {
         time_claimed = true;
         insert_instigating_event(new_trigger_call_time, event_pile_info(new_trigger, tid));
       }
-      if (p.second) {
-        cut_off_trigger_events(undoing, tid, new_trigger_call_time);
-      }
       ++p.first->second.field_changes_andor_creations_triggering_this;
-      if (force_trigger_change) {
-        assert (!p.first->second.replaced);
-        p.first->second.replaced = true;
-      }
-      if (new_trigger != old_trigger) {
-        for (auto i = trigger_info.upper_bound(new_trigger_call_time); (i != trigger_info.end()) && (!i->second.replaced); ++i) {
-          const auto pile_iter = event_piles.find(i->first);
-          assert (pile_iter != event_piles.end());
-          assert (pile_iter->second.instigating_event == old_trigger);
-          pile_iter->second.instigating_event = new_trigger;
-          if (pile_iter->second.has_been_executed) { event_needs(UNEXECUTION, pile_iter->first); }
-        }
-      }
     }
     else {
-      const auto i = trigger_info.find(new_trigger_call_time);
-      assert(i != trigger_info.end());
-      maybe_assert(&*i == next_scheduled_trigger_call(tid, field_change_andor_creation_time));
+      const auto i = trigger_info.calls.find(new_trigger_call_time);
+      assert(i != trigger_info.calls.end());
       const auto pile_iter = event_piles.find(i->first);
       assert(pile_iter != event_piles.end());
-      new_trigger = pile_iter->second.instigating_event;
-      if (force_trigger_change) {
-        auto last_call = last_valid_trigger_call(tid, new_trigger_call_time);
-        std::shared_ptr<const trigger> old_trigger = last_call ? event_piles.find(last_call->first)->second.instigating_event : nullptr;
-        if (new_trigger != old_trigger) {
-          for (auto j = boost::next(i); (j != trigger_info.end()) && (!j->second.replaced); ++j) {
-            const auto pile_iter = event_piles.find(j->first);
-            if (pile_iter->second.instigating_event) {
-              assert (pile_iter != event_piles.end());
-              assert (pile_iter->second.instigating_event == new_trigger);
-              if (old_trigger) {
-                pile_iter->second.instigating_event = old_trigger;
-                if (pile_iter->second.has_been_executed) { event_needs(UNEXECUTION, pile_iter->first); }
-              }
-              else {
-                erase_instigating_event(j->first);
-              }
-            }
-          }
-        }
-      }
       --i->second.field_changes_andor_creations_triggering_this;
       if (i->second.field_changes_andor_creations_triggering_this == 0) {
         erase_instigating_event(new_trigger_call_time);
@@ -1051,51 +1059,53 @@ private:
       f.erase(i);
     }
   };
+  
+  // TODO: Theoretically, these could waste a lot of time if there are too many unexecuted trigger calls in between executed ones. Fix that.
   std::pair<const extended_time, trigger_call_info> const* next_executed_trigger_call(trigger_id tid, extended_time time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
-    auto next_call_iter = trigger_info.upper_bound(time);
-    while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.has_been_executed) {++next_call_iter;} // TODO: asymptotics?
-    if (next_call_iter == trigger_info.end()) { return nullptr; }
+    auto next_call_iter = trigger_info.calls.upper_bound(time);
+    while ((next_call_iter != trigger_info.calls.end()) && !event_piles.find(next_call_iter->first)->second.has_been_executed) {++next_call_iter;} // TODO: asymptotics?
+    if (next_call_iter == trigger_info.calls.end()) { return nullptr; }
     return &*next_call_iter;
   }
   std::pair<const extended_time, trigger_call_info> const* last_executed_trigger_call(trigger_id tid, extended_time time)const {
     const auto trigger_info_iter = triggers.find(tid);
     if (trigger_info_iter == triggers.end()) { return nullptr; }
     auto& trigger_info = trigger_info_iter->second;
-    auto last_call_iter = trigger_info.lower_bound(time);
-    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.has_been_executed) {--last_call_iter;} // TODO: asymptotics?
-    if (last_call_iter == trigger_info.begin()) { return nullptr; }
+    auto last_call_iter = trigger_info.calls.lower_bound(time);
+    while ((last_call_iter != trigger_info.calls.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.has_been_executed) {--last_call_iter;} // TODO: asymptotics?
+    if (last_call_iter == trigger_info.calls.begin()) { return nullptr; }
     return &*boost::prior(last_call_iter);
   }
-  std::pair<const extended_time, trigger_call_info> const* next_scheduled_trigger_call(trigger_id tid, extended_time time)const {
-    const auto trigger_info_iter = triggers.find(tid);
-    if (trigger_info_iter == triggers.end()) { return nullptr; }
-    auto& trigger_info = trigger_info_iter->second;
-    auto next_call_iter = trigger_info.upper_bound(time);
-    //while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.instigating_event) {++next_call_iter;} // TODO: asymptotics?
-    if (next_call_iter == trigger_info.end()) { return nullptr; }
-    return &*next_call_iter;
-  }
-  std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time time)const {
-    const auto trigger_info_iter = triggers.find(tid);
-    if (trigger_info_iter == triggers.end()) { return nullptr; }
-    auto& trigger_info = trigger_info_iter->second;
-    auto last_call_iter = trigger_info.lower_bound(time);
-    //while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
-    if (last_call_iter == trigger_info.begin()) { return nullptr; }
-    return &*boost::prior(last_call_iter);
-  }
-  std::pair<const extended_time, trigger_call_info> const* last_valid_trigger_call(trigger_id tid, extended_time time)const {
-    const auto trigger_info_iter = triggers.find(tid);
-    if (trigger_info_iter == triggers.end()) { return nullptr; }
-    auto& trigger_info = trigger_info_iter->second;
-    auto last_call_iter = trigger_info.lower_bound(time);
-    while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
-    if (last_call_iter == trigger_info.begin()) { return nullptr; }
-    return &*boost::prior(last_call_iter);
-  }
+//   std::pair<const extended_time, trigger_call_info> const* next_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+//     const auto trigger_info_iter = triggers.find(tid);
+//     if (trigger_info_iter == triggers.end()) { return nullptr; }
+//     auto& trigger_info = trigger_info_iter->second;
+//     auto next_call_iter = trigger_info.upper_bound(time);
+//     //while ((next_call_iter != trigger_info.end()) && !event_piles.find(next_call_iter->first)->second.instigating_event) {++next_call_iter;} // TODO: asymptotics?
+//     if (next_call_iter == trigger_info.end()) { return nullptr; }
+//     return &*next_call_iter;
+//   }
+//   std::pair<const extended_time, trigger_call_info> const* last_scheduled_trigger_call(trigger_id tid, extended_time time)const {
+//     const auto trigger_info_iter = triggers.find(tid);
+//     if (trigger_info_iter == triggers.end()) { return nullptr; }
+//     auto& trigger_info = trigger_info_iter->second;
+//     auto last_call_iter = trigger_info.lower_bound(time);
+//     //while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
+//     if (last_call_iter == trigger_info.begin()) { return nullptr; }
+//     return &*boost::prior(last_call_iter);
+//   }
+//   std::pair<const extended_time, trigger_call_info> const* last_valid_trigger_call(trigger_id tid, extended_time time)const {
+//     const auto trigger_info_iter = triggers.find(tid);
+//     if (trigger_info_iter == triggers.end()) { return nullptr; }
+//     auto& trigger_info = trigger_info_iter->second;
+//     auto last_call_iter = trigger_info.lower_bound(time);
+//     while ((last_call_iter != trigger_info.begin()) && !event_piles.find(boost::prior(last_call_iter)->first)->second.instigating_event) {--last_call_iter;} // TODO: asymptotics?
+//     if (last_call_iter == trigger_info.begin()) { return nullptr; }
+//     return &*boost::prior(last_call_iter);
+//   }
   void delete_trigger_access_record(entity_field_id const& id, field_metadata_throughout_time& metadata, extended_time time, trigger_id tid) {
     update_trigger_access_record(id, metadata, time, tid, bool(), true);
   }
@@ -1258,7 +1268,7 @@ private:
 //       assert (event_piles.find(t) != event_piles.end());
 //     }
     for (auto const& p : triggers) {
-      for (auto const& p2 : p.second) {
+      for (auto const& p2 : p.second.calls) {
         const auto e = event_piles.find(p2.first);
         assert (e != event_piles.end());
         assert (e->second.tid == p.first);
@@ -1300,22 +1310,22 @@ private:
       }
       if (p.second.tid) {
         if (p.second.instigating_event) {
-          auto const& trigger_info = triggers.find(p.second.tid)->second;
-          auto const& t = trigger_info.find(p.first);
-          assert (t != trigger_info.end());
-          assert (t->second.field_changes_andor_creations_triggering_this > 0); // otherwise !p.second.instigating_event
-          // TODO: check that t->second.field_changes_andor_creations_triggering_this
-          // is actually the same as the number of things triggering it
-          const auto next_call_ptr = next_scheduled_trigger_call(p.second.tid, p.first);
-          for (auto et : p.second.anticipated_events) {
-            const auto e = event_piles.find(et);
-            if (next_call_ptr && (et > next_call_ptr->first)) {
-              assert (e->second.creation_cut_off);
-            }
-            else {
-              assert (!e->second.creation_cut_off);
-            }
-          }
+//           auto const& trigger_info = triggers.find(p.second.tid)->second;
+//           auto const& t = trigger_info.find(p.first);
+//           assert (t != trigger_info.end());
+//           assert (t->second.field_changes_andor_creations_triggering_this > 0); // otherwise !p.second.instigating_event
+//           // TODO: check that t->second.field_changes_andor_creations_triggering_this
+//           // is actually the same as the number of things triggering it
+//           const auto next_call_ptr = next_scheduled_trigger_call(p.second.tid, p.first);
+//           for (auto et : p.second.anticipated_events) {
+//             const auto e = event_piles.find(et);
+//             if (next_call_ptr && (et > next_call_ptr->first)) {
+//               assert (e->second.creation_cut_off);
+//             }
+//             else {
+//               assert (!e->second.creation_cut_off);
+//             }
+//           }
         }
       }
       for (auto id : p.second.entity_fields_pile_accessed) {
@@ -1411,13 +1421,11 @@ private:
   }
   void erase_event_impl(extended_time time, event_pile_info const& pile_info, decltype(event_piles.find(extended_time())) const& event_pile_iter) {
     if (pile_info.tid) {
-      cut_off_trigger_events(true, pile_info.tid, time);
       auto& trigger_info = triggers.find(pile_info.tid)->second;
-      trigger_info.erase(time);
+      trigger_info.calls.erase(time);
     }
     //if (was_needing_execution) { event_piles_needing_execution.erase(time); }
     event_piles.erase(event_pile_iter);
-    
   }
   
   // One of the essential, nonintuitive strengths of this system is that
@@ -1441,14 +1449,8 @@ private:
     
     if (pile_info.tid) {
       auto const& trigger_info = triggers.find(pile_info.tid)->second;
-      auto const& t = trigger_info.find(time);
-      assert (t != trigger_info.end());
-      if (!t->second.replaced) {
-        const auto c = last_scheduled_trigger_call(pile_info.tid, time);
-        assert (c);
-        const auto d = event_piles.find(c->first)->second;
-        assert (d.instigating_event == pile_info.instigating_event);
-      }
+      assert (trigger_info.eventfunc_active_before(time) == pile_info.instigating_event);
+      assert (trigger_info.calls.find(time) != trigger_info.calls.end());
     }
     
     if (pile_info.should_be_executed()) {
@@ -1496,7 +1498,8 @@ private:
       }
       std::pair<const extended_time, trigger_call_info> const* next_call_ptr = nullptr;
       if (pile_info.tid) {
-        next_call_ptr = next_scheduled_trigger_call(pile_info.tid, time);
+        cut_off_trigger_events(false, pile_info.tid, time);
+        next_call_ptr = next_executed_trigger_call(pile_info.tid, time);
       }
       for (std::pair<extended_time, std::shared_ptr<const event>> const& ev : a.new_upcoming_events) {
         pile_info.anticipated_events.push_back(ev.first);
@@ -1533,7 +1536,8 @@ private:
       pile_info.triggers_changed.reserve(a.trigger_changes.size());
       for (std::pair<trigger_id, std::shared_ptr<const trigger>> const& t : a.trigger_changes) {
         pile_info.triggers_changed.push_back(t.first);
-        update_trigger(false, t.first, time, true, t.second);
+        impose_trigger_eventfunc(false, triggers[t.first], time, t.second);
+        update_trigger(false, t.first, time);
       }
       
       // a is destroyed here
@@ -1560,7 +1564,8 @@ private:
     
     // Order is important: For things whose order matters, do the reverse of execute_event_pile.
     for (trigger_id const& tid : pile_info.triggers_changed) {
-      update_trigger(true, tid, time, true);
+      update_trigger(true, tid, time);
+      impose_trigger_eventfunc(true, triggers.find(tid)->second, time);
     }
     for (entity_field_id const& id : pile_info.entity_fields_pile_modified) {
       auto const& metadata = get_field_metadata_throughout_time(id);
@@ -1578,6 +1583,7 @@ private:
           }
         }
       }
+      cut_off_trigger_events(true, pile_info.tid, time);
     }
     for (extended_time t : pile_info.anticipated_events) {
       erase_instigating_event(t);
