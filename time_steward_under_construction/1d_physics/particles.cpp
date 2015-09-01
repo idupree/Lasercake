@@ -29,47 +29,78 @@ energy_t energy_of_proximity(position_t const& p0, position_t const& p1) {
 // }
 
 energy_t invariant_kinetic_energy(particle const& p0, particle const& p1) {
-  
+}
+
+struct interaction_info {
+  interaction_info(particle const& p0, particle const& p1, time_t new_time) {
+    new_pos0 = p0.last_position + p0.approx_velocity*(new_time-p0.last_time);
+    
+    const energy_t old_eop = p0.last_energy_of_proximity_to_next;
+    new_eop = energy_of_proximity(new_pos0, new_pos1);
+    
+    /*
+  with c = s_0m + t_0n
+  sm + tn = c
+  t = (c-sm)/n
+  k = ssm + ttn
+  k = ssm + (c-sm)(c-sm)/n
+  k = cc/n - 2csm/n + ssmm/n + ssm
+  0 = cc/n - 2csm/n + ssmm/n + ssm - k
+  0 = ss(m + mm/n) + s(-2cm/n) + (cc/n - k)
+  0 = ss(mn + mm) + s(-2cm) + (cc - kn)
+  disc = 4(ccmm - (mn + mm)*(cc - kn))
+  disc = 4(knmm+knmn-ccmn)
+  s = (2cm +- sqrt(disc)) / 2(mn + mm)
+  ss = (2cm +- sqrt(disc))(2cm +- sqrt(disc)) / 4(mn + mm)(mn + mm)
+  ssm = (2cm +- sqrt(disc))(2cm +- sqrt(disc)) / 4m(n + m)(n + m)
+  ssm = (4ccmm +- 4cm*sqrt(disc) + disc) / 4m(n + m)(n + m)
+  ssm = (4ccmm +- 4cm*sqrt(disc) + 4(knmm+knmn-ccmn)) / 4m(n + m)(n + m)
+  ssm = (ccmm +- cm*sqrt(disc) + (knmm+knmn-ccmn)) / m(n + m)(n + m)
+  ssm = (ccm +- c*sqrt(disc) + (knm+knn-ccn)) / (n + m)(n + m)*/
+    
+    const momentum_t total_momentum = p0.approx_velocity*p0.mass + p1.approx_velocity*p1.mass;
+    const  mass_prod = p0.mass*p1.mass;
+    //const velocity_t dv = p0.approx_velocity - p1.approx_velocity;
+    const  dv_sq = (p0.last_kinetic_energy*p1.mass + p1.last_kinetic_energy*p0.mass)/mass_prod -
+      velocity_t(isqrt(p0.last_kinetic_energy*p1.last_kinetic_energy/mass_prod))*sign(p0.approx_velocity)*sign(p1.approx_velocity);
+    const  total_momentum_sq = total_momentum*total_momentum;
+    const energy_t kinetic_energy_change = old_eop - new_eop;
+    const energy_t new_kinetic_energy = p0.last_kinetic_energy + p1.last_kinetic_energy + kinetic_energy_change;
+    const  discriminant_quarter = mass_prod*(new_kinetic_energy*(p0.mass+p1.mass) - total_momentum_sq);
+    const  discriminant_quarter = mass_prod*(dv_sq*mass_prod + kinetic_energy_change*(p0.mass+p1.mass));
+  }
+  position_t new_pos0;
+  position_t new_pos1;
+  energy_t new_eop;
+  momentum_t total_momentum;
+   total_momentum_sq;
+  energy_t new_kinetic_energy;
+   discriminant_quarter;
+}
+
+void can_interact(particle const& p0, particle const& p1, time_t new_time) {
+//   const momentum_t total_momentum = p0.approx_velocity*p0.mass + p1.approx_velocity*p1.mass;
+//   const momentum_t total_mass = p0.mass + p1.mass;
+//   const momentum_t avg_velocity = total_momentum/total_mass;
+//   
+  interaction_info info(p0, p1, new_time);
+  return (info.discriminant_quarter >= 0);
 }
 
 void interact(particle& p0, particle& p1, time_t new_time) {
 {
-  const position_t new_pos0 = p0.last_position + p0.approx_velocity*(new_time-p0.last_time);
+  interaction_info info(p0, p1, new_time);
+  assert (info.discriminant_quarter >= 0);
   
-  const energy_t old_eop = p0.last_energy_of_proximity_to_next;
-  const energy_t new_eop = energy_of_proximity(new_pos0, new_pos1);
-  
-  /*
-with c = s_0m + t_0n
-sm + tn = c
-t = (c-sm)/n
-k = ssm + ttn
-k = ssm + (c-sm)(c-sm)/n
-k = cc/n - 2csm/n + ssmm/n + ssm
-0 = cc/n - 2csm/n + ssmm/n + ssm - k
-0 = ss(m + mm/n) + s(-2cm/n) + (cc/n - k)
-0 = ss(mn + mm) + s(-2cm) + (cc - kn)
-disc = 4(ccmm - (mn + mm)*(cc - kn))
-disc = 4(knmm+knmn-ccmn)
-s = (2cm +- sqrt(disc)) / 2(mn + mm)
-ss = (2cm +- sqrt(disc))(2cm +- sqrt(disc)) / 4(mn + mm)(mn + mm)
-ssm = (2cm +- sqrt(disc))(2cm +- sqrt(disc)) / 4m(n + m)(n + m)
-ssm = (4ccmm +- 4cm*sqrt(disc) + disc) / 4m(n + m)(n + m)
-ssm = (4ccmm +- 4cm*sqrt(disc) + 4(knmm+knmn-ccmn)) / 4m(n + m)(n + m)
-ssm = (ccmm +- cm*sqrt(disc) + (knmm+knmn-ccmn)) / m(n + m)(n + m)
-ssm = (ccm +- c*sqrt(disc) + (knm+knn-ccn)) / (n + m)(n + m)*/
-  
-  const momentum_t total_momentum = p0.approx_velocity*p0.mass + p1.approx_velocity*p0.mass;
-  const  mass_prod = p0.mass*p1.mass;
-  //const velocity_t dv = p0.approx_velocity - p1.approx_velocity;
-  const  dv_sq = (p0.last_kinetic_energy*p1.mass + p1.last_kinetic_energy*p0.mass)/mass_prod -
-    velocity_t(isqrt(p0.last_kinetic_energy*p1.last_kinetic_energy/mass_prod))*sign(p0.approx_velocity)*sign(p1.approx_velocity);
-  const  total_momentum_sq = total_momentum*total_momentum;
-  const energy_t kinetic_energy_change = old_eop - new_eop;
-  const energy_t new_kinetic_energy = p0.last_kinetic_energy + p1.last_kinetic_energy + kinetic_energy_change;
-  const  discriminant_quarter = mass_prod*(new_kinetic_energy*(p0.mass+p1.mass) - total_momentum_sq);
-  const  discriminant_quarter = mass_prod*(dv_sq*mass_prod + kinetic_energy_change*(p0.mass+p1.mass));
-  assert (discriminant_quarter >= 0);
+  p0.last_time = new_time;
+  p0.last_position = info.new_pos0;
+  p0.last_kinetic_energy = divide(info.total_momentum_sq*p0.mass - info.total_momentum*isqrt(info.discriminant_quarter*4) + p1.mass*(info.new_kinetic_energy*(p0.mass+p1.mass) - info.total_momentum_sq),
+    (p0.mass+p1.mass)*(p0.mass+p1.mass),
+    rounding_strategy<round_down, negative_continuous_with_positive>());
+  p0.last_energy_of_proximity_to_next = info.new_eop;
+  p1.last_time = new_time;
+  p1.last_position = info.new_pos1;
+  p1.last_kinetic_energy = info.new_kinetic_energy - p0.last_kinetic_energy;
   
   adjust_velocity(p0);
   adjust_velocity(p1);
@@ -108,7 +139,7 @@ public:
     }
     if (dv < 0) {
       t2 = t + divide(dp, -dv*12, rounding_strategy<round_down, negative_is_forbidden>());
-      while (!can_interact(p0, p1)) {
+      while (!can_interact(p0, p1, t2)) {
         t2 = divide(t2+t, 2, rounding_strategy<round_down, negative_continuous_with_positive>());
       }
     }
