@@ -29,10 +29,13 @@ const time_type never = USE_DEFAULT_TIME_TYPE_HACK:: never;\
 const time_type min_time = USE_DEFAULT_TIME_TYPE_HACK:: min_time;\
 const time_type Max_time = USE_DEFAULT_TIME_TYPE_HACK:: max_time;
 
-#define MAKE_FIELD(name, value_type) struct name {};\
-time_steward_system:: field <name, value_type> 
+#define BEGIN_FIELDS_LIST typedef time_steward_system:: fields_list <>
+#define MAKE_FIELD(name, value_type) FIELDS_LIST_before_##name;\
+struct name {};\
+typedef time_steward_system:: fields_list < FIELDS_LIST_before_##name, time_steward_system:: field <name, value_type> >
+#define FINISH_FIELDS_LIST FIELDS_LIST_final;
 
-#define MAKE_TIME_STEWARD typedef time_steward;\
+#define MAKE_TIME_STEWARD typedef time_steward_system:: time_steward <FIELDS_LIST_final> time_steward;\
 typedef time_steward:: accessor accessor;\
 typedef time_steward:: event event;\
 typedef time_steward:: trigger trigger;\

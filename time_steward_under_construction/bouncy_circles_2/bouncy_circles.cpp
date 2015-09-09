@@ -37,10 +37,14 @@ poly_vector center;
 space_coordinate radius;
 };
 
-MAKE_FIELD (circle_shape);
-MAKE_FIELD (circle_tile, FD_vector);
-MAKE_FIELD (circles_here, persistent_ID_map);
-MAKE_FIELD_PER_ID (circle_acceleration_components, FD_vector);
+BEGIN_FIELDS_LIST //no semicolons
+MAKE_FIELD (circle_shape)
+MAKE_FIELD (circle_tile, FD_vector)
+MAKE_FIELD (circles_here, persistent_ID_map)
+MAKE_FIELD_PER_ID (circle_acceleration_components, FD_vector) 
+FINISH_FIELDS_LIST;
+
+MAKE_TIME_STEWARD;
 
 MAKE_EVENT (circle_switches_tile, 1) {
 FD_vector old_tile = GET (entity, circle_tile);
