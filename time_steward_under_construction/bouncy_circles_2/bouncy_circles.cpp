@@ -27,6 +27,10 @@
 #include <iostream>
 
 #include "../bounded_int_calculus.hpp"
+#include "../time_steward_convenience_macros.hpp"
+
+TIME_STEWARD_BASICS;
+USE_DEFAULT_TIME_TYPE;
 
 struct circle_shape {
 poly_vector center;
