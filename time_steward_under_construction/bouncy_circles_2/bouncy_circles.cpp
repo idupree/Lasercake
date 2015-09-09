@@ -36,6 +36,7 @@ space_coordinate radius;
 MAKE_FIELD (circle_shape);
 MAKE_FIELD (circle_tile, FD_vector);
 MAKE_FIELD (circles_here, persistent_ID_map);
+MAKE_FIELD_PER_ID (circle_acceleration_components, FD_vector);
 
 MAKE_EVENT (circle_switches_tile, 1) {
 FD_vector old_tile = GET (entity, circle_tile);
@@ -61,7 +62,27 @@ accessor-> anticipate_event (when, new circle_switches_tile (entity .id ()));
 };
 
 MAKE_EVENT (circles_interact, 2) {
+auto mass_0 = GET (entities [0], circle_mass);
+auto mass_1 = GET (entities [1], circle_mass);
+auto & shape_0 = GET_MUTABLE (entities [0], circle_shape);
+auto & shape_1 = GET_MUTABLE (entities [1], circle_shape);
+auto center_difference = shape_1.center - shape_2.center; 
+space_coordinate radius_sum = shape_1.radius - shape_0.radius;
+space_coordinate current_distance_rounded_down = isqrt (center_distance_squared (NOW))-radius_sum;
+space_coordinate current_overlap_category = divide (current_distance_rounded_down, overlap_increment_size, rounding_strategy <round_down, negative_continuous_with_positive> ());
+auto relative_acceleration_magnitude = (1 <<(current_overlap_category>> 3))*magnitudes_table [current_overlap_category & 7];
 
+for (which = 0; which <2;++ which) {
+FD_vector old_acceleration_component = GET (entities [which], circle_acceleration_components, entities [! which]); 
+FD_vector new_acceleration_component = 0;
+if (current_overlap_category >= 0) {
+REMOVE (entities [which], circle_acceleration_components, entities [! which] .id ());
+}
+else {
+auto acceleration_magnitude = divide (relative_acceleration_magnitude*mass [! which], mass [0] + mass [1], rounding_strategy <round_down, negative_is_forbidden> ());
+new_acceleration_component = current_center_difference*acceleration_magnitude/current_center_difference.magnitude ();//TODO: the resulting magnitude can be significantly wrong for small values of current_center_difference (consider the vector (1, 1)). Fix that.
+SET (entities [which], circle_acceleration_components, entities [! which], new_acceleration_component);
+shape [which].center.set_term (NOW, 2, shape [which].center.get_term (NOW, 2) + new_acceleration_component - old_acceleration_component);
 };
 
 MAKE_TRIGGER (circle_may_interact,1) {
