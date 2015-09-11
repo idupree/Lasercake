@@ -47,7 +47,8 @@ void operator () (time_steward:: accessor* accessor) const override;\
 }\
 void name:: operator () (time_steward:: accessor* accessor) const
 
-#define MAKE_TRIGGER(...) MAKE_EVENT (__VA_ARGS__)
+#define MAKE_TRIGGER(name,) const siphash_id DEFAULT_TRIGGER_HASH_##name (#name);\
+MAKE_EVENT (__VA_ARGS__)
 
 #define CAPTURE(ID, var_name) time_steward:: accessor :: entity_ref var_name = accessor->get (ID);
 #define GET(entity, field) (accessor->get<field>(entity))
@@ -56,3 +57,7 @@ void name:: operator () (time_steward:: accessor* accessor) const
 #define GET_MUTABLE(entity, field, other_ID) (accessor->get_mut<field>(entity, other_ID))
 #define SET(entity, field, value) (accessor->set<field>(entity, value))
 #define SET(entity, field, other_ID, value) (accessor->set<field>(entity, other_ID, value))
+
+#define ANTICIPATE_EVENT(when, event_class, ...) accessor-> anticipate_event (when,std:: shared_ptr <event_class> (new event_class (__va_args__)))
+
+#define SET_TRIGGER_DEFAULT(trigger_class, entity_id, ...) accessor->set_trigger(siphash_id:: combining (entity_id, DEFAULT_TRIGGER_HASH_##trigger_class),std:: shared_ptr <trigger_class> (new trigger_class (entity_ID,__VA_ARGS__)))

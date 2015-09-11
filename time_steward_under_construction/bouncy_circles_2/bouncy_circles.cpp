@@ -32,6 +32,21 @@
 TIME_STEWARD_BASICS;
 USE_DEFAULT_TIME_TYPE;
 
+typedef int64_t space_coordinate;
+typedef int64_t tile_coordinate;
+const time_type second = 10000000;
+const space_coordinate micrometer = second*second/1000;
+const space_coordinate millimeter = micrometer*1000;
+const space_coordinate meter = millimeter*1000;
+const space_coordinate overlap_increment_distance = micrometer*10;
+const space_coordinate magnitudes_table [8] = {16, 17, 19, 21, 23, 25, 27, 29};
+const space_coordinate tile_size = meter;
+constexpr inline tile_coordinate space_to_tile (space_coordinate coordinate) {return divide (coordinate, tile_size, rounding_strategy <round_down, negative_continuous_with_positive> ());}
+constexpr inline space_coordinate tile_to_space_min (tile_coordinate coordinate) {return coordinate*tile_size;}
+constexpr inline space_coordinate tile_to_space_max (tile_coordinate coordinate) {return coordinate*tile_size + (tile_size-1);}
+
+
+
 struct circle_shape {
 poly_vector center;
 space_coordinate radius;
