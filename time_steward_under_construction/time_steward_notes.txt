@@ -1,0 +1,210 @@
+The main template parameter of the time steward is a list of "fields". The fields are the types of data that can exist in the simulation. Each field has a unique null value. Each field may have one or more watchers.
+
+The simulation state at any time is a mapping
+
+(Entity ID, field ID) -> field value
+
+Obviously, in an actual simulation, most of the quintillions of ID pairs are unused. From this mathematical perspective, we say that all but finitely many of the ID pairs map to a null value. Each field type must have a unique null value.
+
+In a typical simulation model, the simulation would advance by time steps, and iterate through all non-null values to update them. For example:
+
+
+
+
+
+Each field may have one or more watchers. A watcher is a function
+
+(Entity ID, (Entity ID, field ID) -> field value) -> maybe (time, event)
+
+a watcher that receives an entity ID whose value of the watcher's is null must return nothing.
+
+a naïve implementation of the simulation loop would now be:
+
+Var next_event = min.map (all non-null values,
+
+If we could start the simulation the beginning and simulate forever, and recorded all of the values at all times, we would receive a mapping
+
+(Entity ID, field ID, time) -> field value
+
+We call this mapping the "perfect history". Note that the time-slices of this mapping are the simulation states we describe above. Note that the (entity ID, field ID)-slices of this mapping are piecewise constant.
+
+We can now introduce the true structure of the time steward.
+
+The time steward data is a mapping
+
+(Entity ID, field ID, time) -> field value
+combined with a collection of time intervals during which we know that this mapping exactly matches the "perfect history".
+
+
+
+
+Fluid dynamics notes:
+
+
+template <num_dimensions_type NumDimensions>
+struct fluid_dynamics {
+const num_dimensions_type num_dimensions = NumDimensions;
+
+enum transfer_type {
+MASS = 0,
+MOMENTUM,
+MASS_TIMES_POSITION,
+NUM_TRANSFER_TYPES
+}
+
+struct fluid_box_transfers {
+std::array <integer, num_dimensions*2*NUM_TRANSFER_TYPES> data;
+fluid_box_transfers (): all zeros {}
+integer & operator [] (dimension, direction, transfer_type type) {
+return data [dimension*2*NUM_TRANSFER_TYPES + type*2 + (direction >0)];
+}
+
+whatever total (transfer_type type) {
+whatever result = 0;
+for (dimension, direction) {
+result += [dimension, direction, type];
+}
+return result;
+}
+
+void round_off (transfer_type type, something amount_available) {
+integer total_mass = total (MASS);
+whatever total_assigned = 0;
+for (dimension, direction) {
+[dimension, direction, type] = divide (amount_available*[dimension, direction, mass], total_mass, rounding_strategy <round_down, negative_mirrors_positive> ());
+total_assigned += [dimension, direction, type];
+}
+//the remainder, (amount_available - total_assigned), which may be in any direction but has very low magnitude, must be distributed somehow. As a hack, we just assigned to the first value, which creates a directional bias. TODO, use a better system.
+for (dimension, direction) {
+if ([dimension, direction, MASS]) {
+[dimension, direction, type] += (amount_available - total_assigned);
+break;
+}
+}
+} 
+};
+
+struct fluid_box {
+time_type when_quantities_updated;
+time_type when_transfers_updated;
+poly_2 mass;
+poly_3_vector momentum;
+poly_4_vector mass_times_position;
+fluid_box_transfers transfers;
+
+};
+
+poly_1 force_numerator (1000000);
+poly_2 force_denominator (0, 1);
+
+void update_transfers (fluid_box & box) {
+update_quantities (box);
+integer current_mass = box.mass.get_term (0);
+//TODO: divide in a way that isn't direction-biased
+FD_vector current_velocity = box.momentum.get_term (0)/current_mass;
+FD_vector current_center_of_mass = box. mass_times_position.get_term (0)/current_mass;
+box.when_transfers_updated = NOW;
+
+fluid_box_transfers new_transfers;
+
+for (auto direction: directions) {
+if (current_center_of_mass (direction) >box midpoint (direction) && current_velocity (direction) >0) {
+FD_vector transferred_center_old_mass = current_center_of_mass;
+transferred_center_of_mass (direction) = box endpoint (direction);
+new_transfers [dimension, direction, MASS] = current_velocity (dimension)*direction;
+new_transfers [dimension, direction, MOMENTUM] = current_velocity (dimension)*direction*current_velocity;
+new_transfers [dimension, direction, MASS_TIMES_POSITION] = current_velocity (dimension)*direction*transferred_center_of_mass;
+});
+}
+}
+
+if (new transfers.total (MASS) <current_mass) {
+new_transfers.round_off (MASS, current_mass);
+new_transfers.round_off (MOMENTUM, box.momentum.get_term (0));
+new_transfers.round_off (MASS_TIMES_POSITION, box. mass_times_position.get_term (0));
+}
+for (auto direction: directions) {
+new_transfers [dimension, direction, MOMENTUM] +=
+//force equals mass times acceleration
+//is equivalent to
+//force equals momentum per time
+//so a force is just a constant momentum transfer
+force_numerator (current_mass)/force_denominator (current_mass);
+
+}
+
+//TODO: round off the transfers if we go below 0 mass in a single time step
+
+box.transfers = new_transfers;
+update_quantities (box);
+for () {
+update_quantities (get_neighbor (, dimension, direction));
+}
+}
+
+void update_quantities (fluid_box & box) {
+time_type duration =NOW - box.when_quantities_updated;
+box.mass = poly_2 (
+  box.mass (duration),
+  transfer_sum (box, MASS)
+);
+box.momentum = poly_3_vector (
+  box. momentum.get_term (0, duration),
+  transfer_sum (box, MOMENTUM)
+) + box.mass*x*forces;
+box.mass_times_position = poly_4_vector (
+  box.mass_times_position.get_term (0, duration),
+  transfer_sum (box, MASS_TIMES_POSITION)
+) + box.momentum*x;
+box. when_quantities_updated = NOW;
+}
+
+integer transfer_sum (fluid_box & box, transfer_type type, bool self_only = false) {
+integer result = 0; 
+ for () {
+result -= box.transfers [dimension, direction, type];
+result += GET_NEIGHBOR (box, dimension, direction).transfers [dimension,-direction, type];
+}
+return result;
+}
+
+time_type when_rational_with_positive_denominator_escapes (numerator, denominator, start_time, minimum, maximum) {
+auto upper_comparison = numerator-denominator*maximum;
+auto lower_comparison = numerator-denominator*minimum;
+return time_min (
+  when_positive (start_time, upper_comparison),
+  when_negative (start_time, lower_comparison)
+);
+}
+
+time_type when_to_update_transfers (fluid_box & box) {
+poly_2 own_mass = poly_2 (box.mass_when_transfers_updated, transfer_sum (box, MASS, true);
+time_type result = time_add (box.when_transfers_updated, when_nonpositive (0, own_mass));
+result = time_min (result, time_add (box.when_quantities_updated,
+  when_rational_with_positive_denominator_escapes (
+force_numerator.compose (box.mass), force_denominator.compose (box.mass), 0,
+    box.force_when_transfers_updated (dimension) - force_leeway
+    box.force_when_transfers_updated (dimension) + force_leeway));
+for (dimension) {
+//velocity >velocity_0 + leeway
+//momentum/mass >velocity_+ leeway
+//momentum >mass*(velocity_0 + leeway)-- -- mass is positive
+//momentum-mass*(velocity_0 + leeway) >0
+
+result = time_min (result, time_add (box.when_quantities_updated,
+  when_rational_with_positive_denominator_escapes (
+    box.momentum (dimension), box.mass, 0,
+    box.velocity_when_transfers_updated (dimension) - velocity_leeway
+    box.velocity_when_transfers_updated (dimension) + velocity_leeway));
+result = time_min (result, time_add (box.when_quantities_updated,
+  when_rational_with_positive_denominator_escapes (
+    box.mass_times_position (dimension), box.mass, 0,
+    box.center_of_mass_when_transfers_updated (dimension) - center_of_mass_leeway
+    box.center_of_mass_when_transfers_updated (dimension) + center_of_mass_leeway));
+}
+return result;
+}
+
+
+
+} /*struct fluid_dynamics*/
