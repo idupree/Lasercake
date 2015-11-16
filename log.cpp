@@ -28,6 +28,17 @@
 
 #include "config.hpp"
 
+#if defined(BOOST_NO_EXCEPTIONS)
+namespace boost {
+void throw_exception(std::exception const& e) {
+  LOG << "Exception (uncatchable because BOOST_NO_EXCEPTIONS):\n"
+      << e.what() << std::endl;
+  exit(1);
+}
+}
+#endif
+
+
 // Use POSIX write() rather than C stdio to make sure
 // there aren't any locks/mutexes/global state hiding out anywhere
 // that thread cancellation could mess up.
