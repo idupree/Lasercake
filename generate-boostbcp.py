@@ -58,15 +58,7 @@ except FileNotFoundError: pass
 try: shutil.rmtree(boostbcp_dir+'/libs/thread')
 except FileNotFoundError: pass
 
-# Work around https://svn.boost.org/trac/boost/ticket/7081
-# (which is fixed in Boost 1.51) :
-with open(boostbcp_dir+'/boost/detail/win/basic_types.hpp', 'r') as f:
-	f_contents = f.read()
-fixed_f_contents = f_contents.replace('<WinError.h>', '<winerror.h>')
-with open(boostbcp_dir+'/boost/detail/win/basic_types.hpp', 'w') as f:
-	f.write(fixed_f_contents)
-
-# [*] Regarding system Boost:
+# [*] 2012 note regarding system Boost:
 #    - Is it the right Boost version? e.g. 1.49.0 has a Boost.Random bug
 #      that affects us <https://svn.boost.org/trac/boost/ticket/6189>.
 #      1.50.0 made lexical_cast compile in my mingw cross-compile environment
