@@ -894,7 +894,7 @@ inline result_t isqrt_impl(radicand_t radicand) {
   maybe_assert(twice_t(upper_bound)*upper_bound > radicand);
 #endif
 
-  while(lower_bound + 1 < upper_bound)
+  while(lower_bound < upper_bound - 1)
   {
     const lower_bound_and_mid_t mid((upper_bound + lower_bound) >> 1);
     if(test_multiply_t(mid) * test_multiply_t(mid) > test_multiply_t(radicand)) {
