@@ -221,6 +221,7 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
   do_test([&]{a; return true;}, &make_uninteresting, comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "`" \
   )
+#ifndef BOOST_NO_EXCEPTIONS
 #define BOOST_CHECK_THROW(a, e) \
   do_test([&]() -> msg { \
       try{ a; } catch(e const& test_suite_expected_exception){return msg{true, test_suite_expected_exception.what()};} \
@@ -228,6 +229,9 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
     }, &make_uninteresting, comparators::first_is_true(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "` throws `" BOOST_PP_STRINGIZE(e) "`" \
   )
+#else
+#define BOOST_CHECK_THROW(a, e) /*sadly unable to test this on systems without exceptions*/
+#endif
 
 #endif
 
