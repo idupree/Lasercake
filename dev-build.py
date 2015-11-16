@@ -149,13 +149,16 @@ def main():
 		subprocess.call(to_call_make_again)
 		say(ansi_red+'build failed'+ansi_end+'\n')
 		exit(1)
-	is_windows_exe = is_apple_app = False
+	is_windows_exe = is_apple_app = is_js = False
 	app_name = exe_name = None
 	if os.path.exists('Lasercake'):
 		app_name = exe_name = 'Lasercake'
 	if os.path.exists('Lasercake.exe'):
 		app_name = exe_name = 'Lasercake.exe'
 		is_windows_exe = True
+	if os.path.exists('Lasercake.js'):
+		exe_name = 'Lasercake.js'
+		is_js = True
 	if os.path.exists('Lasercake.app'):
 		app_name = 'Lasercake.app'
 		exe_name = 'Lasercake.app/Contents/MacOS/Lasercake'
@@ -166,7 +169,8 @@ def main():
 		say(ansi_red+"couldn't find Lasercake binary?!"+ansi_end+'\n')
 		exit(1)
 	# poor estimate that assumes people only cross-compile
-	# if it involves Windows:
+	# if it involves Windows (or Javascript, but we can run
+	# tests even for Javascript):
 	is_cross_compiling = (is_windows_exe != (os.name == 'nt'))
 	if making_lasercake:
 		say(ansi_green+'and you got:\n./'+build_dir+'/'+exe_name+'\n(etc.)'+ansi_end+'\n')
@@ -175,14 +179,18 @@ def main():
 	else:
 		if running_tests:
 			say(ansi_cyan+'Testing...\n')
-			say_we_are_calling('./'+build_dir+'/'+exe_name+' --run-self-tests')
-			test_status = subprocess.call(['./'+exe_name, '--run-self-tests'])
+			say_we_are_calling('(cd '+build_dir+'; '+
+				('node ' if is_js else '')+'./'+exe_name+' --run-self-tests)')
+			test_status = subprocess.call((['node'] if is_js else []) +
+				['./'+exe_name, '--run-self-tests'])
 			if test_status != 0:
 				say(ansi_red+'Tests failed.\n')
 				exit(test_status)
 			say(ansi_green+'success')
 		else:
 			say(ansi_yellow+'NOT RUNNING TESTS')
+		if is_js:
+			making_lasercake = False
 		if making_lasercake:
 			say('; copying '+build_dir+'/'+app_name+' to ./'+app_name)
 		say(ansi_end+'\n')
