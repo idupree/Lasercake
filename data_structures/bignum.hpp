@@ -702,7 +702,7 @@ long double to_long_double_signed(bignum<Limbs> a) {
 
 template<size_t LimbsOut, size_t Limbs>
 inline bignum<LimbsOut> divide_by_limb_unsigned(bignum<Limbs> a, limb_type b) {
-  
+  static_assert(Limbs-Limbs, "unimplemented");
 }
 template<size_t Limbs>
 inline void show_limbs_hex_bigendian(bignum<Limbs> a, char out[Limbs*(limb_bits/4 + 1)]) {
