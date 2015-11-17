@@ -785,7 +785,7 @@ coord tower_center(coord b) {
 
 class playground : public worldgen_type {
 public:
-  virtual worldgen_summary_of_area examine_region(tile_bounding_box region) {
+  virtual worldgen_summary_of_area examine_region(tile_bounding_box region) override {
     worldgen_summary_of_area result;
 #if 0
     if(region.min(Z) >= wcc + 2000) {
