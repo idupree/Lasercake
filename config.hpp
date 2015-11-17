@@ -141,6 +141,10 @@
 // (not enabled unless you enable it) #define USE_BOUNDS_CHECKED_INTS 1
 
 
+namespace boost {
+ATTRIBUTE_NORETURN void throw_exception(std::exception const& e);
+}
+
 // It's not polite for library functions to assert() because the library's users
 // misused a correct library; use these for that case.
 inline ATTRIBUTE_NORETURN void caller_error(const char* error) {
