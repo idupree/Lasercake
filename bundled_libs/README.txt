@@ -3,4 +3,4 @@ bundled libraries.  Their usage can be controlled by a CMake option.
 Having some of the libraries here makes it easier to get started on developing
 and (debatably) easier to avoid version skew.
 
-Boost and GLEW are distributed under BSD-style licenses.
+Boost, GLEW, and GLM are distributed under BSD/MIT-style licenses.
