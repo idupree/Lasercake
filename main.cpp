@@ -1030,6 +1030,10 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
     QObject::connect(&*gl_widget_, SIGNAL(key_changed(input_representation::key_change_t)),
                     this,         SLOT(key_changed(input_representation::key_change_t)));
     gl_widget_->show();
+#else
+    gl_widget_->key_changed_topic.subscribe(
+      [this](input_representation::key_change_t a) {
+        this->key_changed(a); });
 #endif
   }
 
@@ -1043,6 +1047,11 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
     simulator_->moveToThread(&*simulator_thread_);
     simulator_thread_->start();
   }
+#else
+  simulator_->frame_output_ready_topic.subscribe(
+    [this](time_unit a, frame_output_t b) {
+      this->output_new_frame(a, b); });
+  // also works: simulator_->frame_output_ready_topic.subscribe(std::bind(&LasercakeController::output_new_frame, this, std::placeholders::_1, std::placeholders::_2));
 #endif
 
   monotonic_microseconds_at_beginning_of_frame_ = get_monotonic_microseconds();

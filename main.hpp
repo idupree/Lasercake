@@ -116,6 +116,27 @@ struct QSize {
 #define Q_SLOTS
 #define Q_INVOKABLE
 #define Q_SIGNALS protected
+template<typename... Args>
+class pubsub_topic {
+public:
+  typedef std::function<void(Args...)> subscriber_type;
+  // no multithreadedness
+
+  // too bad std::functions are not equality-comparable so
+  // it's more complex to say which one to remove
+
+  // or return std::vector<Ret> but then we need to deal with vector of void
+  void publish(Args&&... args) {
+    for(auto& sub : subscribers_) {
+      sub(args...);
+    }
+  }
+  void subscribe(subscriber_type&& sub) {
+    subscribers_.push_back(std::move(sub));
+  }
+private:
+  std::vector<subscriber_type> subscribers_;
+};
 #endif
 
 #if LASERCAKE_USE_QT
@@ -144,6 +165,12 @@ public:
 Q_SIGNALS:
   void sim_frame_done(time_unit moment);
   void frame_output_ready(time_unit moment, frame_output_t output);
+#if LASERCAKE_USE_QT /* Qt breaks if I #ifdef its signals */
+#else
+public:
+  pubsub_topic<time_unit /*moment*/> sim_frame_done_topic;
+  pubsub_topic<time_unit /*moment*/, frame_output_t /*output*/> frame_output_ready_topic;
+#endif
 
 private:
   shared_ptr<world> world_ptr_;
@@ -206,6 +233,11 @@ public:
 
 Q_SIGNALS:
   void key_changed(input_representation::key_change_t);
+#if LASERCAKE_USE_QT /* Qt breaks if I #ifdef its signals */
+#else
+public:
+  pubsub_topic<input_representation::key_change_t> key_changed_topic;
+#endif
 
 #if LASERCAKE_USE_QT
 protected:
