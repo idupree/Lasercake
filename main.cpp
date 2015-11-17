@@ -124,14 +124,15 @@ microseconds_t get_this_process_microseconds() {
 
 // Usage example:
 // LOG << std::setw(6) << (ostream_bundle() << "foo" << 564) << std::endl;
-struct ostream_bundle : std::ostream {
+struct ostream_bundle {
   template<typename T> ostream_bundle& operator<<(T const& t) { ss_ << t; return *this; }
   std::string str() { return ss_.str(); }
 private:
-  std::stringstream ss_;
+  std::ostringstream ss_;
 };
-std::ostream& operator<<(ostream_bundle& os, ostream_bundle& b) { return os << b.str(); }
+ostream_bundle& operator<<(ostream_bundle& os, ostream_bundle& b) { return os << b.str(); }
 std::ostream& operator<<(std::ostream& os, ostream_bundle& b) { return os << b.str(); }
+
 
 // show_decimal(1234567, 1000, 10) --> "1234.5"
 template<typename Integral, typename Integral2>
