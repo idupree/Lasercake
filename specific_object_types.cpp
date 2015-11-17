@@ -299,10 +299,10 @@ void robot::update(world& w, input_representation::input_news_t const& input_new
   const int64_t mouse_speed_factor = 2;
   const int64_t speed_divisor = 20*key_speed_factor;
   const int64_t turn_right_amount = mouse_speed_factor * input_news.mouse_displacement().x
-                                    + input_news.mouse_displacement().x * abs(input_news.mouse_displacement().x) / 10
+                                    + input_news.mouse_displacement().x * std::abs(input_news.mouse_displacement().x) / 10
                                     + key_speed_factor * (turn_right - turn_left);
   const int64_t turn_up_amount    = mouse_speed_factor * input_news.mouse_displacement().y
-                                    + input_news.mouse_displacement().y * abs(input_news.mouse_displacement().y) / 10
+                                    + input_news.mouse_displacement().y * std::abs(input_news.mouse_displacement().y) / 10
                                     + key_speed_factor * (turn_up - turn_down);
   if (turn_right_amount != 0) {
     const distance new_facing_x = facing_.x + turn_right_amount * facing_.y / speed_divisor;
@@ -837,7 +837,7 @@ void conveyor_belt::update(world& w, input_representation::input_news_t const&, 
       }
     }
     const which_dimension_type dim2 = (dim == X) ? Y : X;
-    if (abs(tile_vel(dim2)) <= one_frame_acceleration) tile_vel[dim2] = 0;
+    if (std::abs(tile_vel(dim2)) <= one_frame_acceleration) tile_vel[dim2] = 0;
     else tile_vel[dim2] -= one_frame_acceleration * sign(tile_vel(dim2));
     tile_location next_loc = loc.get_neighbor_by_variable(direction_, CONTENTS_ONLY);
     sub_tile_velocity target_zvel((next_loc.stuff_at().contents() == AIR) ? 0 : ((tile_height / seconds) * identity(tile_physics_sub_tile_distance_units / fine_distance_units) / identity(fixed_frame_lengths / seconds)));
