@@ -482,7 +482,7 @@ int main(int argc, char** argv)
       config.have_gui = false;
     }
 
-    if(vm.count("no-threads")) {
+    if(vm.count("no-threads") || !LASERCAKE_USE_QT) {
       config.use_simulation_thread = false;
       config.use_opengl_thread = false;
     }

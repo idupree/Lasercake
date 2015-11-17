@@ -140,6 +140,9 @@
 
 // (not enabled unless you enable it) #define USE_BOUNDS_CHECKED_INTS 1
 
+#if !LASERCAKE_USE_QT
+constexpr bool LASERCAKE_USE_QT = false;
+#endif
 
 namespace boost {
 ATTRIBUTE_NORETURN void throw_exception(std::exception const& e);
