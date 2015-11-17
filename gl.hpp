@@ -24,11 +24,37 @@
 
 // for portable header inclusion...
 
+#if LASERCAKE_USE_QT
+
 #include <GL/glew.h>
 
 inline bool init_gl_library() {
   return glewInit() == GLEW_OK;
 }
+
+#else
+
+#include <GLES2/gl2.h>
+
+inline bool init_gl_library() {
+  return true;
+}
+
+#endif
+
+#if EXTREMELY_OBSOLETE_GL_BUFFER_FUNC_NAMES
+// Using the *ARB versions is needed for OS X 10.6 macbook2,1,
+// but slows down Nouveau because it probably gets confused between
+// old functions names and new GLSL code.
+#define glGenBuffers glGenBuffersARB
+#define glBindBuffer glBindBufferARB
+#define glBufferData glBufferDataARB
+#define glBufferSubData glBufferSubDataARB
+#define glDeleteBuffers glDeleteBuffersARB
+#endif
+
+#define MODERN_GL_PLEASE 1
+#define MODERN_GL_NO_QUADS 1
 
 #endif
 

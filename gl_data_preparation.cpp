@@ -284,20 +284,38 @@ void push_quad(gl_collection& coll,
                vertex const& v2,
                vertex const& v3,
                vertex const& v4, color const& c) {
+#if MODERN_GL_NO_QUADS
+  push_vertex(coll.triangles, v1, c);
+  push_vertex(coll.triangles, v2, c);
+  push_vertex(coll.triangles, v3, c);
+  push_vertex(coll.triangles, v3, c);
+  push_vertex(coll.triangles, v4, c);
+  push_vertex(coll.triangles, v1, c);
+#else
   push_vertex(coll.quads, v1, c);
   push_vertex(coll.quads, v2, c);
   push_vertex(coll.quads, v3, c);
   push_vertex(coll.quads, v4, c);
+#endif
 }
 void push_quad(gl_collection& coll,
                vertex const& v1, color const& c1,
                vertex const& v2, color const& c2,
                vertex const& v3, color const& c3,
                vertex const& v4, color const& c4) {
+#if MODERN_GL_NO_QUADS
+  push_vertex(coll.triangles, v1, c1);
+  push_vertex(coll.triangles, v2, c2);
+  push_vertex(coll.triangles, v3, c3);
+  push_vertex(coll.triangles, v3, c3);
+  push_vertex(coll.triangles, v4, c4);
+  push_vertex(coll.triangles, v1, c1);
+#else
   push_vertex(coll.quads, v1, c1);
   push_vertex(coll.quads, v2, c2);
   push_vertex(coll.quads, v3, c3);
   push_vertex(coll.quads, v4, c4);
+#endif
 }
 
 // TODO allow choosing each polygon vertex's color?
@@ -676,9 +694,15 @@ void prepare_tile(world const& w, gl_collection& coll, tile_location const& loc,
     draw_z_close_side = (neighbor_tiles[zplus].contents() != contents
                                             && !is_same_z_coord_as_viewer);
   }
+#if MODERN_GL_NO_QUADS
+  const gl_call_data::size_type original_count = coll.triangles.count;
+  coll.triangles.reserve_new_slots(6 * (draw_x_close_side + draw_y_close_side + draw_z_close_side));
+  vertex_with_color* base = coll.triangles.vertices + original_count;
+#else
   const gl_call_data::size_type original_count = coll.quads.count;
   coll.quads.reserve_new_slots(4 * (draw_x_close_side + draw_y_close_side + draw_z_close_side));
   vertex_with_color* base = coll.quads.vertices + original_count;
+#endif
 
   const color tile_color = compute_tile_color(w, loc);
 
@@ -694,6 +718,35 @@ void prepare_tile(world const& w, gl_collection& coll, tile_location const& loc,
 
   //TODO what if you are close enough to a wall or lake-surface that
   //this falls inside your near clipping plane?
+#if MODERN_GL_NO_QUADS
+  if (draw_x_close_side) {
+    base[5] = base[0] = gl_vertices[0][0][0];
+              base[1] = gl_vertices[0][1][0];
+    base[3] = base[2] = gl_vertices[0][1][1];
+              base[4] = gl_vertices[0][0][1];
+    base[0].c.r = base[1].c.r = base[2].c.r = base[3].c.r = base[4].c.r = base[5].c.r = base[0].c.r / 2;
+    base[0].c.g = base[1].c.g = base[2].c.g = base[3].c.g = base[4].c.g = base[5].c.g = base[0].c.g / 2;
+    base[0].c.b = base[1].c.b = base[2].c.b = base[3].c.b = base[4].c.b = base[5].c.b = base[0].c.b / 2;
+    base += 6;
+  }
+  if (draw_y_close_side) {
+    base[5] = base[0] = gl_vertices[0][0][0];
+              base[1] = gl_vertices[0][0][1];
+    base[3] = base[2] = gl_vertices[1][0][1];
+              base[4] = gl_vertices[1][0][0];
+    base[0].c.r = base[1].c.r = base[2].c.r = base[3].c.r = base[4].c.r = base[5].c.r = base[0].c.r * 2 / 3;
+    base[0].c.g = base[1].c.g = base[2].c.g = base[3].c.g = base[4].c.g = base[5].c.g = base[0].c.g * 2 / 3;
+    base[0].c.b = base[1].c.b = base[2].c.b = base[3].c.b = base[4].c.b = base[5].c.b = base[0].c.b * 2 / 3;
+    base += 6;
+  }
+  if (draw_z_close_side) {
+    base[5] = base[0] = gl_vertices[0][0][0];
+              base[1] = gl_vertices[1][0][0];
+    base[3] = base[2] = gl_vertices[1][1][0];
+              base[4] = gl_vertices[0][1][0];
+    base += 6;
+  }
+#else
   if (draw_x_close_side) {
     base[0] = gl_vertices[0][0][0];
     base[1] = gl_vertices[0][1][0];
@@ -721,6 +774,7 @@ void prepare_tile(world const& w, gl_collection& coll, tile_location const& loc,
     base[3] = gl_vertices[0][1][0];
     base += 4;
   }
+#endif
 }
 
 // 0 seemed to be the best values speed wise: which means,
@@ -1088,6 +1142,7 @@ void view_on_the_world::prepare_gl_data(
     GLubyte(total_g / tiles_here.size()),
     GLubyte(total_b / tiles_here.size()),
     max_a);
+  gl_data.tint_everything_with_this_color = color(0x3333ffd0);
 
   // Optimization:
   if(gl_data.tint_everything_with_this_color.a == 0xff) { return; }
