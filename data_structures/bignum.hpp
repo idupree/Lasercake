@@ -924,6 +924,8 @@ using bignum::bigint;
 using bignum::multiply_to;
 using bignum::lossless_multiply;
 
+constexpr double double_log10_2 = 0.30102999566398119;
+
 namespace std {
 template<size_t Bits>
 class numeric_limits< biguint<Bits> >
@@ -935,7 +937,7 @@ public:
   static biguint<Bits> lowest() noexcept { return biguint<Bits>(bignum::zero<biguint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits;
-  static constexpr int  digits10 = Bits * std::log10(2);
+  static constexpr int  digits10 = Bits * double_log10_2;
   static constexpr bool is_signed = false;
   static constexpr bool is_integer = true;
   static constexpr bool is_exact = true;
@@ -957,7 +959,7 @@ public:
   static bigint<Bits> lowest() noexcept { return bigint<Bits>(bignum::min_signed<bigint<Bits>::bignum_limbs>()); }
 
   static constexpr int  digits = Bits-1;
-  static constexpr int  digits10 = (Bits-1) * std::log10(2);
+  static constexpr int  digits10 = (Bits-1) * double_log10_2;
   static constexpr bool is_signed = true;
   static constexpr bool is_integer = true;
   static constexpr bool is_exact = true;
