@@ -315,6 +315,8 @@ void LasercakeSimulator::new_input_as_of(time_unit /*moment*/, input_news_t inpu
 
 #if LASERCAKE_USE_QT
   Q_EMIT sim_frame_done(world_ptr_->game_time_elapsed());
+#else
+  sim_frame_done_topic.publish(world_ptr_->game_time_elapsed());
 #endif
 }
 
@@ -359,6 +361,8 @@ void LasercakeSimulator::prepare_graphics(input_news_t input_since_last_prepare,
 
 #if LASERCAKE_USE_QT
   Q_EMIT frame_output_ready(world_ptr_->game_time_elapsed(), output);
+#else
+  frame_output_ready_topic.publish(world_ptr_->game_time_elapsed(), output);
 #endif
 }
 
@@ -1079,6 +1083,9 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
 
   QMetaObject::invokeMethod(&*simulator_, "prepare_graphics", Qt::AutoConnection,
     Q_ARG(input_news_t, input_news_t()), Q_ARG(distance, config_.view_radius), Q_ARG(bool, config_.run_drawing_code));
+#else
+  simulator_->init(worldgen, config_);
+  simulator_->prepare_graphics(input_news_t(), config_.view_radius, config_.run_drawing_code);
 #endif
 }
 
@@ -1123,6 +1130,9 @@ void LasercakeController::invoke_simulation_step_() {
       Q_ARG(time_unit, game_time_), Q_ARG(input_news_t, input_news));
     QMetaObject::invokeMethod(&*simulator_, "prepare_graphics", Qt::QueuedConnection,
       Q_ARG(input_news_t, input_news), Q_ARG(distance, config_.view_radius), Q_ARG(bool, config_.run_drawing_code));
+#else
+    simulator_->new_input_as_of(game_time_, input_news);
+    simulator_->prepare_graphics(input_news, config_.view_radius, config_.run_drawing_code);
 #endif
   }
 }
