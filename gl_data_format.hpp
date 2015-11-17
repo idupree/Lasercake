@@ -22,6 +22,8 @@
 #ifndef LASERCAKE_GL_DATA_FORMAT_HPP__
 #define LASERCAKE_GL_DATA_FORMAT_HPP__
 
+#define GLM_FORCE_RADIANS
+
 // This header does not use GL types (GLfloat, GLubyte) in order to
 // be agnostic between GLEW and Qt's opinions of OpenGL headers.
 // gl_data_preparation.cpp static_asserts that they're the types we
@@ -240,7 +242,7 @@ const distance far_clipping_plane = tile_width * 300;
 // view frustums, for example.
 inline glm::mat4 make_projection_matrix(float aspect_ratio) {
   return glm::perspective(
-    float(fovy_degrees),
+    glm::radians(float(fovy_degrees)),
     float(aspect_ratio),
     get_primitive_float(near_clipping_plane/fine_distance_units),
     get_primitive_float(far_clipping_plane/fine_distance_units)
