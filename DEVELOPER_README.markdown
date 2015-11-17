@@ -23,7 +23,32 @@ To add (or remove) a font, you need to make the following changes:
 Cross-compiling
 ---------------
 
-Notes: from Linux to Windows via MinGW:
+Notes:
+
+### emscripten ###
+
+This might not entirely work yet, but for starters:
+
+- Extra CMake arguments (Arch Linux, Nov 2015):
+    -DCMAKE_TOOLCHAIN_FILE=/usr/lib/emscripten/cmake/Modules/Platform/Emscripten.cmake -DCMAKE_CXX_FLAGS='-s DEMANGLE_SUPPORT=1 -DBOOST_NO_EXCEPTIONS=1' -DUSE_QT=NO
+
+The path to the toolchain file might be different for you.
+See https://github.com/kripken/emscripten/blob/master/src/settings.js for
+more "-s" Emscripten flags you might be interested in. If you want
+to turn exceptions back on (at a performance cost), remove
+`-DBOOST_NO_EXCEPTIONS=1` and add `-s DISABLE_EXCEPTION_CATCHING=0` in its
+place.
+
+You could run it from the command line by
+`(cd [the directory where Lasercake.js is]; node Lasercake.js --help)`
+although that's kind of silly because the hope is it will have
+a browser UI.  The main use for running it from the command line
+is that --run-self-tests works.  You may have to use `nodejs` instead
+of `node` on some versions of Debian.  (You may have to install
+Node.js for this.  Node probably isn't necessary for the build process,
+though, just the tests.)
+
+### from Linux to Windows via MinGW: ###
 
 Fedora: install mingw{32,64}-{gcc,gcc-c++,qt}.
   Use mingw32-cmake or mingw64-cmake instead of cmake.

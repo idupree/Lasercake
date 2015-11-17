@@ -19,6 +19,15 @@
 
 */
 
+#if 0
+#include "tests/test_main.hpp"
+
+int main(int argc, char** argv) {
+  return lasercake_test_main(argc, argv);
+}
+
+#else
+
 // BOOST_SYSTEM_NO_DEPRECATED prevents some deprecated members with global constructors.
 #ifndef BOOST_SYSTEM_NO_DEPRECATED
 #define BOOST_SYSTEM_NO_DEPRECATED
@@ -31,12 +40,14 @@
 #include <string.h>
 #include <math.h>
 
+#if LASERCAKE_USE_QT
 #include <QtGui/QApplication>
 #include <QtGui/QDesktopWidget>
 #include <QtCore/QMetaEnum>
 #include <QtCore/QLocale>
 #include <QtCore/QTimer>
 #include <QtGui/QFontDatabase>
+#endif
 
 #include <iomanip>
 #include <sstream>
@@ -294,7 +305,9 @@ void LasercakeSimulator::new_input_as_of(time_unit /*moment*/, input_news_t inpu
   const microseconds_t microseconds_after_simulating = get_this_thread_microseconds();
   microseconds_last_sim_frame_took_ = microseconds_after_simulating - microseconds_before_simulating;
 
+#if LASERCAKE_USE_QT
   Q_EMIT sim_frame_done(world_ptr_->game_time_elapsed());
+#endif
 }
 
 // TODO think about that input_news argument and the timing of when it's read etc.
@@ -336,7 +349,9 @@ void LasercakeSimulator::prepare_graphics(input_news_t input_since_last_prepare,
     get_world_ztree_debug_info(*world_ptr_)
   };
 
+#if LASERCAKE_USE_QT
   Q_EMIT frame_output_ready(world_ptr_->game_time_elapsed(), output);
+#endif
 }
 
 
@@ -505,6 +520,7 @@ int main(int argc, char** argv)
     }
   }
 
+#if LASERCAKE_USE_QT
   QCoreApplication::setAttribute(Qt::AA_X11InitThreads);
   QApplication qapp(argc, argv);
   if(config.have_gui) {
@@ -526,6 +542,7 @@ int main(int argc, char** argv)
   QFontDatabase::addApplicationFont(":/resources/VC_Luna.ttf");
   QFontDatabase::addApplicationFont(":/resources/VC_Slytherin.ttf");
   QFontDatabase::addApplicationFont(":/resources/VC_Gryffindor.ttf");
+#endif
 
   LasercakeController controller(config);
   // We call exit() here rather than return so that 'controller' is not
@@ -533,7 +550,9 @@ int main(int argc, char** argv)
   // This makes Qt emit fewer warnings; probably makes quitting a bit faster;
   // and we make sure not to use the destructor for any critical
   // end-of-process stuff (if there even is any currently).
+#if LASERCAKE_USE_QT
   const int exitcode = qapp.exec();
+#endif
   LOG << "Qt main loop has ended; " << std::flush;
   if(false) {
     // Currently it seems better not to do this than to do this,
@@ -543,14 +562,20 @@ int main(int argc, char** argv)
     controller.killSimulator();
   }
   LOG << "calling exit()." << std::endl;
+#if LASERCAKE_USE_QT
   exit(exitcode);
+#else
+  exit(0);
+#endif
 }
 
 microseconds_t LasercakeGLThread::gl_render(gl_data_ptr_t& gl_data_ptr, LasercakeGLWidget& gl_widget, QSize viewport_size) {
+#if LASERCAKE_USE_QT
   gl_widget.makeCurrent();
   BOOST_SCOPE_EXIT((&gl_widget)) {
    gl_widget.doneCurrent();
   } BOOST_SCOPE_EXIT_END
+#endif
   // (should we measure time just here or include more of the loop?)
   // (Is monotonic appropriate?  Consider GL semantics: the implementation is
   // free to fork more threads, and/or wait for the GPU without consuming CPU,
@@ -567,7 +592,9 @@ microseconds_t LasercakeGLThread::gl_render(gl_data_ptr_t& gl_data_ptr, Lasercak
     //TODO measure the microseconds ~here~ in the different configurations. e.g. should the before/after here be split across threads?
     //gl_data_ptr.reset(); // but if the deletion does happen now, it'll be in this thread, now, delaying swapBuffers etc :(
     // but it's a good time and CPU(cache) to delete the data on...
+#if LASERCAKE_USE_QT
     gl_widget.swapBuffers();
+#endif
   }
   const microseconds_t microseconds_after_gl = get_monotonic_microseconds();
   return microseconds_after_gl - microseconds_before_gl;
@@ -576,7 +603,9 @@ microseconds_t LasercakeGLThread::gl_render(gl_data_ptr_t& gl_data_ptr, Lasercak
 void LasercakeGLWidget::invoke_render_() {
   if(!has_quit_) {
     if(use_separate_gl_thread_) {
+#if LASERCAKE_USE_QT
       gl_thread_data_->wait_for_instruction.wakeAll();
+#endif
     }
     else {
       gl_thread_data_->microseconds_last_gl_render_took =
@@ -589,6 +618,7 @@ LasercakeGLWidget::LasercakeGLWidget(bool use_separate_gl_thread, QWidget* paren
     input_is_grabbed_(false),
     use_separate_gl_thread_(use_separate_gl_thread),
     has_quit_(false) {
+#if LASERCAKE_USE_QT
   QObject::connect(
     QCoreApplication::instance(), SIGNAL(aboutToQuit()),
     this, SLOT(prepare_to_cleanly_close_()));
@@ -601,9 +631,15 @@ LasercakeGLWidget::LasercakeGLWidget(bool use_separate_gl_thread, QWidget* paren
   resize(approximateAvailableScreenArea.width()*2/3, approximateAvailableScreenArea.height()*2/3);
   setAutoBufferSwap(false);
   setAutoFillBackground(false);
+#endif
   gl_thread_data_.reset(new gl_thread_data_t);
   gl_thread_data_->current_data.reset(new gl_data_t());
-  gl_thread_data_->viewport_size = size();
+#if LASERCAKE_USE_QT
+  const QSize viewport_size = size();
+#else
+  const QSize viewport_size = QSize(300, 300); //todo
+#endif
+  gl_thread_data_->viewport_size = viewport_size;
   gl_thread_data_->microseconds_last_gl_render_took = 0;
   gl_thread_data_->quit_now = false;
   gl_thread_data_->interrupt.store(false);
@@ -614,23 +650,29 @@ LasercakeGLWidget::LasercakeGLWidget(bool use_separate_gl_thread, QWidget* paren
   if(use_separate_gl_thread_) {
     thread_.last_revision_ = 0;
     thread_.microseconds_this_gl_render_took_ = 0;
+#if LASERCAKE_USE_QT
     thread_.start();
+#endif
   }
   else {
     gl_thread_data_->microseconds_last_gl_render_took =
-      thread_.gl_render(gl_thread_data_->current_data, *this, size());
+      thread_.gl_render(gl_thread_data_->current_data, *this, viewport_size);
   }
 }
 void LasercakeGLWidget::update_gl_data(gl_data_ptr_t data) {
   {
+#if LASERCAKE_USE_QT
     QMutexLocker lock(&gl_thread_data_->gl_data_lock);
+#endif
     gl_thread_data_->current_data = data;
     ++gl_thread_data_->revision;
   }
   invoke_render_();
 }
 microseconds_t LasercakeGLWidget::get_last_gl_render_microseconds() {
+#if LASERCAKE_USE_QT
   QMutexLocker lock(&gl_thread_data_->gl_data_lock);
+#endif
   return gl_thread_data_->microseconds_last_gl_render_took;
 }
 void LasercakeGLThread::run() {
@@ -639,14 +681,20 @@ void LasercakeGLThread::run() {
     gl_data_ptr_t gl_data_ptr;
     QSize viewport_size;
     {
+#if LASERCAKE_USE_QT
       QMutexLocker lock(&gl_thread_data_->gl_data_lock);
+#endif
       gl_thread_data_->microseconds_last_gl_render_took = microseconds_this_gl_render_took_;
+#if LASERCAKE_USE_QT
       if(last_revision_ == gl_thread_data_->revision) {
         gl_thread_data_->wait_for_instruction.wait(&gl_thread_data_->gl_data_lock);
       }
+#endif
       if(gl_thread_data_->quit_now) {
         LOG << "Releasing OpenGL state... " << std::flush;
+#if LASERCAKE_USE_QT
         gl_renderer_.fini();
+#endif
         LOG << "Done releasing OpenGL state. " << std::flush;
         return;
       }
@@ -658,6 +706,7 @@ void LasercakeGLThread::run() {
       this->gl_render(gl_data_ptr, *gl_widget_, viewport_size);
   }
 }
+#if LASERCAKE_USE_QT
 void LasercakeGLWidget::resizeEvent(QResizeEvent*) {
   QMutexLocker lock(&gl_thread_data_->gl_data_lock);
   gl_thread_data_->viewport_size = size();
@@ -669,6 +718,7 @@ void LasercakeGLWidget::paintEvent(QPaintEvent*) {
   }
   invoke_render_();
 }
+#endif
 void LasercakeGLWidget::prepare_to_cleanly_close_() {
   if(!has_quit_) {
     // Send debug messages in case waiting for any of these
@@ -679,7 +729,9 @@ void LasercakeGLWidget::prepare_to_cleanly_close_() {
     // release a mouse grab, we do so explicitly.
     if(input_is_grabbed_) {
       LOG << "Ungrabbing input... " << std::flush;
+#if LASERCAKE_USE_QT
       ungrab_input_();
+#endif
       LOG << "Done ungrabbing input. " << std::endl;
     }
 
@@ -694,6 +746,7 @@ void LasercakeGLWidget::prepare_to_cleanly_close_() {
     // in order to clean up even in their wake?
     LOG << (use_separate_gl_thread_ ? "Quitting OpenGL thread... "
                                     : "Releasing OpenGL state... ") << std::flush;
+#if LASERCAKE_USE_QT
     {
       QMutexLocker lock(&gl_thread_data_->gl_data_lock);
       gl_thread_data_->quit_now = true;
@@ -707,6 +760,7 @@ void LasercakeGLWidget::prepare_to_cleanly_close_() {
     else {
       thread_.gl_renderer_.fini();
     }
+#endif
     LOG << (use_separate_gl_thread_ ? "Done quitting OpenGL thread. "
                                     : "Done releasing OpenGL state. ") << std::flush;
 
@@ -714,6 +768,7 @@ void LasercakeGLWidget::prepare_to_cleanly_close_() {
     has_quit_ = true;
   }
 }
+#if LASERCAKE_USE_QT
 void LasercakeGLWidget::closeEvent(QCloseEvent* event) {
   prepare_to_cleanly_close_();
   QGLWidget::closeEvent(event);
@@ -917,6 +972,7 @@ void LasercakeGLWidget::focusOutEvent(QFocusEvent*) {
   input_rep_keys_currently_pressed_.clear();
   keys_currently_pressed_.clear();
 }
+#endif
 
 input_representation::input_news_t LasercakeGLWidget::get_input_news()const {
   input_representation::input_news_t result(
@@ -970,12 +1026,15 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
 
   if(config_.have_gui) {
     gl_widget_.reset(new LasercakeGLWidget(config_.use_opengl_thread));
+#if LASERCAKE_USE_QT
     QObject::connect(&*gl_widget_, SIGNAL(key_changed(input_representation::key_change_t)),
                     this,         SLOT(key_changed(input_representation::key_change_t)));
     gl_widget_->show();
+#endif
   }
 
   simulator_.reset(new LasercakeSimulator());
+#if LASERCAKE_USE_QT
   QObject::connect(&*simulator_, SIGNAL(frame_output_ready(time_unit, frame_output_t)),
                    this,         SLOT(output_new_frame  (time_unit, frame_output_t)),
                    Qt::AutoConnection);
@@ -984,6 +1043,7 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
     simulator_->moveToThread(&*simulator_thread_);
     simulator_thread_->start();
   }
+#endif
 
   monotonic_microseconds_at_beginning_of_frame_ = get_monotonic_microseconds();
   monotonic_microseconds_at_beginning_of_ten_frame_block_ = monotonic_microseconds_at_beginning_of_frame_;
@@ -996,11 +1056,13 @@ LasercakeController::LasercakeController(config_struct config, QObject* parent)
   // Future security, in case we make the sim thread into a sandbox someday.
   // (Minor) cache reasons, so that the newly created world will be in the
   //   relevant CPU's cache.
+#if LASERCAKE_USE_QT
   QMetaObject::invokeMethod(&*simulator_, "init", Qt::AutoConnection,
     Q_ARG(worldgen_ptr, worldgen), Q_ARG(config_struct, config_));
 
   QMetaObject::invokeMethod(&*simulator_, "prepare_graphics", Qt::AutoConnection,
     Q_ARG(input_news_t, input_news_t()), Q_ARG(distance, config_.view_radius), Q_ARG(bool, config_.run_drawing_code));
+#endif
 }
 
 void LasercakeController::invoke_simulation_step_() {
@@ -1015,7 +1077,9 @@ void LasercakeController::invoke_simulation_step_() {
     //LOG << "frame duration " << monotonic_microseconds_for_frame << " vs "
     //<< frame_duration_at_60fps << " target min duration; sleeping for "
     //<< want_to_sleep << ".\n";
+#if LASERCAKE_USE_QT
     QTimer::singleShot((want_to_sleep+1000)/1000, this, SLOT(invoke_simulation_step_()));
+#endif
     return;
   }
   /*else {
@@ -1037,10 +1101,12 @@ void LasercakeController::invoke_simulation_step_() {
       gl_widget_->clear_input_news();
     }
 
+#if LASERCAKE_USE_QT
     QMetaObject::invokeMethod(&*simulator_, "new_input_as_of", Qt::QueuedConnection,
       Q_ARG(time_unit, game_time_), Q_ARG(input_news_t, input_news));
     QMetaObject::invokeMethod(&*simulator_, "prepare_graphics", Qt::QueuedConnection,
       Q_ARG(input_news_t, input_news), Q_ARG(distance, config_.view_radius), Q_ARG(bool, config_.run_drawing_code));
+#endif
   }
 }
 
@@ -1049,7 +1115,11 @@ void LasercakeController::output_new_frame(time_unit moment, frame_output_t outp
 
   ++frame_;
   if(config_.exit_after_frames == frame_) {
+#if LASERCAKE_USE_QT
     QCoreApplication::quit();
+#else
+    exit(0);
+#endif
     return;
   }
 
@@ -1110,8 +1180,13 @@ void LasercakeController::output_new_frame(time_unit moment, frame_output_t outp
 }
 
 void LasercakeController::killSimulator() {
+#if LASERCAKE_USE_QT
   if(simulator_thread_) {
     simulator_thread_->terminate();
     simulator_thread_->wait();
   }
+#endif
 }
+
+#endif
+

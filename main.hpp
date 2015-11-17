@@ -22,11 +22,13 @@
 #ifndef LASERCAKE_MAIN_HPP__
 #define LASERCAKE_MAIN_HPP__
 
+#if LASERCAKE_USE_QT
 #include <QtOpenGL/QGLWidget>
 #include <QtCore/QThread>
 #include <QtCore/QMutex>
 #include <QtCore/QWaitCondition>
 #include <QtGui/QKeyEvent>
+#endif
 
 #include <set>
 
@@ -80,12 +82,50 @@ inline std::ostream& operator<<(std::ostream& os, config_struct const& config) {
     << '}';
 }
 
+#if !LASERCAKE_USE_QT
+// Hackily define some Qt pieces without needing Qt,
+// so that it might be less work to port this code
+// to another toolkit such as Javascript/Emscripten.
+struct QObject{
+  QObject(){}
+  QObject(QObject*){}
+};
+struct QThread : public QObject{
+  QThread(){}
+  QThread(QObject*){}
+};
+struct QWidget : public QObject{
+  QWidget(){}
+  QWidget(QObject*){}
+};
+struct QGLWidget : public QWidget{
+  QGLWidget(){}
+  QGLWidget(QObject*){}
+};
+struct QSize {
+  QSize() : width_(-1), height_(-1) {}
+  QSize(int w, int h) : width_(w), height_(h) {}
+  int width() { return width_; }
+  int height() { return height_; }
+
+  int width_;
+  int height_;
+};
+#define Q_OBJECT
+#define Q_EMIT
+#define Q_SLOTS
+#define Q_INVOKABLE
+#define Q_SIGNALS protected
+#endif
+
+#if LASERCAKE_USE_QT
 struct sleeper : private QThread {
 public:
   using QThread::sleep;
   using QThread::msleep;
   using QThread::usleep;
 };
+#endif
 
 typedef shared_ptr<worldgen_type> worldgen_ptr;
 
@@ -113,8 +153,10 @@ private:
 };
 
 struct gl_thread_data_t {
+#if LASERCAKE_USE_QT
   QMutex gl_data_lock;
   QWaitCondition wait_for_instruction;
+#endif
   atomic::atomic_bool interrupt;
 
   // access protected by the mutex:
@@ -141,7 +183,11 @@ public:
   microseconds_t gl_render(gl_data_ptr_t& gl_data_ptr, LasercakeGLWidget& gl_widget, QSize viewport_size);
   gl_renderer gl_renderer_;
 protected:
+#if LASERCAKE_USE_QT
   void run() override;
+#else
+  void run();
+#endif
 };
 
 
@@ -161,6 +207,7 @@ public:
 Q_SIGNALS:
   void key_changed(input_representation::key_change_t);
 
+#if LASERCAKE_USE_QT
 protected:
   bool event(QEvent*) override;
   //void keyPressEvent(QKeyEvent*) override;
@@ -172,6 +219,7 @@ protected:
   void resizeEvent(QResizeEvent*) override;
   void paintEvent(QPaintEvent*) override;
   void closeEvent(QCloseEvent*) override;
+#endif
 
 private Q_SLOTS:
   void prepare_to_cleanly_close_();
@@ -184,7 +232,9 @@ private:
       qt_key_type_ qkey,
       input_representation::key_type ikey,
       bool pressed);
+#if LASERCAKE_USE_QT
   void key_change_(QKeyEvent* event, bool pressed);
+#endif
   void invoke_render_(); //precondition: you incremented gl_thread_data_->revision
   void grab_input_();
   void ungrab_input_();
@@ -196,7 +246,9 @@ private:
   input_representation::key_activity_t input_rep_key_activity_;
   input_representation::keys_currently_pressed_t input_rep_keys_currently_pressed_;
   input_representation::mouse_displacement_t input_rep_mouse_displacement_;
+#if LASERCAKE_USE_QT
   QPoint global_cursor_pos_;
+#endif
   bool input_is_grabbed_;
   bool use_separate_gl_thread_;
   LasercakeGLThread thread_;

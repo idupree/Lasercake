@@ -62,6 +62,12 @@
       #define ATTRIBUTE_NORETURN
     #endif
   #endif
+  
+  #if defined(__EMSCRIPTEN__)
+    #if BOOST_NO_EXCEPTIONS != 1
+      #warning "Emscripten works better if exceptions are disabled"
+    #endif
+  #endif
 
   #if defined(__GNUC__)
     inline int DETECTED_builtin_clz64(uint64_t arg) {

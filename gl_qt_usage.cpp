@@ -20,7 +20,9 @@
 */
 
 #include "gl_rendering.hpp"
+#if LASERCAKE_USE_QT
 #include "main.hpp"
+#endif
 #include "gl_data_format.hpp"
 
 // Hopefully someday this file will be unnecessary.
@@ -31,6 +33,7 @@ void gl_renderer::render_2d_text_overlay_(
     viewport_dimension viewport_height,
     LasercakeGLWidget& gl_widget
 ) {
+#if LASERCAKE_USE_QT
   gl_data_format::gl_all_data const& gl_data = abstract_gl_data.data();
   QPainter painter(&gl_widget);
   painter.setRenderHint(QPainter::Antialiasing);
@@ -62,4 +65,5 @@ void gl_renderer::render_2d_text_overlay_(
     Qt::AlignBottom | Qt::AlignHCenter | Qt::TextWordWrap,
     text);
   painter.end();
+#endif
 }

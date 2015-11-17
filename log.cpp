@@ -24,7 +24,9 @@
 #include <unistd.h>
 #include <errno.h>
 
+#if LASERCAKE_USE_QT
 #include <QtCore/QThread>
+#endif
 
 #include "config.hpp"
 
@@ -58,7 +60,9 @@ static void do_write(int fd, const char* ptr, size_t n) {
       ptr += ret;
       n -= ret;
     }
+#if LASERCAKE_USE_QT
     QThread::yieldCurrentThread();
+#endif
     --patience;
   }
 }
