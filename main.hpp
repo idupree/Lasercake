@@ -126,7 +126,7 @@ public:
   // it's more complex to say which one to remove
 
   // or return std::vector<Ret> but then we need to deal with vector of void
-  void publish(Args&&... args) {
+  void publish(Args... args) {
     for(auto& sub : subscribers_) {
       sub(args...);
     }
