@@ -49,10 +49,18 @@ struct fixed_size_bignum {
 namespace bignum {
 
 // 'limb' following GMP lib terminology
+#if LASERCAKE_HAVE_128_BIT_INT
 typedef uint64_t limb_type;
 typedef int64_t signed_limb_type;
 static const int limb_bits = 64;
 typedef DETECTED_uint128_t twice_limb_type;
+#else
+typedef uint32_t limb_type;
+typedef int32_t signed_limb_type;
+static const int limb_bits = 32;
+typedef uint64_t twice_limb_type;
+#endif
+
 template<size_t Limbs>
 struct bignum {
   // This array's order is little-endian, regardless of the bit order
@@ -64,6 +72,23 @@ struct bignum_with_overflow {
   bignum<Limbs> num;
   bool overflow;
 };
+
+#if LASERCAKE_HAVE_128_BIT_INT
+typedef bignum<1> uint64_equivalent_bignum;
+inline uint64_equivalent_bignum bignum_from_uint64(uint64_t a) {
+  static_assert(limb_bits >= 64, "bug");
+  return bignum<1>{{(limb_type)(a)}};
+}
+#else
+typedef bignum<2> uint64_equivalent_bignum;
+inline uint64_equivalent_bignum bignum_from_uint64(uint64_t a) {
+  static_assert(limb_bits == 32, "bug");
+  return bignum<2>{{(limb_type)(a & 0xffffffffu), (limb_type)(a >> 32)}};
+}
+#endif
+
+
+
 template<size_t LimbsOut, size_t LimbsA, size_t LimbsB>
 inline bignum<LimbsOut> long_multiply_unsigned(bignum<LimbsA> a, bignum<LimbsB> b) {
   bignum<LimbsOut> result = {{}};
@@ -128,8 +153,13 @@ inline bignum<LimbsOut> zero_extend_from_limb(limb_type a) {
 
 template<size_t LimbsOut>
 inline bignum<LimbsOut> zero_extend_from_uint64(uint64_t a) {
-  static_assert(limb_bits >= 64, "bug");
-  return zero_extend_from_limb<LimbsOut>(a);
+  static_assert(limb_bits >= 32, "bug");
+  if(limb_bits >= 64) {
+    return zero_extend_from_limb<LimbsOut>(a);
+  }
+  else {
+    return zero_extend<LimbsOut>(bignum_from_uint64(a));
+  }
 }
 template<size_t LimbsOut>
 inline bignum<LimbsOut> zero_extend_from_uint32(uint32_t a) {
@@ -161,8 +191,7 @@ inline bignum<LimbsOut> sign_extend_from_limb(signed_limb_type a) {
 
 template<size_t LimbsOut>
 inline bignum<LimbsOut> sign_extend_from_int64(int64_t a) {
-  static_assert(limb_bits >= 64, "bug");
-  return sign_extend_from_limb<LimbsOut>((limb_type)(signed_limb_type)(a));
+  return sign_extend<LimbsOut>(bignum_from_uint64(a));
 }
 template<size_t LimbsOut>
 inline bignum<LimbsOut> sign_extend_from_int32(int32_t a) {
@@ -627,7 +656,7 @@ float to_float_unsigned(bignum<Limbs> a) {
 }
 template<size_t Limbs>
 double to_double_unsigned(bignum<Limbs> a) {
-  static_assert(limb_bits >= 64, "bug");
+  static_assert(limb_bits >= 32, "bug");
   int ir;
   for(ir = Limbs-1; ir > 0; --ir) {
     if(a.limbs[ir] != 0) {
@@ -637,10 +666,16 @@ double to_double_unsigned(bignum<Limbs> a) {
   if(ir == 0) {
     return (double)(a.limbs[0]);
   }
-  else {
+  else if(limb_bits >= 64 || ir == 1) {
     return
       ldexp((double)(a.limbs[ir]), ir*limb_bits) +
       ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits);
+  }
+  else {
+    return
+      ldexp((double)(a.limbs[ir]), ir*limb_bits) +
+      ldexp((double)(a.limbs[ir-1]), (ir-1)*limb_bits) +
+      ldexp((double)(a.limbs[ir-2]), (ir-2)*limb_bits);
   }
 }
 template<size_t Limbs>
