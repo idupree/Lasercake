@@ -103,6 +103,8 @@
   #if defined(__GNUC__) && (__LP64__ || __x86_64__)
     #define DETECTED_int128_t __int128_t
     #define DETECTED_uint128_t __uint128_t
+    #define LASERCAKE_HAVE_64_BITS 1
+    #define LASERCAKE_HAVE_128_BIT_INT 1
   #endif
 
   #if (!__clang__ && !BOOST_INTEL && ((__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 7)))
