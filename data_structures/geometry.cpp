@@ -239,14 +239,12 @@ void populate_with_relating_planes__faces_onesided(
       bool A_is_1,
       std::vector<pair_of_parallel_supporting_planes>& planes_collector) {
   for (plane_as_base_point_and_normal const& plane : pA_planes) {
-    bool found_any_points = false;
     vect closest_point;
-    coord3 closest_dotprod;
+    faux_optional<coord3> closest_dotprod;
     for (vect const& v : pB.vertices()) {
       // We subtract base_point just to minimize integer size; the behavior should be the same either way.
       const coord3 dotprod = (v - plane.base_point).dot<geometry_int_type>(plane.normal);
-      if ((!found_any_points) || (dotprod < closest_dotprod)) {
-        found_any_points = true;
+      if (!closest_dotprod || (dotprod < *closest_dotprod)) {
         closest_dotprod = dotprod;
         closest_point = v;
       }
