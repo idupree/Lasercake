@@ -43,6 +43,7 @@
 // Arch Linux x86_64, Jan 2013).
 
 #include <boost/preprocessor/stringize.hpp>
+#include <boost/type_traits/remove_cv.hpp>
 #include "../config.hpp"
 #include "../data_structures/numbers.hpp" //struct comparators
 
@@ -204,7 +205,10 @@ inline void do_test(AF&& af, BF&& bf, Predicate&& p, const char* desc) {
 // and because they are used as complete statements so the usual
 // parentheses-for-correct-grouping-in-macros reason isn't a risk here.
 #define BINARY_CHECK_IMPL(a, b, comparator_type, comparator_str) \
-  do_test([&]()->decltype(a){return a;}, [&]()->decltype(b){return b;}, comparator_type(), \
+  do_test( \
+    [&]() -> typename boost::remove_cv<decltype(a)>::type {return a;}, \
+    [&]() -> typename boost::remove_cv<decltype(b)>::type {return b;}, \
+    comparator_type(), \
     BOOST_PP_STRINGIZE(TESTS_FILE) ":" BOOST_PP_STRINGIZE(__LINE__) ": `" BOOST_PP_STRINGIZE(a) "` " comparator_str " `" BOOST_PP_STRINGIZE(b) "`" \
   )
 #define BOOST_CHECK_EQUAL(a, b) BINARY_CHECK_IMPL(a, b, comparators::equal_to, "==")
