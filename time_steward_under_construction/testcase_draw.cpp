@@ -483,7 +483,7 @@ const int32_t fovy_degrees = 80;
 // view frustums, for example.
 inline glm::mat4 make_projection_matrix(float aspect_ratio) {
   return glm::perspective(
-    float(fovy_degrees),
+    glm::radians(float(fovy_degrees)),
     float(aspect_ratio),
     float(1), //get_primitive_float(near_clipping_plane/fine_distance_units),
     float(3000) //get_primitive_float(far_clipping_plane/fine_distance_units)
