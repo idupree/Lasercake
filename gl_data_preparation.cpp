@@ -19,9 +19,9 @@
 
 */
 
-#include <GL/glew.h>
 #include <stack>
 
+#include "gl.hpp"
 #include "gl_data_preparation.hpp"
 #include "gl_data_format.hpp"
 #include "world.hpp"

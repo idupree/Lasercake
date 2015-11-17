@@ -22,9 +22,9 @@
 #include <vector>
 #include "cxx11/array.hpp"
 
-#include <GL/glew.h>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "gl.hpp"
 #include "gl_rendering.hpp"
 #include "gl_data_format.hpp"
 
@@ -76,8 +76,7 @@ void gl_renderer::output_gl_data_to_OpenGL(
       return;
     }
 
-    const GLenum glew_init_err = glewInit();
-    if(glew_init_err != GLEW_OK)
+    if(!init_gl_library())
     {
       // give up
       state_.reset();
