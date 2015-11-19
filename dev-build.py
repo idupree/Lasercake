@@ -152,16 +152,19 @@ def main():
     is_windows_exe = is_apple_app = is_js = False
     app_name = exe_name = None
     if os.path.exists('Lasercake'):
-        app_name = exe_name = 'Lasercake'
+        exe_name = 'Lasercake'
+        app_name = [exe_name]
     if os.path.exists('Lasercake.exe'):
-        app_name = exe_name = 'Lasercake.exe'
+        exe_name = 'Lasercake.exe'
+        app_name = [exe_name]
         is_windows_exe = True
     if os.path.exists('Lasercake.js'):
         exe_name = 'Lasercake.js'
+        app_name = [exe_name, exe_name+'.mem']
         is_js = True
     if os.path.exists('Lasercake.app'):
-        app_name = 'Lasercake.app'
         exe_name = 'Lasercake.app/Contents/MacOS/Lasercake'
+        app_name = ['Lasercake.app']
         is_apple_app = True
         # The bundle isn't complete without calling `make install`
         subprocess.check_call(['make', 'install'])
@@ -189,13 +192,14 @@ def main():
             say(ansi_green+'success')
         else:
             say(ansi_yellow+'NOT RUNNING TESTS')
-        if is_js:
-            making_lasercake = False
         if making_lasercake:
-            say('; copying '+build_dir+'/'+app_name+' to ./'+app_name)
+            say('; ')
+            for f in app_name:
+                say('copying '+build_dir+'/'+f+' to ./'+f+'\n')
         say(ansi_end+'\n')
         if making_lasercake:
-            replace_app(app_name, '../../'+app_name)
+            for f in app_name:
+                replace_app(f, '../../'+f)
     exit()
 
 if __name__ == '__main__':
