@@ -30,9 +30,12 @@ Notes:
 This might not entirely work yet, but for starters:
 
 - Extra CMake arguments (Arch Linux, Nov 2015):
-    -DCMAKE_TOOLCHAIN_FILE=/usr/lib/emscripten/cmake/Modules/Platform/Emscripten.cmake -DCMAKE_CXX_FLAGS='-s DEMANGLE_SUPPORT=1 -DBOOST_NO_EXCEPTIONS=1' -DUSE_QT=NO
+    -DCMAKE_TOOLCHAIN_FILE="$EMSCRIPTEN/cmake/Modules/Platform/Emscripten.cmake" -DCMAKE_CXX_FLAGS='-s DEMANGLE_SUPPORT=1 -DBOOST_NO_EXCEPTIONS=1' -DUSE_QT=NO
 
 The path to the toolchain file might be different for you.
+Example values of $EMSCRIPTEN are /usr/lib/emscripten or
+.../emsdk_portable/emscripten/master.
+
 See https://github.com/kripken/emscripten/blob/master/src/settings.js for
 more "-s" Emscripten flags you might be interested in. If you want
 to turn exceptions back on (at a performance cost), remove
