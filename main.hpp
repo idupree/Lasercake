@@ -32,10 +32,13 @@
 
 #include <set>
 
+// https://bugreports.qt.io/browse/QTBUG-22829?focusedCommentId=274496#comment-274496
+#ifndef Q_MOC_RUN
 #include "gl_data_preparation.hpp"
 #include "input_representation.hpp"
 #include "world.hpp"
 #include "gl_rendering.hpp"
+#endif
 
 typedef abstract_gl_data gl_data_t;
 
